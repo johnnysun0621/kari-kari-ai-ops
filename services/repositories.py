@@ -118,6 +118,10 @@ def _read_relation_ids(page: dict, name: str) -> list[str]:
     return [r["id"] for r in page["properties"].get(name, {}).get("relation", [])]
 
 
+def _read_url(page: dict, name: str) -> str:
+    return page["properties"].get(name, {}).get("url") or ""
+
+
 def _read_unique_id(page: dict, name: str) -> int | None:
     uid = page["properties"].get(name, {}).get("unique_id")
     return uid.get("number") if uid else None
@@ -329,6 +333,13 @@ class TaskItem:
     end: datetime | None = None
     start_has_time: bool = False
     end_has_time: bool = False
+    # P0-2 任務查詢顯示用
+    url: str = ""
+    description: str = ""
+    submit_method: str | None = None
+    open_for_submission: bool = False
+    latest_submission_url: str = ""
+    task_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -393,6 +404,12 @@ def _to_task(page: dict) -> TaskItem:
         end=end.value,
         start_has_time=start.has_time,
         end_has_time=end.has_time,
+        url=page.get("url", ""),
+        description=_read_rich_text(page, "任務說明"),
+        submit_method=_read_select(page, "提交方式"),
+        open_for_submission=_read_checkbox(page, "是否開放提交"),
+        latest_submission_url=_read_url(page, "最新提交 URL"),
+        task_id=_read_unique_id(page, "Task ID"),
     )
 
 
@@ -608,6 +625,77 @@ async def get_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
         task for task in tasks
         if task_applies_to_artist(task, artist_page_id, project_map)
     ]
+
+
+# ---------- P0-2 任務查詢（Discord 顯示） ----------
+
+TASK_DUE_SOON_DAYS = 3
+
+
+async def get_discord_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
+    """/我的任務：Discord 可見＋直接關聯該藝人（Notion 端過濾，不撈全表）。"""
+    filter_ = {"and": [
+        {"property": "Discord 可見", "checkbox": {"equals": True}},
+        {"property": "關聯藝人", "relation": {"contains": artist_page_id}},
+    ]}
+    pages = await notion_api.query_data_source(config.DS_TASKS, filter_=filter_)
+    return [_to_task(p) for p in pages]
+
+
+async def get_active_tasks() -> list[TaskItem]:
+    """管理端 /任務總覽：所有未結案任務（含狀態未填的搬移舊資料）。"""
+    conditions: list[dict] = [
+        {"property": "任務狀態", "select": {"equals": s}} for s in sorted(ACTIVE_TASK_STATUSES)
+    ]
+    conditions.append({"property": "任務狀態", "select": {"is_empty": True}})
+    pages = await notion_api.query_data_source(config.DS_TASKS, filter_={"or": conditions})
+    return [_to_task(p) for p in pages]
+
+
+def task_deadline_passed(task: TaskItem, now: datetime) -> bool:
+    """截止日是否已過。date-only 截止視為當天整天有效，隔天才算逾期。"""
+    if not task.end:
+        return False
+    if task.end_has_time:
+        return task.end < now
+    return now.date() > task.end.date()
+
+
+def task_due_within(task: TaskItem, now: datetime, days: int = TASK_DUE_SOON_DAYS) -> bool:
+    if not task.end or task_deadline_passed(task, now):
+        return False
+    return (task.end.date() - now.date()).days <= days
+
+
+def classify_tasks_for_display(tasks: list[TaskItem], now: datetime) -> dict[str, list[TaskItem]]:
+    """把任務分到互斥顯示區，各區依截止日排序（無截止日排最後）。
+
+    分區優先序：待審核（已交出、球在公司）→ 逾期 → 需修改 → 即將到期 → 未完成。
+    已完成/已取消/已封存不顯示。
+    """
+    buckets: dict[str, list[TaskItem]] = {
+        "overdue": [], "needs_fix": [], "due_soon": [], "in_review": [], "open": [],
+    }
+    for task in tasks:
+        if task.status in INACTIVE_TASK_STATUSES:
+            continue
+        if task.status == "待審核":
+            buckets["in_review"].append(task)
+        elif task.status == "已逾期" or task_deadline_passed(task, now):
+            buckets["overdue"].append(task)
+        elif task.status == "需修改":
+            buckets["needs_fix"].append(task)
+        elif task_due_within(task, now):
+            buckets["due_soon"].append(task)
+        else:
+            buckets["open"].append(task)
+
+    def _sort_key(t: TaskItem):
+        return (t.end is None, t.end or now)
+
+    for items in buckets.values():
+        items.sort(key=_sort_key)
+    return buckets
 
 
 # 「撞課」情境（Tasks/Projects/Sessions）每次填時段都要算，且含兩次全表掃描。

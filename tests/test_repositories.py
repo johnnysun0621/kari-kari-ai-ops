@@ -608,3 +608,76 @@ class TestFutureOnlyQueries:
 
         asyncio.run(repositories.get_slots_for_artist("artist-1", future_only=False))
         assert captured["filter"] == {"property": "填寫藝人", "relation": {"contains": "artist-1"}}
+
+
+def display_task(
+    name: str = "任務",
+    status: str | None = "進行中",
+    end: datetime | None = None,
+    end_has_time: bool = False,
+    task_type: str | None = None,
+):
+    return repositories.TaskItem(
+        page_id=f"task-{name}",
+        name=name,
+        status=status,
+        task_type=task_type,
+        end=end,
+        end_has_time=end_has_time,
+    )
+
+
+NOW = datetime(2026, 7, 8, 12, 0, tzinfo=config.TZ)
+
+
+class TestTaskDeadlines:
+    def test_date_only_deadline_valid_through_the_day(self):
+        t = display_task(end=datetime(2026, 7, 8, 0, 0, tzinfo=config.TZ), end_has_time=False)
+        assert repositories.task_deadline_passed(t, NOW) is False
+
+    def test_date_only_deadline_passed_next_day(self):
+        t = display_task(end=datetime(2026, 7, 7, 0, 0, tzinfo=config.TZ), end_has_time=False)
+        assert repositories.task_deadline_passed(t, NOW) is True
+
+    def test_datetime_deadline_compares_exact_time(self):
+        t = display_task(end=datetime(2026, 7, 8, 11, 0, tzinfo=config.TZ), end_has_time=True)
+        assert repositories.task_deadline_passed(t, NOW) is True
+
+    def test_due_within_three_days(self):
+        soon = display_task(end=datetime(2026, 7, 10, 0, 0, tzinfo=config.TZ))
+        far = display_task(end=datetime(2026, 7, 20, 0, 0, tzinfo=config.TZ))
+        assert repositories.task_due_within(soon, NOW) is True
+        assert repositories.task_due_within(far, NOW) is False
+
+
+class TestClassifyTasksForDisplay:
+    def test_buckets_are_mutually_exclusive_with_expected_precedence(self):
+        tasks = [
+            display_task("已交", status="待審核", end=datetime(2026, 7, 1, tzinfo=config.TZ)),  # 過期但已交 → in_review
+            display_task("過期", status="進行中", end=datetime(2026, 7, 1, tzinfo=config.TZ)),
+            display_task("標記逾期", status="已逾期"),
+            display_task("要修", status="需修改"),
+            display_task("快到", status="待提交", end=datetime(2026, 7, 9, tzinfo=config.TZ)),
+            display_task("普通", status="尚未開始", end=datetime(2026, 8, 1, tzinfo=config.TZ)),
+            display_task("完成", status="已完成"),
+            display_task("封存", status="已封存"),
+        ]
+
+        buckets = repositories.classify_tasks_for_display(tasks, NOW)
+
+        assert [t.name for t in buckets["in_review"]] == ["已交"]
+        assert {t.name for t in buckets["overdue"]} == {"過期", "標記逾期"}
+        assert [t.name for t in buckets["needs_fix"]] == ["要修"]
+        assert [t.name for t in buckets["due_soon"]] == ["快到"]
+        assert [t.name for t in buckets["open"]] == ["普通"]
+
+    def test_sorts_by_deadline_with_none_last(self):
+        tasks = [
+            display_task("無期限", status="進行中"),
+            display_task("晚", status="進行中", end=datetime(2026, 8, 20, tzinfo=config.TZ)),
+            display_task("早", status="進行中", end=datetime(2026, 8, 1, tzinfo=config.TZ)),
+        ]
+
+        buckets = repositories.classify_tasks_for_display(tasks, NOW)
+
+        assert [t.name for t in buckets["open"]] == ["早", "晚", "無期限"]

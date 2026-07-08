@@ -17,6 +17,7 @@ logger = logging.getLogger("karikari")
 EXTENSIONS = [
     "cogs.scheduling_admin",
     "cogs.scheduling_artist",
+    "cogs.tasks_artist",
     "cogs.reminders",
 ]
 
