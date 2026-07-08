@@ -4,7 +4,6 @@ from datetime import datetime
 
 import config
 from services import notion_api
-from services.repositories import _checkbox  # noqa: F401  (保持匯入面一致)
 from services.repositories import _date, _rich_text, _select, _title, _url
 
 logger = logging.getLogger(__name__)

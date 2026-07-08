@@ -2,10 +2,12 @@
 
 以 Discord 為入口、Notion 為營運資料層的排課系統。目標：把排課從 1 週以上的人工往返，壓縮到 **2 天內完成**。
 
+> Product note: KariKari is the first test implementation. This project should evolve into a reusable operations scheduling system for multiple companies. See [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md).
+
 ## 排課流程
 
 1. 管理者 `/排課建立` → 選參與藝人 → 排課頻道公告 + DM 通知
-2. 藝人點「📅 填寫可用時間」按鈕 → Modal 填時段（可多筆）→ 寫入 Notion
+2. 藝人點「📅 填寫可用時間」按鈕 → 填時段（可多筆）→ Bot 檢查 Tasks / Projects / Course Sessions 後寫入 Notion
 3. 管理者 `/排課比對` → 自動算出全員共同時段 → 勾選候選（最多 5 個）
 4. 管理者用既有管道（LINE 等）向老師確認
 5. 管理者 `/排課確認` → 選定時段 + 填最終開始時間 → 自動建立正式課程、發布通告（頻道 + DM）
@@ -43,10 +45,10 @@ python bot.py
 ### Notion 需要的設定
 
 1. 建立 internal integration（讀寫權限）
-2. 把「KariKari 營運中心｜正式資料層」底下這 5 張資料庫都 **Share → 加入該 integration**：
-   Artists、Schedule Requests、Availability Slots、Course Sessions、Audit Log
+2. 把「KariKari 營運中心｜正式資料層」底下這些資料庫都 **Share → 加入該 integration**：
+   Artists、Schedule Requests、Availability Slots、Course Sessions、Tasks、Projects、Audit Log
    （或直接 share 營運中心整頁，底下資料庫會一併授權）
-3. Artists 的每位藝人要填：`Discord User ID`（純數字）、`藝人狀態=Active`
+3. Artists 的每位可排課藝人要填：`Discord User ID`（純數字），且 `合約狀態` 不要是 `暫停` / `封存`
 
 Data Source ID 已內建在 `config.py`（與 Notion「KariKari 營運中心」頁的工程設定區一致），Notion 端重建資料庫時才需要在 .env 覆寫。
 
@@ -94,7 +96,7 @@ bot.py                    # 進入點：載入 cogs、sync 指令、persistent �
 config.py                 # .env、Notion Data Source ID、時區/SLA 常數
 services/
   notion_api.py           # Notion REST 封裝（2025-09-03，含重試）
-  repositories.py         # 五張表 CRUD（中文欄位名 → API payload 唯一對應處）
+  repositories.py         # Notion 資料庫 CRUD（中文欄位名 → API payload 唯一對應處）
   overlap.py              # 共同時段交集演算法（純函式）
   timeparse.py            # Modal 輸入解析、候選時段文字格式
   audit.py                # Audit Log 寫入（失敗不阻斷主流程）

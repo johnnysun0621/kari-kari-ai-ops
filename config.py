@@ -6,12 +6,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _env_int(name: str, default: int = 0) -> int:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 # === Discord ===
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
-GUILD_ID = int(os.getenv("GUILD_ID", "0"))
-SCHEDULE_CHANNEL_ID = int(os.getenv("SCHEDULE_CHANNEL_ID", "0"))
-ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "0"))
-ADMIN_NOTIFY_CHANNEL_ID = int(os.getenv("ADMIN_NOTIFY_CHANNEL_ID") or SCHEDULE_CHANNEL_ID or "0")
+GUILD_ID = _env_int("GUILD_ID")
+SCHEDULE_CHANNEL_ID = _env_int("SCHEDULE_CHANNEL_ID")
+ADMIN_ROLE_ID = _env_int("ADMIN_ROLE_ID")
+ADMIN_NOTIFY_CHANNEL_ID = _env_int("ADMIN_NOTIFY_CHANNEL_ID", SCHEDULE_CHANNEL_ID)
 
 # === Notion ===
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")

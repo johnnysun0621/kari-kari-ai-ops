@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 
 import config
-from cogs.scheduling_artist import FillAvailabilityButton
+from cogs.scheduling_artist import FillAvailabilityButton, PoolAvailabilityButton
 from services import audit, notion_api, repositories
 
 logging.basicConfig(
@@ -31,6 +31,7 @@ class KariKariBot(commands.Bot):
             await self.load_extension(ext)
         # persistent 按鈕：bot 重啟後公告上的「填寫可用時間」仍可用
         self.add_dynamic_items(FillAvailabilityButton)
+        self.add_dynamic_items(PoolAvailabilityButton)
         if config.GUILD_ID:
             guild = discord.Object(id=config.GUILD_ID)
             self.tree.copy_global_to(guild=guild)
@@ -45,12 +46,12 @@ class KariKariBot(commands.Bot):
         # Notion 連線 smoke test：讀 Artists + 寫一筆 Audit Log
         try:
             artists = await repositories.get_active_artists()
-            logger.info("Notion 連線正常，Active 藝人 %d 位：%s",
+            logger.info("Notion 連線正常，可排課藝人 %d 位：%s",
                         len(artists), "、".join(a.name for a in artists) or "（無）")
             await audit.log_event(
                 event_name="Bot 啟動",
                 action_type="同步", operator="System", source="System",
-                after=f"讀到 {len(artists)} 位 Active 藝人",
+                after=f"讀到 {len(artists)} 位可排課藝人",
             )
         except Exception:
             logger.exception(
@@ -64,7 +65,7 @@ class KariKariBot(commands.Bot):
 
 def main():
     if not config.DISCORD_TOKEN:
-        raise SystemExit("缺少 DISCORD_TOKEN，請先複製 .env.example 為 .env 並填入設定。")
+        raise SystemExit("缺少 DISCORD_TOKEN，請先在 .env 填入 Discord bot token。")
     if not config.NOTION_TOKEN:
         raise SystemExit("缺少 NOTION_TOKEN，請先在 .env 填入 Notion integration token。")
     bot = KariKariBot()

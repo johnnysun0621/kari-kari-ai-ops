@@ -5,6 +5,7 @@
 """
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -14,6 +15,22 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.notion.com/v1"
 MAX_RETRIES = 3
+
+# Notion 官方限流約 3 requests/second。用全域最小間隔「主動」節流，
+# 避免多個互動同時爆發請求觸發 429 → 連鎖重試 sleep → 互動轉圈失敗。
+_MIN_REQUEST_INTERVAL = 0.34  # 秒（≈ 3 req/s）
+_rate_lock = asyncio.Lock()
+_last_request_ts = 0.0
+
+
+async def _throttle() -> None:
+    """確保所有 Notion 請求送出間隔 >= _MIN_REQUEST_INTERVAL（全域、跨互動共用）。"""
+    global _last_request_ts
+    async with _rate_lock:
+        wait = _MIN_REQUEST_INTERVAL - (time.monotonic() - _last_request_ts)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_request_ts = time.monotonic()
 
 
 class NotionAPIError(Exception):
@@ -41,7 +58,6 @@ def _get_client() -> httpx.AsyncClient:
 
 
 async def close_client() -> None:
-    global _client
     if _client is not None and not _client.is_closed:
         await _client.aclose()
 
@@ -50,6 +66,7 @@ async def _request(method: str, path: str, json_body: dict | None = None) -> dic
     client = _get_client()
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
+        await _throttle()
         try:
             resp = await client.request(method, path, json=json_body)
         except httpx.HTTPError as e:
@@ -90,6 +107,11 @@ async def query_data_source(
             break
         cursor = data.get("next_cursor")
     return results
+
+
+async def retrieve_page(page_id: str) -> dict:
+    """讀取單一 page（GET /pages/{id}），取代「撈全表再線性搜尋」。"""
+    return await _request("GET", f"/pages/{page_id}")
 
 
 async def create_page(data_source_id: str, properties: dict) -> dict:

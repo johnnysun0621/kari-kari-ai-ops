@@ -2,7 +2,6 @@
 import logging
 from datetime import datetime, timedelta
 
-import discord
 from discord.ext import commands, tasks
 
 import config
@@ -41,22 +40,31 @@ class RemindersCog(commands.Cog):
     async def before_check(self):
         await self.bot.wait_until_ready()
 
-    async def _unfilled_artists(self, request: repositories.ScheduleRequest) -> list[repositories.Artist]:
-        artists = await repositories.get_artists_by_ids(request.artist_page_ids)
+    async def _unfilled_artists(
+        self,
+        request: repositories.ScheduleRequest,
+        artist_map: dict[str, repositories.Artist],
+    ) -> list[repositories.Artist]:
         slots = await repositories.get_slots_for_request(request.page_id)
         filled_ids = {pid for s in slots for pid in s.artist_page_ids}
-        return [a for a in artists if a.page_id not in filled_ids]
+        return [
+            artist_map[pid] for pid in request.artist_page_ids
+            if pid in artist_map and pid not in filled_ids
+        ]
 
     async def _check_fill_deadlines(self):
         now = datetime.now(config.TZ)
         requests = await repositories.get_requests_by_status(["等待藝人填寫"])
+        if not requests:
+            return
+        artist_map = await repositories.get_artist_map()  # 一輪只撈一次藝人表
         channel = self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
         admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) or channel
 
         for r in requests:
             if not r.fill_deadline:
                 continue
-            unfilled = await self._unfilled_artists(r)
+            unfilled = await self._unfilled_artists(r, artist_map)
             if not unfilled:
                 continue
             names = "、".join(a.name for a in unfilled)
@@ -103,9 +111,7 @@ class RemindersCog(commands.Cog):
 
     async def _check_sla(self):
         now = datetime.now(config.TZ)
-        requests = await repositories.get_requests_by_status(
-            ["等待藝人填寫", "比對中", "等待老師確認", "已確認"]
-        )
+        requests = await repositories.get_requests_by_status(repositories.OPEN_REQUEST_STATUSES)
         admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
             or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
         for r in requests:

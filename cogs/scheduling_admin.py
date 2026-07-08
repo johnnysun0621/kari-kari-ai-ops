@@ -1,5 +1,6 @@
 """管理者端：/排課建立 /排課比對 /排課確認 /排課狀態（限管理身分組）。"""
 import logging
+import time
 from datetime import datetime, timedelta
 
 import discord
@@ -7,10 +8,30 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from cogs.scheduling_artist import make_announcement_view
-from services import audit, overlap, repositories, timeparse
+from cogs.scheduling_artist import make_announcement_view, make_pool_availability_view
+from services import audit, overlap, repositories, time_collection, timeparse
 
 logger = logging.getLogger(__name__)
+
+# autocomplete 每個鍵擊都會觸發；用短 TTL 快取進行中需求，避免每個字都打 Notion
+# （autocomplete 有 3 秒硬上限且不能 defer，Notion 一慢就會「互動失敗」）
+_OPEN_REQUESTS_TTL = 20.0
+_open_requests_cache: tuple[float, list[repositories.ScheduleRequest]] | None = None
+
+
+def _invalidate_open_requests_cache() -> None:
+    global _open_requests_cache
+    _open_requests_cache = None
+
+
+async def _get_open_requests_cached() -> list[repositories.ScheduleRequest]:
+    global _open_requests_cache
+    now = time.monotonic()
+    if _open_requests_cache is not None and now - _open_requests_cache[0] < _OPEN_REQUESTS_TTL:
+        return _open_requests_cache[1]
+    requests = await repositories.get_requests_by_status(repositories.OPEN_REQUEST_STATUSES)
+    _open_requests_cache = (now, requests)
+    return requests
 
 
 def is_admin():
@@ -22,12 +43,13 @@ def is_admin():
 
 
 COURSE_TYPE_CHOICES = [app_commands.Choice(name=t, value=t) for t in config.COURSE_TYPES]
+AVAILABILITY_CLEANUP_PREVIEW_LIMIT = 20
 
 
 async def _open_request_choices(current: str) -> list[app_commands.Choice[str]]:
-    """/排課比對、/排課確認、autocomplete 共用：列出進行中的排課需求。"""
+    """/排課比對、/排課確認、autocomplete 共用：列出進行中的排課需求（短 TTL 快取）。"""
     try:
-        requests = await repositories.get_requests_by_status(repositories.OPEN_REQUEST_STATUSES)
+        requests = await _get_open_requests_cached()
     except Exception:
         logger.exception("autocomplete 讀取排課需求失敗")
         return []
@@ -38,6 +60,110 @@ async def _open_request_choices(current: str) -> list[app_commands.Choice[str]]:
             continue
         choices.append(app_commands.Choice(name=label[:100], value=r.page_id))
     return choices[:25]
+
+
+def _admin_slot_line(slot: repositories.AvailabilitySlot) -> str:
+    if slot.start and slot.end:
+        time_text = time_collection.format_slot_summary(slot.start, slot.end, slot.note)
+    else:
+        time_text = slot.name or "未命名時段"
+    return f"{slot.name or '未命名時段'}｜{time_text}"
+
+
+def _trim_message(text: str, limit: int = 1900) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit - 18].rstrip() + "\n...清單過長已截斷"
+
+
+def _cleanup_preview_text(
+    future_slots: list[repositories.AvailabilitySlot],
+    compaction: repositories.AvailabilitySlotCompaction,
+) -> str:
+    slot_by_id = {slot.page_id: slot for slot in future_slots}
+    lines = [
+        "🧹 **時間池整理預覽**",
+        f"掃描未來時段：{len(future_slots)} 筆",
+        f"會合併更新：{len(compaction.updates)} 筆",
+        f"建議封存重複 / 冗餘：{len(compaction.redundant)} 筆",
+    ]
+    if compaction.updates:
+        lines.append("\n**會合併更新**")
+        for update in compaction.updates[:AVAILABILITY_CLEANUP_PREVIEW_LIMIT]:
+            slot = slot_by_id.get(update.page_id)
+            before = _admin_slot_line(slot) if slot else update.page_id
+            after = time_collection.format_slot_summary(
+                update.start, update.end, slot.note if slot else ""
+            )
+            lines.append(f"・{before}\n　→ {after}")
+        if len(compaction.updates) > AVAILABILITY_CLEANUP_PREVIEW_LIMIT:
+            lines.append(f"・另有 {len(compaction.updates) - AVAILABILITY_CLEANUP_PREVIEW_LIMIT} 筆合併更新")
+    if compaction.redundant:
+        lines.append("\n**建議封存**")
+        for slot in compaction.redundant[:AVAILABILITY_CLEANUP_PREVIEW_LIMIT]:
+            lines.append(f"・{_admin_slot_line(slot)}")
+        if len(compaction.redundant) > AVAILABILITY_CLEANUP_PREVIEW_LIMIT:
+            lines.append(f"・另有 {len(compaction.redundant) - AVAILABILITY_CLEANUP_PREVIEW_LIMIT} 筆建議封存")
+    if not compaction.updates and not compaction.redundant:
+        lines.append("\n目前沒有需要整理的重複或重疊資料。")
+    else:
+        lines.append("\n確認後才會更新 / 封存 Notion 資料。")
+    return _trim_message("\n".join(lines))
+
+
+class AvailabilityCleanupPreviewView(discord.ui.View):
+    def __init__(
+        self,
+        slots: list[repositories.AvailabilitySlot],
+        compaction: repositories.AvailabilitySlotCompaction,
+        operator: discord.abc.User,
+    ):
+        super().__init__(timeout=600)
+        self.slots = slots
+        self.compaction = compaction
+        self.operator_id = operator.id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個整理預覽只能由原本執行指令的人操作。", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="套用全部整理", style=discord.ButtonStyle.danger, emoji="✅")
+    async def apply_cleanup(self, interaction: discord.Interaction, _: discord.ui.Button):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content="⏳ 正在套用時間池整理，請稍候...",
+            view=self,
+        )
+        try:
+            result = await repositories.apply_availability_slot_compaction(self.slots)
+        except Exception:
+            logger.exception("套用時間池整理失敗")
+            await interaction.followup.send("❌ 套用整理失敗，請稍後再試或查看 bot log。", ephemeral=True)
+            return
+        await audit.log_event(
+            event_name="營運套用時間池整理",
+            action_type="更新",
+            operator=str(interaction.user),
+            discord_user_id=str(interaction.user.id),
+            target_db="Availability Slots",
+            before=f"{len(self.slots)} 筆未來時段",
+            after=f"更新 {len(result.updates)} 筆合併時段｜封存 {len(result.redundant)} 筆冗餘時段",
+        )
+        await interaction.followup.send(
+            "✅ 已套用時間池整理。\n"
+            f"合併更新：{len(result.updates)} 筆\n"
+            f"封存重複 / 冗餘：{len(result.redundant)} 筆",
+            ephemeral=True,
+        )
+        self.stop()
+
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️")
+    async def cancel_cleanup(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(content="已取消時間池整理，Notion 未變更。", view=None)
+        self.stop()
 
 
 class ArtistSelectView(discord.ui.View):
@@ -308,6 +434,133 @@ class ConfirmCandidateView(discord.ui.View):
 class SchedulingAdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    # ---------- /時間收集建立 ----------
+    @app_commands.command(name="時間收集建立", description="發起月度可配合時段收集，不綁定單一排課需求")
+    @app_commands.describe(
+        月份="要收集的月份，例：2026-08",
+        截止天數="幾天內要填完月度可配合時段（預設 7 天）",
+        說明="補充給藝人的說明（選填）",
+    )
+    @is_admin()
+    async def create_availability_collection(
+        self,
+        interaction: discord.Interaction,
+        月份: str,
+        截止天數: app_commands.Range[int, 1, 30] = 7,
+        說明: str = "",
+    ):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        month = time_collection.normalize_month(月份)
+        if month is None:
+            await interaction.followup.send("❌ 月份格式請用 `2026-08`。", ephemeral=True)
+            return
+        nature = time_collection.collection_nature(time_collection.DEFAULT_COLLECTION_NATURE)
+        try:
+            artists = await repositories.get_active_artists()
+        except Exception:
+            logger.exception("讀取藝人清單失敗")
+            await interaction.followup.send(
+                "❌ 讀不到 Notion 藝人資料，請確認 NOTION_TOKEN 與資料庫已 share 給 integration。",
+                ephemeral=True,
+            )
+            return
+        if not artists:
+            await interaction.followup.send(
+                "❌ Artists 裡沒有可排課藝人，請先到 Notion 補 Discord User ID。",
+                ephemeral=True,
+            )
+            return
+
+        deadline = datetime.now(config.TZ) + timedelta(days=截止天數)
+        deadline_str = deadline.strftime("%m/%d %H:%M")
+        mentions = " ".join(f"<@{a.discord_user_id}>" for a in artists)
+        description = (
+            f"{time_collection.availability_announcement_copy(month)}\n\n"
+            f"{time_collection.availability_selection_sop()}\n\n"
+            "送出時會自動檢查已安排任務；若有衝突，只排除衝突時段。\n"
+            f"⏰ **填寫截止：{deadline_str}**"
+        )
+        if 說明:
+            description += f"\n\n**補充說明**：{說明}"
+        embed = discord.Embed(
+            title=f"📅 {month} 可配合時間回報",
+            description=description,
+            color=discord.Color.blue(),
+        )
+        channel = interaction.client.get_channel(config.SCHEDULE_CHANNEL_ID)
+        announce_msg = None
+        if channel:
+            announce_msg = await channel.send(
+                content=mentions,
+                embed=embed,
+                view=make_pool_availability_view(month, deadline, nature.value),
+            )
+
+        dm_failed: list[str] = []
+        for artist in artists:
+            try:
+                user = await interaction.client.fetch_user(int(artist.discord_user_id))
+                await user.send(
+                    f"👋 {artist.name}，請回報 **{month} 可配合時間**。\n"
+                    f"{time_collection.availability_announcement_copy(month)}\n"
+                    f"{time_collection.availability_selection_sop()}\n"
+                    "送出時會自動檢查已安排任務；若有衝突，只排除衝突時段。\n"
+                    f"⏰ 截止：{deadline_str}\n"
+                    + (
+                        f"請到伺服器公告填寫：{announce_msg.jump_url}"
+                        if announce_msg else
+                        "請到排課頻道的時間收集公告填寫。"
+                    )
+                )
+            except Exception:
+                dm_failed.append(artist.name)
+
+        await audit.log_event(
+            event_name=f"建立月度可配合時段收集｜{month}",
+            action_type="建立",
+            operator=str(interaction.user),
+            discord_user_id=str(interaction.user.id),
+            target_db="Availability Slots",
+            after=f"{nature.label}｜{len(artists)} 位藝人｜截止 {deadline_str}",
+        )
+        note = f"\n⚠️ DM 未送達：{ '、'.join(dm_failed) }（可能未開私訊）" if dm_failed else ""
+        where = "已在排課頻道發布月度可配合時段收集公告" if announce_msg else "⚠️ 找不到排課頻道，公告未發出（請檢查 SCHEDULE_CHANNEL_ID）"
+        await interaction.followup.send(
+            f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}",
+            ephemeral=True,
+        )
+
+    # ---------- /時間池整理 ----------
+    @app_commands.command(name="時間池整理", description="主動整理未來可用時段，合併重疊並清除重複資料")
+    @is_admin()
+    async def cleanup_availability_pool(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            all_slots = await repositories.get_all_availability_slots()
+            now = datetime.now(config.TZ)
+            future_slots = [
+                slot for slot in all_slots
+                if slot.end and slot.end > now
+            ]
+            compaction = repositories.compact_availability_slots(future_slots)
+        except Exception:
+            logger.exception("整理時間池失敗")
+            await interaction.followup.send(
+                "❌ 產生時間池整理預覽失敗，請稍後再試或查看 bot log。",
+                ephemeral=True,
+            )
+            return
+
+        content = _cleanup_preview_text(future_slots, compaction)
+        if not compaction.updates and not compaction.redundant:
+            await interaction.followup.send(content, ephemeral=True)
+            return
+        await interaction.followup.send(
+            content,
+            view=AvailabilityCleanupPreviewView(future_slots, compaction, interaction.user),
+            ephemeral=True,
+        )
 
     # ---------- /排課建立 ----------
     @app_commands.command(name="排課建立", description="建立排課需求並通知藝人填寫可用時間")
