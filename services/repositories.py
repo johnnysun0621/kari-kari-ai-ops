@@ -122,6 +122,11 @@ def _read_url(page: dict, name: str) -> str:
     return page["properties"].get(name, {}).get("url") or ""
 
 
+def _read_multi_select(page: dict, name: str) -> list[str]:
+    items = page["properties"].get(name, {}).get("multi_select", [])
+    return [i["name"] for i in items]
+
+
 def _read_unique_id(page: dict, name: str) -> int | None:
     uid = page["properties"].get(name, {}).get("unique_id")
     return uid.get("number") if uid else None
@@ -340,6 +345,9 @@ class TaskItem:
     open_for_submission: bool = False
     latest_submission_url: str = ""
     task_id: int | None = None
+    # P0-4 任務提醒用
+    discord_visible: bool = False
+    reminder_rules: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -410,6 +418,8 @@ def _to_task(page: dict) -> TaskItem:
         open_for_submission=_read_checkbox(page, "是否開放提交"),
         latest_submission_url=_read_url(page, "最新提交 URL"),
         task_id=_read_unique_id(page, "Task ID"),
+        discord_visible=_read_checkbox(page, "Discord 可見"),
+        reminder_rules=_read_multi_select(page, "提醒規則"),
     )
 
 
@@ -696,6 +706,36 @@ def classify_tasks_for_display(tasks: list[TaskItem], now: datetime) -> dict[str
     for items in buckets.values():
         items.sort(key=_sort_key)
     return buckets
+
+
+# ---------- P0-4 任務提醒 ----------
+
+# Tasks.提醒規則 multi-select 的合法值 → 對應「截止日前幾天」
+REMINDER_RULE_DAYS = {"3 天前": 3, "1 天前": 1, "當天": 0}
+OVERDUE_STAGE = "逾期"
+
+
+def compute_due_reminder_stages(task: TaskItem, now: datetime) -> list[str]:
+    """回傳此刻該觸發的提醒階段（去重由呼叫端的 _once 處理）。
+
+    - 「3 天前 / 1 天前 / 當天」完全依任務的提醒規則設定，且用 <= 判斷：
+      loop 每 30 分鐘跑一次，若 bot 停機錯過整點，補跑時仍會觸發一次。
+    - 「逾期」不看規則、一律觸發（Kickoff：逾期需提醒或升級處理），
+      公司沒勾規則的任務也不會默默爛掉。
+    """
+    if task.status in INACTIVE_TASK_STATUSES or not task.end:
+        return []
+    if task_deadline_passed(task, now):
+        return [OVERDUE_STAGE]
+    days_left = (task.end.date() - now.date()).days
+    return [
+        rule for rule, days in REMINDER_RULE_DAYS.items()
+        if rule in task.reminder_rules and days_left <= days
+    ]
+
+
+async def update_task_status(page_id: str, status: str) -> None:
+    await notion_api.update_page(page_id, {"任務狀態": _select(status)})
 
 
 # 「撞課」情境（Tasks/Projects/Sessions）每次填時段都要算，且含兩次全表掃描。

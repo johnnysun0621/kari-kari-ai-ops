@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 
 import config
+from cogs import tasks_artist
 from services import audit, repositories
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class RemindersCog(commands.Cog):
         try:
             await self._check_fill_deadlines()
             await self._check_sla()
+            await self._check_task_reminders()
         except Exception:
             logger.exception("提醒 loop 執行失敗")
 
@@ -135,6 +137,75 @@ class RemindersCog(commands.Cog):
                     action_type="提醒", operator="System", source="System",
                     target_db="Schedule Requests", target_url=r.url,
                     after=f"已 {age_hours:.0f} 小時未完成發布通告",
+                )
+
+    # ---------- P0-4 任務提醒：截止前提醒、逾期標記＋管理層升級 ----------
+
+    async def _check_task_reminders(self):
+        now = datetime.now(config.TZ)
+        all_tasks = await repositories.get_active_tasks()
+        due: list[tuple[repositories.TaskItem, list[str]]] = []
+        for t in all_tasks:
+            if t.status == "已逾期":
+                continue  # 已升級過（狀態持久化在 Notion，重啟也不會重複轟炸）
+            stages = repositories.compute_due_reminder_stages(t, now)
+            sent = self._sent.get(f"task:{t.page_id}", set())
+            unsent = [s for s in stages if s not in sent]
+            if unsent:
+                due.append((t, unsent))
+        if not due:
+            return
+
+        artist_map = await repositories.get_artist_map()  # 一輪只撈一次
+        admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
+            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+
+        for t, stages in due:
+            for stage in stages:
+                self._once(f"task:{t.page_id}", stage)  # 一次標記全部，補跑不重複發
+            is_overdue = repositories.OVERDUE_STAGE in stages
+            deadline_text = tasks_artist._deadline_text(t, now)
+            artists = [artist_map[pid] for pid in t.artist_page_ids if pid in artist_map]
+
+            # DM 藝人（僅 Discord 可見的任務；內部行政任務不打擾藝人）
+            if t.discord_visible:
+                for a in artists:
+                    if not a.discord_user_id:
+                        continue
+                    try:
+                        user = await self.bot.fetch_user(int(a.discord_user_id))
+                        if is_overdue:
+                            await user.send(
+                                f"🔴 任務已逾期：**{t.name}**（{deadline_text}）\n"
+                                f"請盡快處理；若已完成請提交或聯絡營運。"
+                            )
+                        else:
+                            await user.send(f"⏰ 任務提醒：**{t.name}**｜{deadline_text}")
+                    except Exception:
+                        pass
+
+            if is_overdue:
+                try:
+                    await repositories.update_task_status(t.page_id, "已逾期")
+                except Exception:
+                    logger.exception("標記任務已逾期失敗")
+                names = "、".join(a.name for a in artists) or "（未關聯藝人）"
+                if admin_channel:
+                    await admin_channel.send(
+                        f"🚨 任務逾期：**{t.name}**｜{names}｜{deadline_text}"
+                    )
+                await audit.log_event(
+                    event_name=f"任務逾期升級｜{t.name}",
+                    action_type="提醒", operator="System", source="System",
+                    target_db="Tasks", target_url=t.url,
+                    after=f"{names}｜{deadline_text}",
+                )
+            else:
+                await audit.log_event(
+                    event_name=f"任務截止提醒｜{t.name}",
+                    action_type="提醒", operator="System", source="System",
+                    target_db="Tasks", target_url=t.url,
+                    after="、".join(stages) + f"｜{deadline_text}",
                 )
 
 

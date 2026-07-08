@@ -681,3 +681,37 @@ class TestClassifyTasksForDisplay:
         buckets = repositories.classify_tasks_for_display(tasks, NOW)
 
         assert [t.name for t in buckets["open"]] == ["早", "晚", "無期限"]
+
+
+def reminder_task(rules: list[str], end: datetime | None, status: str = "進行中"):
+    t = display_task(status=status, end=end)
+    t.reminder_rules = rules
+    return t
+
+
+class TestComputeDueReminderStages:
+    def test_respects_configured_rules_only(self):
+        end = datetime(2026, 7, 11, tzinfo=config.TZ)  # 3 天後
+        with_rule = reminder_task(["3 天前"], end)
+        without_rule = reminder_task(["當天"], end)
+
+        assert repositories.compute_due_reminder_stages(with_rule, NOW) == ["3 天前"]
+        assert repositories.compute_due_reminder_stages(without_rule, NOW) == []
+
+    def test_catchup_fires_missed_stage(self):
+        end = datetime(2026, 7, 9, tzinfo=config.TZ)  # 剩 1 天，但規則是 3 天前
+        t = reminder_task(["3 天前"], end)
+
+        assert repositories.compute_due_reminder_stages(t, NOW) == ["3 天前"]
+
+    def test_overdue_fires_regardless_of_rules(self):
+        t = reminder_task([], datetime(2026, 7, 1, tzinfo=config.TZ))
+
+        assert repositories.compute_due_reminder_stages(t, NOW) == [repositories.OVERDUE_STAGE]
+
+    def test_inactive_or_no_deadline_returns_nothing(self):
+        done = reminder_task(["當天"], datetime(2026, 7, 8, tzinfo=config.TZ), status="已完成")
+        no_end = reminder_task(["當天"], None)
+
+        assert repositories.compute_due_reminder_stages(done, NOW) == []
+        assert repositories.compute_due_reminder_stages(no_end, NOW) == []
