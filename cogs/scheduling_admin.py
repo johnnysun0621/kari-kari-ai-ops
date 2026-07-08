@@ -15,22 +15,23 @@ logger = logging.getLogger(__name__)
 
 # autocomplete 每個鍵擊都會觸發；用短 TTL 快取進行中需求，避免每個字都打 Notion
 # （autocomplete 有 3 秒硬上限且不能 defer，Notion 一慢就會「互動失敗」）
+# 快取以租戶的 Schedule Requests 資料源為 key，多租戶時互不汙染。
 _OPEN_REQUESTS_TTL = 20.0
-_open_requests_cache: tuple[float, list[repositories.ScheduleRequest]] | None = None
+_open_requests_cache: dict[str, tuple[float, list[repositories.ScheduleRequest]]] = {}
 
 
 def _invalidate_open_requests_cache() -> None:
-    global _open_requests_cache
-    _open_requests_cache = None
+    _open_requests_cache.clear()
 
 
 async def _get_open_requests_cached() -> list[repositories.ScheduleRequest]:
-    global _open_requests_cache
+    key = config.get_tenant().ds_schedule_requests
     now = time.monotonic()
-    if _open_requests_cache is not None and now - _open_requests_cache[0] < _OPEN_REQUESTS_TTL:
-        return _open_requests_cache[1]
+    cached = _open_requests_cache.get(key)
+    if cached is not None and now - cached[0] < _OPEN_REQUESTS_TTL:
+        return cached[1]
     requests = await repositories.get_requests_by_status(repositories.OPEN_REQUEST_STATUSES)
-    _open_requests_cache = (now, requests)
+    _open_requests_cache[key] = (now, requests)
     return requests
 
 
@@ -138,24 +139,35 @@ class AvailabilityCleanupPreviewView(discord.ui.View):
             view=self,
         )
         try:
-            result = await repositories.apply_availability_slot_compaction(self.slots)
+            # 套用前重拉最新資料：預覽到按下按鈕之間可能有人新增/刪除時段，
+            # 用舊快照套用會封存到已變動的資料（TOCTOU）。
+            all_slots = await repositories.get_all_availability_slots()
+            now = datetime.now(config.TZ)
+            current_slots = [slot for slot in all_slots if slot.end and slot.end > now]
+            result = await repositories.apply_availability_slot_compaction(current_slots)
         except Exception:
             logger.exception("套用時間池整理失敗")
             await interaction.followup.send("❌ 套用整理失敗，請稍後再試或查看 bot log。", ephemeral=True)
             return
+        changed_note = ""
+        if (len(result.updates), len(result.redundant)) != (
+            len(self.compaction.updates), len(self.compaction.redundant)
+        ):
+            changed_note = "\n⚠️ 資料在預覽後有變動，已按最新狀態整理（筆數與預覽不同）。"
         await audit.log_event(
             event_name="營運套用時間池整理",
             action_type="更新",
             operator=str(interaction.user),
             discord_user_id=str(interaction.user.id),
             target_db="Availability Slots",
-            before=f"{len(self.slots)} 筆未來時段",
+            before=f"{len(current_slots)} 筆未來時段",
             after=f"更新 {len(result.updates)} 筆合併時段｜封存 {len(result.redundant)} 筆冗餘時段",
         )
         await interaction.followup.send(
             "✅ 已套用時間池整理。\n"
             f"合併更新：{len(result.updates)} 筆\n"
-            f"封存重複 / 冗餘：{len(result.redundant)} 筆",
+            f"封存重複 / 冗餘：{len(result.redundant)} 筆"
+            + changed_note,
             ephemeral=True,
         )
         self.stop()

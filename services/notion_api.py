@@ -1,7 +1,10 @@
 """Notion REST API 薄封裝（API 版本 2025-09-03，data source 模型）。
 
-只做三件事：query data source、create page、update page。
-含 429 / 5xx 重試與統一錯誤型別，欄位組裝交給 repositories.py。
+只做四件事：query data source、retrieve page、create page、update page。
+含 429 / 5xx 重試、節流與統一錯誤型別，欄位組裝交給 repositories.py。
+
+連線與節流以 integration token 為 key（每租戶一份）：Notion 限流是
+per-integration（~3 req/s），多租戶時 A 公司的請求不會卡在 B 公司後面。
 """
 import asyncio
 import logging
@@ -15,22 +18,9 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.notion.com/v1"
 MAX_RETRIES = 3
-
-# Notion 官方限流約 3 requests/second。用全域最小間隔「主動」節流，
+# Notion 官方限流約 3 requests/second（per token）。用最小間隔「主動」節流，
 # 避免多個互動同時爆發請求觸發 429 → 連鎖重試 sleep → 互動轉圈失敗。
-_MIN_REQUEST_INTERVAL = 0.34  # 秒（≈ 3 req/s）
-_rate_lock = asyncio.Lock()
-_last_request_ts = 0.0
-
-
-async def _throttle() -> None:
-    """確保所有 Notion 請求送出間隔 >= _MIN_REQUEST_INTERVAL（全域、跨互動共用）。"""
-    global _last_request_ts
-    async with _rate_lock:
-        wait = _MIN_REQUEST_INTERVAL - (time.monotonic() - _last_request_ts)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _last_request_ts = time.monotonic()
+_MIN_REQUEST_INTERVAL = 0.34  # 秒
 
 
 class NotionAPIError(Exception):
@@ -39,36 +29,58 @@ class NotionAPIError(Exception):
         super().__init__(f"Notion API {status_code}: {message}")
 
 
-_client: httpx.AsyncClient | None = None
+class _TokenState:
+    """單一 integration token 的 HTTP 連線與節流狀態。"""
 
-
-def _get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(
+    def __init__(self, token: str, notion_version: str):
+        self.client = httpx.AsyncClient(
             base_url=BASE_URL,
             headers={
-                "Authorization": f"Bearer {config.NOTION_TOKEN}",
-                "Notion-Version": config.NOTION_VERSION,
+                "Authorization": f"Bearer {token}",
+                "Notion-Version": notion_version,
                 "Content-Type": "application/json",
             },
             timeout=30.0,
         )
-    return _client
+        self.rate_lock = asyncio.Lock()
+        self.last_request_ts = 0.0
+
+    async def throttle(self) -> None:
+        """確保同一 token 的請求送出間隔 >= _MIN_REQUEST_INTERVAL（跨互動共用）。"""
+        async with self.rate_lock:
+            wait = _MIN_REQUEST_INTERVAL - (time.monotonic() - self.last_request_ts)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self.last_request_ts = time.monotonic()
+
+
+_states: dict[str, _TokenState] = {}
+
+
+def _get_state(token: str | None = None) -> _TokenState:
+    tenant = config.get_tenant()
+    key = token or tenant.notion_token
+    state = _states.get(key)
+    if state is None or state.client.is_closed:
+        state = _TokenState(key, tenant.notion_version)
+        _states[key] = state
+    return state
 
 
 async def close_client() -> None:
-    if _client is not None and not _client.is_closed:
-        await _client.aclose()
+    for state in _states.values():
+        if not state.client.is_closed:
+            await state.client.aclose()
+    _states.clear()
 
 
 async def _request(method: str, path: str, json_body: dict | None = None) -> dict:
-    client = _get_client()
+    state = _get_state()
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
-        await _throttle()
+        await state.throttle()
         try:
-            resp = await client.request(method, path, json=json_body)
+            resp = await state.client.request(method, path, json=json_body)
         except httpx.HTTPError as e:
             last_error = e
             await asyncio.sleep(1.5 * (attempt + 1))

@@ -1,5 +1,12 @@
-"""集中設定：讀取 .env、Notion Data Source ID、時區與 SLA 常數。"""
+"""集中設定：讀取 .env、Notion Data Source ID、時區與 SLA 常數。
+
+TenantConfig 是租戶（公司）設定的唯一形狀（PROJECT_PRINCIPLES：平展化）。
+KariKari 是第一個租戶，從 .env 載入為 TENANT。
+模組層級常數是 TENANT 的向後相容別名——既有程式碼繼續可用；
+新程式碼請改吃 get_tenant() 回傳的設定物件，不要再讀模組常數。
+"""
 import os
+from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -17,49 +24,127 @@ def _env_int(name: str, default: int = 0) -> int:
         return default
 
 
+@dataclass(frozen=True)
+class TenantConfig:
+    """一間公司（租戶）的完整設定：Discord、Notion 資料層、業務常數。"""
+
+    name: str
+
+    # === Discord ===
+    discord_token: str
+    guild_id: int
+    schedule_channel_id: int
+    admin_role_id: int
+    admin_notify_channel_id: int
+
+    # === Notion ===
+    notion_token: str
+    notion_version: str
+    ds_artists: str
+    ds_schedule_requests: str
+    ds_availability_slots: str
+    ds_course_sessions: str
+    ds_audit_log: str
+    # P0-2/P0-3 使用
+    ds_tasks: str
+    ds_projects: str
+    ds_people: str
+    ds_submissions: str
+
+    # === 業務常數 ===
+    tz: ZoneInfo
+    course_types: tuple[str, ...]
+    # SLA：排課需求建立後 N 小時內要完成發布通告
+    sla_hours: int
+    sla_hard_limit_hours: int
+    # 填寫截止前幾小時開始催收
+    remind_before_deadline_hours: int
+    # 背景提醒 loop 間隔（分鐘）
+    reminder_interval_minutes: int
+    # 預設填寫截止時間（小時，從建立起算）
+    default_fill_deadline_hours: int
+
+
+def _load_karikari_from_env() -> TenantConfig:
+    """KariKari 租戶：正式資料層（2026-07-07 拍板，11 張資料庫）。
+
+    https://app.notion.com/p/38e5806f097b812aba6dc668ebb5e541
+    Data Source ID 內建預設值；Notion 端重建資料庫時才需要在 .env 覆寫。
+    """
+    schedule_channel_id = _env_int("SCHEDULE_CHANNEL_ID")
+    return TenantConfig(
+        name="KariKari",
+        discord_token=os.getenv("DISCORD_TOKEN", ""),
+        guild_id=_env_int("GUILD_ID"),
+        schedule_channel_id=schedule_channel_id,
+        admin_role_id=_env_int("ADMIN_ROLE_ID"),
+        admin_notify_channel_id=_env_int("ADMIN_NOTIFY_CHANNEL_ID", schedule_channel_id),
+        notion_token=os.getenv("NOTION_TOKEN", ""),
+        notion_version="2025-09-03",
+        ds_artists=os.getenv("NOTION_DS_ARTISTS", "c0253aec-d18c-47de-a92f-e4a6f9eda641"),
+        ds_schedule_requests=os.getenv("NOTION_DS_SCHEDULE_REQUESTS", "028529f8-42ea-41f2-ba81-68d49c438f43"),
+        ds_availability_slots=os.getenv("NOTION_DS_AVAILABILITY_SLOTS", "3726792b-a0f2-47f0-9fb2-2a49a0444266"),
+        ds_course_sessions=os.getenv("NOTION_DS_COURSE_SESSIONS", "12402cad-242d-4caf-978f-9f56b794e646"),
+        ds_audit_log=os.getenv("NOTION_DS_AUDIT_LOG", "af855535-af5a-42b7-922a-4bc96449b267"),
+        ds_tasks=os.getenv("NOTION_DS_TASKS", "f5fdde00-d0b9-4b9b-8786-06432dbdc0c9"),
+        ds_projects=os.getenv("NOTION_DS_PROJECTS", "579092eb-68ae-4f1c-99c5-253d801ee07d"),
+        ds_people=os.getenv("NOTION_DS_PEOPLE", "52413671-535d-40de-90fc-2df3c2c61f93"),
+        ds_submissions=os.getenv("NOTION_DS_SUBMISSIONS", "370b01ba-64a7-4a1e-96de-e7cb83695d58"),
+        tz=ZoneInfo("Asia/Taipei"),
+        # 課程類型（與 Notion Schedule Requests / Course Sessions 的 select 選項一致）
+        course_types=(
+            "歌唱課", "編曲課", "樂理課", "表演藝術課",
+            "舞蹈課", "音樂製作課", "企劃會議", "錄音 / 拍攝",
+        ),
+        sla_hours=48,
+        sla_hard_limit_hours=72,
+        remind_before_deadline_hours=6,
+        reminder_interval_minutes=30,
+        default_fill_deadline_hours=24,
+    )
+
+
+TENANT = _load_karikari_from_env()
+
+
+def get_tenant() -> TenantConfig:
+    """目前運行中的租戶設定。多租戶時改由 registry 依 guild 解析。"""
+    return TENANT
+
+
+# ======================================================================
+# 向後相容別名（既有程式碼使用；新程式碼請改用 get_tenant()）
+# ======================================================================
+
 # === Discord ===
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
-GUILD_ID = _env_int("GUILD_ID")
-SCHEDULE_CHANNEL_ID = _env_int("SCHEDULE_CHANNEL_ID")
-ADMIN_ROLE_ID = _env_int("ADMIN_ROLE_ID")
-ADMIN_NOTIFY_CHANNEL_ID = _env_int("ADMIN_NOTIFY_CHANNEL_ID", SCHEDULE_CHANNEL_ID)
+DISCORD_TOKEN = TENANT.discord_token
+GUILD_ID = TENANT.guild_id
+SCHEDULE_CHANNEL_ID = TENANT.schedule_channel_id
+ADMIN_ROLE_ID = TENANT.admin_role_id
+ADMIN_NOTIFY_CHANNEL_ID = TENANT.admin_notify_channel_id
 
 # === Notion ===
-NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
-NOTION_VERSION = "2025-09-03"
-
-# 正式資料層：KariKari 營運中心（2026-07-07 拍板，11 張資料庫）
-# https://app.notion.com/p/38e5806f097b812aba6dc668ebb5e541
-DS_ARTISTS = os.getenv("NOTION_DS_ARTISTS", "c0253aec-d18c-47de-a92f-e4a6f9eda641")
-DS_SCHEDULE_REQUESTS = os.getenv("NOTION_DS_SCHEDULE_REQUESTS", "028529f8-42ea-41f2-ba81-68d49c438f43")
-DS_AVAILABILITY_SLOTS = os.getenv("NOTION_DS_AVAILABILITY_SLOTS", "3726792b-a0f2-47f0-9fb2-2a49a0444266")
-DS_COURSE_SESSIONS = os.getenv("NOTION_DS_COURSE_SESSIONS", "12402cad-242d-4caf-978f-9f56b794e646")
-DS_AUDIT_LOG = os.getenv("NOTION_DS_AUDIT_LOG", "af855535-af5a-42b7-922a-4bc96449b267")
-# P0-2/P0-3 會用到（尚未接）
-DS_TASKS = os.getenv("NOTION_DS_TASKS", "f5fdde00-d0b9-4b9b-8786-06432dbdc0c9")
-DS_PROJECTS = os.getenv("NOTION_DS_PROJECTS", "579092eb-68ae-4f1c-99c5-253d801ee07d")
-DS_PEOPLE = os.getenv("NOTION_DS_PEOPLE", "52413671-535d-40de-90fc-2df3c2c61f93")
-DS_SUBMISSIONS = os.getenv("NOTION_DS_SUBMISSIONS", "370b01ba-64a7-4a1e-96de-e7cb83695d58")
+NOTION_TOKEN = TENANT.notion_token
+NOTION_VERSION = TENANT.notion_version
+DS_ARTISTS = TENANT.ds_artists
+DS_SCHEDULE_REQUESTS = TENANT.ds_schedule_requests
+DS_AVAILABILITY_SLOTS = TENANT.ds_availability_slots
+DS_COURSE_SESSIONS = TENANT.ds_course_sessions
+DS_AUDIT_LOG = TENANT.ds_audit_log
+DS_TASKS = TENANT.ds_tasks
+DS_PROJECTS = TENANT.ds_projects
+DS_PEOPLE = TENANT.ds_people
+DS_SUBMISSIONS = TENANT.ds_submissions
 
 # === 業務常數 ===
-TZ = ZoneInfo("Asia/Taipei")
-
-# 課程類型（與 Notion Schedule Requests / Course Sessions 的 select 選項一致）
-COURSE_TYPES = [
-    "歌唱課", "編曲課", "樂理課", "表演藝術課",
-    "舞蹈課", "音樂製作課", "企劃會議", "錄音 / 拍攝",
-]
-
-# SLA：排課需求建立後 48 小時內要完成發布通告，最多 72 小時
-SLA_HOURS = 48
-SLA_HARD_LIMIT_HOURS = 72
-# 填寫截止前幾小時開始催收
-REMIND_BEFORE_DEADLINE_HOURS = 6
-# 背景提醒 loop 間隔（分鐘）
-REMINDER_INTERVAL_MINUTES = 30
-
-# 預設填寫截止時間（小時，從建立起算）
-DEFAULT_FILL_DEADLINE_HOURS = 24
+TZ = TENANT.tz
+COURSE_TYPES = list(TENANT.course_types)
+SLA_HOURS = TENANT.sla_hours
+SLA_HARD_LIMIT_HOURS = TENANT.sla_hard_limit_hours
+REMIND_BEFORE_DEADLINE_HOURS = TENANT.remind_before_deadline_hours
+REMINDER_INTERVAL_MINUTES = TENANT.reminder_interval_minutes
+DEFAULT_FILL_DEADLINE_HOURS = TENANT.default_fill_deadline_hours
 
 # 候選時段在 Notion「候選時段」text 欄位中的格式：每行 "YYYY-MM-DD HH:MM~HH:MM"
+# （內部資料格式，跨租戶共用，不屬於 TenantConfig）
 CANDIDATE_LINE_FORMAT = "%Y-%m-%d %H:%M"
