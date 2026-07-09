@@ -1,10 +1,15 @@
 """Helpers for month-based availability collection UI."""
+import json
+import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-import re
+from pathlib import Path
 
 import config
 from services import timeparse
+
+logger = logging.getLogger(__name__)
 
 
 WEEKDAY_ZH = "一二三四五六日"
@@ -89,8 +94,66 @@ COLLECTION_NATURES = [
     ),
 ]
 
+# 進行中收集與已發通知會持久化到本地狀態檔：bot 重啟後催填／收齊通知不中斷、
+# 也不重複發送。這是 bot 執行期狀態、不是營運資料，所以放本地 JSON 不進 Notion。
+# 多租戶時改為每租戶一個狀態檔（路徑帶 tenant name）。
+_STATE_PATH = Path(".state/time_collection.json")
+
 _active_collections: dict[tuple[str, int], ActiveCollection] = {}
 _sent_collection_notices: set[tuple[str, int, str]] = set()
+_state_loaded = False
+
+
+def _prune_key(today: date) -> str:
+    """保留本月與未來的收集；上上個月以前的直接丟棄。"""
+    prev = today.replace(day=1) - timedelta(days=1)
+    return f"{prev.year:04d}-{prev.month:02d}"
+
+
+def _load_state() -> None:
+    global _state_loaded
+    if _state_loaded:
+        return
+    _state_loaded = True
+    try:
+        raw = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return
+    keep_from = _prune_key(datetime.now(config.TZ).date())
+    for item in raw.get("collections", []):
+        month = item.get("month", "")
+        if month < keep_from:
+            continue
+        collection = ActiveCollection(
+            month=month,
+            deadline_ts=int(item.get("deadline_ts", 0)),
+            artist_page_ids=tuple(item.get("artist_page_ids", [])),
+        )
+        _active_collections[(collection.month, collection.deadline_ts)] = collection
+    for item in raw.get("sent_notices", []):
+        if len(item) == 3 and item[0] >= keep_from:
+            _sent_collection_notices.add((item[0], int(item[1]), item[2]))
+
+
+def _save_state() -> None:
+    try:
+        _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "collections": [
+                {
+                    "month": c.month,
+                    "deadline_ts": c.deadline_ts,
+                    "artist_page_ids": list(c.artist_page_ids),
+                }
+                for c in _active_collections.values()
+            ],
+            "sent_notices": [list(key) for key in _sent_collection_notices],
+        }
+        _STATE_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+    except OSError:
+        logger.exception("時間收集狀態檔寫入失敗（提醒重啟後可能中斷）")
 
 
 def register_active_collection(
@@ -98,6 +161,7 @@ def register_active_collection(
     deadline: datetime,
     artist_page_ids: list[str],
 ) -> ActiveCollection:
+    _load_state()
     normalized_month = normalize_month(month)
     if normalized_month is None:
         raise ValueError(f"Invalid month: {month}")
@@ -107,14 +171,24 @@ def register_active_collection(
         artist_page_ids=tuple(dict.fromkeys(artist_page_ids)),
     )
     _active_collections[(collection.month, collection.deadline_ts)] = collection
+    _save_state()
     return collection
 
 
+def deregister_collection(month: str, deadline_ts: int) -> None:
+    """收集進入終態（收齊或逾期通知已發）後移除，避免提醒 loop 每輪繼續查詢。"""
+    _load_state()
+    _active_collections.pop((month, int(deadline_ts)), None)
+    _save_state()
+
+
 def active_collections() -> list[ActiveCollection]:
+    _load_state()
     return sorted(_active_collections.values(), key=lambda item: (item.month, item.deadline_ts))
 
 
 def collection_notice_once(month: str, deadline_ts: int, stage: str) -> bool:
+    _load_state()
     normalized_month = normalize_month(month)
     if normalized_month is None:
         raise ValueError(f"Invalid month: {month}")
@@ -122,12 +196,23 @@ def collection_notice_once(month: str, deadline_ts: int, stage: str) -> bool:
     if key in _sent_collection_notices:
         return False
     _sent_collection_notices.add(key)
+    _save_state()
     return True
 
 
 def clear_active_collections_for_tests() -> None:
+    global _state_loaded
     _active_collections.clear()
     _sent_collection_notices.clear()
+    _state_loaded = False
+
+
+def reload_state_for_tests() -> None:
+    """模擬 bot 重啟：清掉記憶體、下次存取時從狀態檔重載。"""
+    global _state_loaded
+    _active_collections.clear()
+    _sent_collection_notices.clear()
+    _state_loaded = False
 
 
 def availability_announcement_copy(month: str) -> str:

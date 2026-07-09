@@ -181,6 +181,8 @@ class RemindersCog(commands.Cog):
                         f"已填藝人：{names}\n"
                         f"可以開始使用 `/時間池比對 月份:{collection.month} 時長分鐘:60` 查看共同空檔。"
                     )
+                # 終態：之後不再對這個收集做每輪查詢
+                time_collection.deregister_collection(collection.month, collection.deadline_ts)
                 continue
             if not missing:
                 continue
@@ -224,6 +226,8 @@ class RemindersCog(commands.Cog):
                         target_db="Availability Slots",
                         after=f"逾期未填：{names}",
                     )
+                # 終態：逾期通知已發，之後不再對這個收集做每輪查詢
+                time_collection.deregister_collection(collection.month, collection.deadline_ts)
 
     async def _check_sla(self):
         now = datetime.now(config.TZ)

@@ -38,7 +38,7 @@ python bot.py                      # 需 .env（見 README）
 - [services/notion_api.py](services/notion_api.py)：Notion 薄封裝；**per-token 連線＋節流（~3 req/s）**
 - [services/repositories.py](services/repositories.py)：**中文欄位名 → API payload 的唯一對應處**；
   Notion 改欄位名只改這裡。含 dataclass 模型、純函式（分區/去重/提醒階段）
-- [cogs/](cogs/)：channel_guard（頻道分流）、scheduling_admin（排課管理）、
+- [cogs/](cogs/)：channel_guard（頻道分流＋公告頻道 fallback）、scheduling_admin（排課管理）、
   scheduling_artist（藝人填時段）、tasks_artist（任務查詢）、reminders（背景提醒 loop，30 分鐘一輪）
 - 測試全是純函式測試（不打網路）；async 用 `asyncio.run` ＋ monkeypatch `notion_api.query_data_source`
 
@@ -67,6 +67,7 @@ python bot.py                      # 需 .env（見 README）
 - 速率 ~3 req/s per integration token——這是產品天花板，效能問題先想快取，不是拆節流
 - 欄位級 schema 與功能對應：見 RESEARCH.md 第二節
 - Audit Log 寫入失敗不阻斷主流程（audit.py 已包好）
+- 月度收集進行中狀態持久化在 `.state/time_collection.json`（bot 本機狀態，非營運資料；已 gitignore）
 
 ## 目前狀態（2026-07-09）
 

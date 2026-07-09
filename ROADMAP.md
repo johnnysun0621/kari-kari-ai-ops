@@ -46,6 +46,18 @@
 
 ## 進度日誌
 
+### 2026-07-09 晚（頻道分類改善＋提醒持久化）
+
+- `3453158` Johnny 重整輪入庫：雙頻道分流（channel_guard）、/時間池比對、/補填時間、
+  月度池催填提醒、日期 7 天分頁＋模式按鈕、管理指令 UI 隱藏、7 份新文件、117 tests
+- 公告頻道分離：新增 `ANNOUNCE_CHANNEL_ID`（未設定 fallback 時間資訊彙整），三種公告
+  （排課需求／月度收集／正式通告）改發公告區；頻道語意 helper 集中在 channel_guard
+- 月度池提醒持久化：`.state/time_collection.json`（重啟不失憶、通知不重發）；
+  終態（收齊／逾期通知已發）自動 deregister，提醒 loop 不再對已結束收集重複查詢
+- 文件同步：DISCORD_CHANNELS 頻道表 2→4（公告區＋營運內部）、Kickoff 六區對照、
+  提醒流向表、私人區＝ephemeral 刻意決策；PLAYBOOK／COMMANDS／README／CLAUDE 同步
+- 測試 117 → 124 全綠
+
 ### 2026-07-09（分支 `feat/p0-foundation`）
 
 - 新增 `/時間池比對`：管理者選月份、需要時長，再手動多選藝人，直接看月度時間池共同空檔

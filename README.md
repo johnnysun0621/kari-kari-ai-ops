@@ -50,6 +50,7 @@ python bot.py
 | `ADMIN_ROLE_ID` | 控方 / 管理者身分組 ID（管理指令權限） |
 | `TASK_CHANNEL_ID` | 任務查詢入口頻道 ID（留空則不限制任務指令頻道） |
 | `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（留空則用排課頻道） |
+| `ANNOUNCE_CHANNEL_ID` | 公告區頻道 ID（留空則公告發到時間資訊彙整；建議設唯讀頻道） |
 | `NOTION_TOKEN` | Notion → Settings → Integrations 建立的 internal integration secret |
 
 這些 ID 都是租戶設定：換到其他公司時，頻道名稱 / 用途可以維持一致，但實際 Discord ID、role ID、Notion Data Source ID 會改。  

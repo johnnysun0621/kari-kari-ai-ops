@@ -222,3 +222,53 @@ class TestActiveCollectionRegistry:
             assert "Invalid month" in str(exc)
         else:
             raise AssertionError("expected ValueError")
+
+
+class TestActiveCollectionPersistence:
+    def test_collections_survive_restart(self):
+        deadline = datetime(2026, 8, 1, 12, 0, tzinfo=config.TZ)
+        collection = time_collection.register_active_collection(
+            "2026-08", deadline, ["artist-1", "artist-2"]
+        )
+
+        time_collection.reload_state_for_tests()  # 模擬 bot 重啟
+
+        assert time_collection.active_collections() == [collection]
+
+    def test_sent_notices_survive_restart(self):
+        assert time_collection.collection_notice_once("2026-08", 123, "pre_deadline")
+
+        time_collection.reload_state_for_tests()  # 模擬 bot 重啟
+
+        assert not time_collection.collection_notice_once("2026-08", 123, "pre_deadline")
+        assert time_collection.collection_notice_once("2026-08", 123, "post_deadline")
+
+    def test_deregister_removes_collection_across_restart(self):
+        deadline = datetime(2026, 8, 1, 12, 0, tzinfo=config.TZ)
+        collection = time_collection.register_active_collection(
+            "2026-08", deadline, ["artist-1"]
+        )
+
+        time_collection.deregister_collection(collection.month, collection.deadline_ts)
+        time_collection.reload_state_for_tests()
+
+        assert time_collection.active_collections() == []
+
+    def test_stale_months_are_pruned_on_load(self):
+        old_deadline = datetime(2025, 1, 5, 12, 0, tzinfo=config.TZ)
+        current = time_collection.register_active_collection(
+            "2099-01", datetime(2099, 1, 5, tzinfo=config.TZ), ["artist-1"]
+        )
+        time_collection.register_active_collection("2025-01", old_deadline, ["artist-1"])
+
+        time_collection.reload_state_for_tests()
+
+        assert time_collection.active_collections() == [current]
+
+    def test_corrupt_state_file_is_ignored(self):
+        time_collection._STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        time_collection._STATE_PATH.write_text("not json", encoding="utf-8")
+
+        time_collection.reload_state_for_tests()
+
+        assert time_collection.active_collections() == []  # 壞檔不炸、當空狀態

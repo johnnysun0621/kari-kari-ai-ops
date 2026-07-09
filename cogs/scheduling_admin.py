@@ -281,7 +281,7 @@ class ArtistSelectView(discord.ui.View):
             await interaction.followup.send("❌ 建立 Notion 排課需求失敗，請確認 integration 權限。", ephemeral=True)
             return
 
-        channel = interaction.client.get_channel(config.SCHEDULE_CHANNEL_ID)
+        channel = interaction.client.get_channel(channel_guard.announce_channel_id())
         mentions = " ".join(f"<@{a.discord_user_id}>" for a in chosen)
         deadline_str = p["deadline"].strftime("%m/%d %H:%M")
         embed = discord.Embed(
@@ -310,7 +310,7 @@ class ArtistSelectView(discord.ui.View):
                 await user.send(
                     f"👋 {a.name}，你有新的排課需要填寫可用時間：**{p['name']}**（{p['course_type']}）\n"
                     f"⏰ 截止：{deadline_str}\n"
-                    + (f"請到伺服器點擊公告按鈕填寫：{announce_msg.jump_url}" if announce_msg else "請到排課頻道的公告填寫。")
+                    + (f"請到伺服器點擊公告按鈕填寫：{announce_msg.jump_url}" if announce_msg else "請到公告頻道的公告填寫。")
                 )
             except Exception:
                 dm_failed.append(a.name)
@@ -323,7 +323,7 @@ class ArtistSelectView(discord.ui.View):
             after=f"{p['course_type']}｜{p['duration']}分｜{len(chosen)}位藝人｜截止 {deadline_str}",
         )
         note = f"\n⚠️ DM 未送達：{ '、'.join(dm_failed) }（可能未開私訊）" if dm_failed else ""
-        where = "已在排課頻道發布公告" if announce_msg else "⚠️ 找不到排課頻道，公告未發出（請檢查 SCHEDULE_CHANNEL_ID）"
+        where = "已在公告頻道發布公告" if announce_msg else "⚠️ 找不到公告頻道，公告未發出（請檢查 ANNOUNCE_CHANNEL_ID / SCHEDULE_CHANNEL_ID）"
         await interaction.followup.send(
             f"✅ 排課需求已建立：**{p['name']}**（{len(chosen)} 位藝人）\n{where}{note}", ephemeral=True
         )
@@ -526,7 +526,7 @@ class FinalizeModal(discord.ui.Modal, title="確認最終上課時間"):
             ),
             color=discord.Color.gold(),
         )
-        channel = interaction.client.get_channel(config.SCHEDULE_CHANNEL_ID)
+        channel = interaction.client.get_channel(channel_guard.announce_channel_id())
         notify_parts = []
         if channel:
             msg = await channel.send(content=mentions, embed=embed)
@@ -647,7 +647,7 @@ class SchedulingAdminCog(commands.Cog):
             description=description,
             color=discord.Color.blue(),
         )
-        channel = interaction.client.get_channel(config.SCHEDULE_CHANNEL_ID)
+        channel = interaction.client.get_channel(channel_guard.announce_channel_id())
         announce_msg = None
         if channel:
             announce_msg = await channel.send(
@@ -669,7 +669,7 @@ class SchedulingAdminCog(commands.Cog):
                     + (
                         f"請到伺服器公告填寫：{announce_msg.jump_url}"
                         if announce_msg else
-                        "請到排課頻道的時間收集公告填寫。"
+                        "請到公告頻道的時間收集公告填寫。"
                     )
                 )
             except Exception:
@@ -684,7 +684,7 @@ class SchedulingAdminCog(commands.Cog):
             after=f"{nature.label}｜{len(artists)} 位藝人｜截止 {deadline_str}",
         )
         note = f"\n⚠️ DM 未送達：{ '、'.join(dm_failed) }（可能未開私訊）" if dm_failed else ""
-        where = "已在排課頻道發布月度可配合時段收集公告" if announce_msg else "⚠️ 找不到排課頻道，公告未發出（請檢查 SCHEDULE_CHANNEL_ID）"
+        where = "已在公告頻道發布月度可配合時段收集公告" if announce_msg else "⚠️ 找不到公告頻道，公告未發出（請檢查 ANNOUNCE_CHANNEL_ID / SCHEDULE_CHANNEL_ID）"
         await interaction.followup.send(
             f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}",
             ephemeral=True,

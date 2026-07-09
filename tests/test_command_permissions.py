@@ -51,3 +51,17 @@ def test_schedule_channel_restricts_when_configured(monkeypatch):
     assert channel_guard.is_schedule_channel(789)
     assert not channel_guard.is_schedule_channel(123)
     assert channel_guard.schedule_channel_message() == "請到 <#789> 使用這個時間 / 排課指令。"
+
+
+def test_announce_channel_falls_back_to_schedule_channel(monkeypatch):
+    monkeypatch.setattr(channel_guard.config, "ANNOUNCE_CHANNEL_ID", 0)
+    monkeypatch.setattr(channel_guard.config, "SCHEDULE_CHANNEL_ID", 789)
+
+    assert channel_guard.announce_channel_id() == 789  # 未設定＝行為不變
+
+
+def test_announce_channel_used_when_configured(monkeypatch):
+    monkeypatch.setattr(channel_guard.config, "ANNOUNCE_CHANNEL_ID", 555)
+    monkeypatch.setattr(channel_guard.config, "SCHEDULE_CHANNEL_ID", 789)
+
+    assert channel_guard.announce_channel_id() == 555
