@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from cogs import channel_guard
 from cogs.scheduling_admin import is_admin
 from services import repositories
 
@@ -79,6 +80,8 @@ class TasksCog(commands.Cog):
 
     @app_commands.command(name="我的任務", description="查看我的未完成、即將到期與待審核任務")
     async def my_tasks(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_task_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if artist is None:
@@ -104,8 +107,11 @@ class TasksCog(commands.Cog):
         )
 
     @app_commands.command(name="任務總覽", description="管理端：全部未結案任務（待審核／逾期／即將到期）")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def task_overview(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_task_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             tasks = await repositories.get_active_tasks()

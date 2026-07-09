@@ -6,7 +6,7 @@ from discord.ext import commands, tasks
 
 import config
 from cogs import tasks_artist
-from services import audit, repositories
+from services import audit, repositories, time_collection
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ class RemindersCog(commands.Cog):
     async def check_loop(self):
         try:
             await self._check_fill_deadlines()
+            await self._check_monthly_pool_deadlines()
             await self._check_sla()
             await self._check_task_reminders()
         except Exception:
@@ -111,6 +112,119 @@ class RemindersCog(commands.Cog):
                         after=f"逾期未填：{names}",
                     )
 
+    async def _monthly_pool_progress(
+        self,
+        collection: time_collection.ActiveCollection,
+    ) -> tuple[
+        list[repositories.Artist],
+        list[repositories.Artist],
+        repositories.MonthlyPoolProgress,
+    ]:
+        artists = await repositories.get_artists_by_ids(list(collection.artist_page_ids))
+        artist_by_id = {artist.page_id: artist for artist in artists}
+        progress = await repositories.get_monthly_pool_progress(
+            collection.month,
+            list(collection.artist_page_ids),
+        )
+        missing = [
+            artist_by_id[page_id] for page_id in progress.missing_artist_page_ids
+            if page_id in artist_by_id
+        ]
+        return artists, missing, progress
+
+    async def _dm_monthly_pool_missing(
+        self,
+        artists: list[repositories.Artist],
+        month: str,
+        deadline: datetime,
+        overdue: bool = False,
+    ) -> int:
+        sent = 0
+        for artist in artists:
+            if not artist.discord_user_id:
+                continue
+            try:
+                user = await self.bot.fetch_user(int(artist.discord_user_id))
+                if overdue:
+                    await user.send(
+                        f"🔴 **{month} 月度可配合時段已截止**，你還沒有完成回填。\n"
+                        "請盡快回到 Discord 公告填寫，或直接聯絡營運。"
+                    )
+                else:
+                    await user.send(
+                        f"⏰ **{month} 月度可配合時段即將截止**"
+                        f"（{deadline.strftime('%m/%d %H:%M')}）。\n"
+                        "請回到 Discord 公告填寫可配合時間。"
+                    )
+                sent += 1
+            except Exception:
+                pass
+        return sent
+
+    async def _check_monthly_pool_deadlines(self):
+        collections = time_collection.active_collections()
+        if not collections:
+            return
+        now = datetime.now(config.TZ)
+        admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
+            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+        for collection in collections:
+            deadline = datetime.fromtimestamp(collection.deadline_ts, tz=config.TZ)
+            artists, missing, progress = await self._monthly_pool_progress(collection)
+            if progress.is_complete:
+                if time_collection.collection_notice_once(
+                    collection.month, collection.deadline_ts, "all_done"
+                ) and admin_channel:
+                    names = "、".join(artist.name for artist in artists) or "（無）"
+                    await admin_channel.send(
+                        f"✅ **{collection.month} 月度時間池已收齊**\n"
+                        f"已填藝人：{names}\n"
+                        f"可以開始使用 `/時間池比對 月份:{collection.month} 時長分鐘:60` 查看共同空檔。"
+                    )
+                continue
+            if not missing:
+                continue
+            names = "、".join(artist.name for artist in missing)
+            mentions = " ".join(f"<@{artist.discord_user_id}>" for artist in missing if artist.discord_user_id)
+            if now < deadline <= now + timedelta(hours=config.REMIND_BEFORE_DEADLINE_HOURS):
+                if time_collection.collection_notice_once(
+                    collection.month, collection.deadline_ts, "pre_deadline"
+                ):
+                    dm_sent = await self._dm_monthly_pool_missing(missing, collection.month, deadline)
+                    if admin_channel:
+                        await admin_channel.send(
+                            f"⏰ **{collection.month} 月度時間池催填**\n"
+                            f"未填：{names}\n"
+                            f"已 DM push：{dm_sent}/{len(missing)} 位"
+                            + (f"\n{mentions}" if mentions else "")
+                        )
+                    await audit.log_event(
+                        event_name=f"月度時間池截止前催填｜{collection.month}",
+                        action_type="提醒", operator="System", source="System",
+                        target_db="Availability Slots",
+                        after=f"未填：{names}",
+                    )
+            elif now > deadline:
+                if time_collection.collection_notice_once(
+                    collection.month, collection.deadline_ts, "post_deadline"
+                ):
+                    dm_sent = await self._dm_monthly_pool_missing(
+                        missing, collection.month, deadline, overdue=True
+                    )
+                    if admin_channel:
+                        await admin_channel.send(
+                            f"🔴 **{collection.month} 月度時間池已截止，仍有人未填**\n"
+                            f"未填：{names}\n"
+                            f"已 DM push：{dm_sent}/{len(missing)} 位"
+                            + (f"\n{mentions}" if mentions else "")
+                        )
+                    await audit.log_event(
+                        event_name=f"月度時間池截止後未填通知｜{collection.month}",
+                        action_type="提醒", operator="System", source="System",
+                        target_db="Availability Slots",
+                        after=f"逾期未填：{names}",
+                    )
+
     async def _check_sla(self):
         now = datetime.now(config.TZ)
         requests = await repositories.get_requests_by_status(repositories.OPEN_REQUEST_STATUSES)
@@ -157,7 +271,8 @@ class RemindersCog(commands.Cog):
             return
 
         artist_map = await repositories.get_artist_map()  # 一輪只撈一次
-        admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
+        admin_channel = self.bot.get_channel(config.TASK_CHANNEL_ID) \
+            or self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
             or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
 
         for t, stages in due:
@@ -167,7 +282,7 @@ class RemindersCog(commands.Cog):
             deadline_text = tasks_artist._deadline_text(t, now)
             artists = [artist_map[pid] for pid in t.artist_page_ids if pid in artist_map]
 
-            # DM 藝人（僅 Discord 可見的任務；內部行政任務不打擾藝人）
+            # DM 藝人（僅 Discord 顯示的任務；內部行政任務不打擾藝人）
             if t.discord_visible:
                 for a in artists:
                     if not a.discord_user_id:

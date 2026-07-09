@@ -1,13 +1,14 @@
 """藝人端：填寫可用時間按鈕（persistent）、時段 Modal、/我的時段。"""
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 import config
+from cogs import channel_guard
 from services import audit, repositories, timeparse
 from services import time_collection
 
@@ -198,6 +199,84 @@ def _slot_note(base_parts: list[str], warnings: list[repositories.ScheduleWarnin
     note_parts = list(base_parts)
     _append_note_part(note_parts, _warning_note(warnings))
     return "｜".join(note_parts)
+
+
+_sent_pool_artist_done_notices: set[str] = set()
+
+
+def _name_list(names: list[str]) -> str:
+    return "、".join(names) if names else "無"
+
+
+def pool_artist_done_notice(
+    month: str,
+    artist: repositories.Artist,
+    artists: list[repositories.Artist],
+    progress: repositories.MonthlyPoolProgress,
+) -> str:
+    name_of = {item.page_id: item.name for item in artists}
+    missing_names = [name_of[page_id] for page_id in progress.missing_artist_page_ids if page_id in name_of]
+    filled_count = len(progress.filled_artist_page_ids)
+    lines = [
+        f"🟢 **{artist.name} 已完成 {month} 月度可配合時段回填**",
+        f"目前進度：{filled_count}/{len(artists)} 位",
+    ]
+    if missing_names:
+        lines.append(f"未填：{_name_list(missing_names)}")
+    return "\n".join(lines)
+
+
+def pool_all_done_notice(month: str, artists: list[repositories.Artist]) -> str:
+    names = _name_list([artist.name for artist in artists])
+    return (
+        f"✅ **{month} 月度時間池已收齊**\n"
+        f"已填藝人：{names}\n"
+        f"可以開始使用 `/時間池比對 月份:{month} 時長分鐘:60` 查看共同空檔。"
+    )
+
+
+def _collection_for(month: str, deadline_ts: int) -> time_collection.ActiveCollection | None:
+    for collection in time_collection.active_collections():
+        if collection.month == month and collection.deadline_ts == deadline_ts:
+            return collection
+    return None
+
+
+async def _pool_collection_artists(
+    month: str,
+    deadline_ts: int,
+) -> list[repositories.Artist]:
+    collection = _collection_for(month, deadline_ts)
+    if collection:
+        return await repositories.get_artists_by_ids(list(collection.artist_page_ids))
+    return await repositories.get_active_artists()
+
+
+async def _send_pool_completion_notifications(
+    interaction: discord.Interaction,
+    artist: repositories.Artist,
+    month: str,
+    deadline_ts: int,
+) -> None:
+    admin_channel = interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
+        or interaction.client.get_channel(config.SCHEDULE_CHANNEL_ID)
+    if not admin_channel:
+        return
+    try:
+        artists = await _pool_collection_artists(month, deadline_ts)
+        expected_ids = [item.page_id for item in artists]
+        progress = await repositories.get_monthly_pool_progress(month, expected_ids)
+    except Exception:
+        logger.exception("月度時間池完成通知計算失敗")
+        return
+
+    artist_notice_key = f"{month}:{deadline_ts}:{artist.page_id}"
+    if artist_notice_key not in _sent_pool_artist_done_notices:
+        await admin_channel.send(pool_artist_done_notice(month, artist, artists, progress))
+        _sent_pool_artist_done_notices.add(artist_notice_key)
+
+    if progress.is_complete and time_collection.collection_notice_once(month, deadline_ts, "all_done"):
+        await admin_channel.send(pool_all_done_notice(month, artists))
 
 
 class AvailabilityModal(discord.ui.Modal):
@@ -463,7 +542,7 @@ class PoolAvailabilityModal(discord.ui.Modal):
                 + "\n".join(duplicate_lines)
                 + _conflict_text(conflicts)
                 + _warning_text(warnings)
-                + "\n\n若要修改，請用 `/我的時段` 刪除後再重新填寫。",
+                + "\n\n若要修改，請用 `/我的時段` 刪除後，再用 `/補填時間` 重新填寫。",
                 view=PoolAfterSubmitView(self.month, self.deadline_ts, self.nature_code),
                 ephemeral=True,
             )
@@ -513,6 +592,11 @@ class PoolAfterSubmitView(InteractionDebugView):
     async def done(self, interaction: discord.Interaction, _: discord.ui.Button):
         await interaction.response.edit_message(content="⏳ 正在整理你的時間池…", view=None)
         cleanup_text = await _cleanup_notice_for_user(interaction)
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if artist is not None:
+            await _send_pool_completion_notifications(
+                interaction, artist, self.month, self.deadline_ts
+            )
         await interaction.edit_original_response(
             content="✅ 感謝填寫！月度可配合時段已記錄，營運會用來初步安排課程 / 錄音 / 通告；正式安排前仍會再確認。" + cleanup_text
         )
@@ -720,7 +804,7 @@ async def _submit_pool_slots(
             + skipped_text
             + _conflict_text(conflicts)
             + _warning_text(warnings)
-            + "\n\n若要修改，請用 `/我的時段` 刪除後再重新填寫。",
+            + "\n\n若要修改，請用 `/我的時段` 刪除後，再用 `/補填時間` 重新填寫。",
             view=PoolContinueView(month, deadline_ts, nature_code, week_values),
             ephemeral=True,
         )
@@ -788,30 +872,49 @@ class ModeTimeModal(discord.ui.Modal):
         )
 
 
-class ModeSelect(discord.ui.Select):
-    def __init__(self, parent_view: "DatePresetView"):
-        self.parent_view = parent_view
-        options = [
-            discord.SelectOption(
-                label=mode.label,
-                value=mode.value,
-                description=mode.description,
-                default=mode.value == parent_view.mode,
-            )
-            for mode in time_collection.AVAILABILITY_MODES
-        ]
+class ApplyModeButton(discord.ui.Button):
+    def __init__(
+        self,
+        parent_view: "DatePresetView",
+        label: str,
+        mode: str,
+        *,
+        style: discord.ButtonStyle = discord.ButtonStyle.secondary,
+    ):
         super().__init__(
-            placeholder="選擇可用模式…",
+            label=label,
+            style=style,
             row=1,
-            min_values=1,
-            max_values=1,
-            options=options,
+            disabled=not parent_view.day_values,
         )
+        self.parent_view = parent_view
+        self.mode = mode
 
     async def callback(self, interaction: discord.Interaction):
-        self.parent_view.mode = self.values[0]
-        view = self.parent_view.page_view(self.parent_view.page_index)
-        await interaction.response.edit_message(content=view.prompt(), view=view)
+        if not self.parent_view.day_values:
+            await interaction.response.send_message("請先勾選要套用的日期。", ephemeral=True)
+            return
+        if self.mode == "all_day":
+            await _submit_pool_slots(
+                interaction,
+                self.parent_view.month,
+                self.parent_view.deadline_ts,
+                self.parent_view.nature_code,
+                self.parent_view.week_values,
+                self.parent_view.day_values,
+                self.mode,
+            )
+            return
+        await interaction.response.send_modal(
+            ModeTimeModal(
+                self.parent_view.month,
+                self.parent_view.deadline_ts,
+                self.parent_view.nature_code,
+                self.parent_view.week_values,
+                self.parent_view.day_values,
+                self.mode,
+            )
+        )
 
 
 class DatePresetView(InteractionDebugView):
@@ -830,8 +933,8 @@ class DatePresetView(InteractionDebugView):
         self.deadline_ts = deadline_ts
         self.week_values = week_values
         self.nature_code = nature_code
-        # 正常流程 week_values 必非空；用 [[]] 保底避免空清單造成 day_pages[0] IndexError
-        self.day_pages = time_collection.day_option_pages(week_values) or [[]]
+        # 正常流程 week_values 必非空；每頁 7 天，避免 Discord Select 25 個選項上限造成誤導。
+        self.day_pages = time_collection.day_option_pages(week_values, page_size=7) or [[]]
         self.page_index = max(0, min(page_index, len(self.day_pages) - 1))
         self.current_day_options = self.day_pages[self.page_index]
         self.all_day_values = [
@@ -839,9 +942,19 @@ class DatePresetView(InteractionDebugView):
         ]
         self.day_values = self._sort_day_values(selected_day_values or [])
         self.mode = selected_mode
-        if self.current_day_options:  # Discord Select 至少要 1 個選項
+        if self.current_day_options:
             self.add_item(DaySelect(self))
-        self.add_item(ModeSelect(self))
+        self.add_item(
+            ApplyModeButton(
+                self,
+                "整天可",
+                "all_day",
+                style=discord.ButtonStyle.primary,
+            )
+        )
+        self.add_item(ApplyModeButton(self, "某時間後", "after"))
+        self.add_item(ApplyModeButton(self, "某時間前", "before"))
+        self.add_item(ApplyModeButton(self, "指定時段", "specific"))
         if len(self.day_pages) > 1:
             prev_button = discord.ui.Button(
                 label="上一頁",
@@ -864,6 +977,9 @@ class DatePresetView(InteractionDebugView):
         value_set = set(values)
         return [value for value in self.all_day_values if value in value_set]
 
+    def _all_days_selected(self) -> bool:
+        return bool(self.all_day_values) and len(self.day_values) == len(self.all_day_values)
+
     def update_day_values(self, page_values: list[str]):
         current_values = {option.value for option in self.current_day_options}
         next_values = [
@@ -873,17 +989,15 @@ class DatePresetView(InteractionDebugView):
         self.day_values = self._sort_day_values(next_values)
 
     def prompt(self) -> str:
-        mode_label = next(
-            (mode.label for mode in time_collection.AVAILABILITY_MODES if mode.value == self.mode),
-            None,
-        )
-        mode_text = f"｜時間：**{mode_label}**" if mode_label else ""
         page_count = len(self.day_pages)
+        page_days = "、".join(day.label for day in self.current_day_options)
+        selected_hint = time_collection.availability_page_hint(len(self.day_values), self.mode)
         return (
-            f"選日期與時間：\n"
+            f"勾同一批日期，套用同一個時段：\n"
             f"日期頁：**{self.page_index + 1}/{page_count}**｜"
-            f"已選 **{len(self.day_values)}** 天{mode_text}\n"
-            f"{time_collection.availability_page_hint(len(self.day_values), self.mode)}"
+            f"本頁：{page_days}\n"
+            f"已勾 **{len(self.day_values)} 天**。{selected_hint}\n"
+            "日期時間不同時，分批勾選；同一天有多段時間，就再勾同一天填下一段。"
         )
 
     def page_view(self, page_index: int) -> "DatePresetView":
@@ -911,37 +1025,14 @@ class DatePresetView(InteractionDebugView):
             view=view,
         )
 
-    @discord.ui.button(label="送出所選時段", style=discord.ButtonStyle.success, emoji="✅", row=2)
-    async def submit(self, interaction: discord.Interaction, _: discord.ui.Button):
-        if not self.day_values or not self.mode:
-            await interaction.response.send_message("❌ 請先選日期和可用模式。", ephemeral=True)
-            return
-        if self.mode == "all_day":
-            await _submit_pool_slots(
-                interaction, self.month, self.deadline_ts,
-                self.nature_code, self.week_values, self.day_values, self.mode,
-            )
-            return
-        await interaction.response.send_modal(
-            ModeTimeModal(
-                self.month,
-                self.deadline_ts,
-                self.nature_code,
-                self.week_values,
-                self.day_values,
-                self.mode,
-            )
-        )
-        self.stop()
-
-    @discord.ui.button(label="改選週次", style=discord.ButtonStyle.secondary, emoji="↩️", row=2)
+    @discord.ui.button(label="改選週次", style=discord.ButtonStyle.secondary, emoji="↩️", row=4)
     async def back(self, interaction: discord.Interaction, _: discord.ui.Button):
         await interaction.response.edit_message(
             content=f"請先選擇 **{self.month}** 要填寫的週次：",
             view=WeekSelectView(self.month, self.deadline_ts, self.nature_code),
         )
 
-    @discord.ui.button(label="自訂時間 / 備註", style=discord.ButtonStyle.secondary, emoji="✏️", row=2)
+    @discord.ui.button(label="自訂時間 / 備註", style=discord.ButtonStyle.secondary, emoji="✏️", row=4)
     async def custom_time(self, interaction: discord.Interaction, _: discord.ui.Button):
         await interaction.response.send_modal(
             PoolAvailabilityModal(self.month, self.deadline_ts, self.nature_code)
@@ -991,6 +1082,11 @@ class PoolContinueView(InteractionDebugView):
     async def done(self, interaction: discord.Interaction, _: discord.ui.Button):
         await interaction.response.edit_message(content="⏳ 正在整理你的時間池…", view=None)
         cleanup_text = await _cleanup_notice_for_user(interaction)
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if artist is not None:
+            await _send_pool_completion_notifications(
+                interaction, artist, self.month, self.deadline_ts
+            )
         await interaction.edit_original_response(
             content="✅ 感謝填寫！月度可配合時段已記錄，營運會用來初步安排課程 / 錄音 / 通告；正式安排前仍會再確認。" + cleanup_text
         )
@@ -1059,7 +1155,7 @@ class PoolAvailabilityButton(
             return
         await interaction.response.send_message(
             f"回報 **{self.month} 可配合時間**。\n"
-            "先選週次與日期；送出時會自動檢查已安排任務，若有衝突只排除衝突時段。\n\n"
+            "先選週次，再勾同一批日期套用同一段時間；送出時會自動檢查已安排任務，若有衝突只排除衝突時段。\n\n"
             f"{time_collection.availability_selection_sop()}",
             view=WeekSelectView(self.month, self.deadline_ts, self.nature_code),
             ephemeral=True,
@@ -1164,7 +1260,7 @@ class MySlotsDeleteView(InteractionDebugView):
         await interaction.followup.send(
             "🗑️ 已刪除以下時段，Notion 端也會同步移除：\n"
             + "\n".join(f"・{label}" for label in labels)
-            + "\n\n可再按公告上的按鈕重新填寫。",
+            + "\n\n可直接使用 `/補填時間` 重新填寫，不需要回去找舊公告。",
             ephemeral=True,
         )
 
@@ -1173,8 +1269,42 @@ class SchedulingArtistCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    @app_commands.command(name="補填時間", description="不用找舊公告，直接補填指定月份的月度可配合時間")
+    @app_commands.describe(月份="要補填的月份，例如 2026-08")
+    async def refill_time(self, interaction: discord.Interaction, 月份: str):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
+        normalized_month = time_collection.normalize_month(月份)
+        if normalized_month is None:
+            await interaction.response.send_message(
+                "❌ 月份格式不正確，請輸入像 `2026-08` 這樣的格式。",
+                ephemeral=True,
+            )
+            return
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if artist is None:
+            await interaction.response.send_message(
+                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 設定。",
+                ephemeral=True,
+            )
+            return
+        deadline_ts = int((datetime.now(config.TZ) + timedelta(days=3650)).timestamp())
+        await interaction.response.send_message(
+            f"補填 **{normalized_month} 可配合時間**。\n"
+            "不用找舊公告；如果要修改已填資料，請先用 `/我的時段` 刪除錯的時段，再從這裡重填。\n\n"
+            f"{time_collection.availability_selection_sop()}",
+            view=WeekSelectView(
+                normalized_month,
+                deadline_ts,
+                time_collection.DEFAULT_COLLECTION_NATURE,
+            ),
+            ephemeral=True,
+        )
+
     @app_commands.command(name="我的時段", description="查看並管理我已填寫的可用時間")
     async def my_slots(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if artist is None:
@@ -1255,7 +1385,7 @@ class SchedulingArtistCog(commands.Cog):
                     if cleanup_count else ""
                 )
                 + "\n\n月度可配合時段只供營運初步排程參考，不是正式行程。"
-                + "\n要取消或改時間：在下方選單勾選要刪除的時段，再重新填寫。"
+                + "\n要取消或改時間：在下方選單勾選要刪除的時段，再用 `/補填時間` 重新填寫。"
             ),
             view=MySlotsDeleteView(my_slots, artist),
             ephemeral=True,

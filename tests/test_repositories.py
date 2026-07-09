@@ -262,6 +262,162 @@ class TestAvailabilityBusySplit:
         assert repositories.split_availability_by_busy_intervals(start, end, busy) == []
 
 
+class TestMonthlyPoolMatching:
+    def test_monthly_pool_slot_excludes_schedule_request_slots(self):
+        item = slot(
+            request_page_ids=["request-1"],
+            start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
+            end=datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ),
+            note="收集月份：2026-08",
+        )
+
+        assert not repositories.is_monthly_pool_slot(item, "2026-08")
+
+    def test_monthly_pool_slot_matches_explicit_collection_month(self):
+        item = slot(
+            start=datetime(2026, 7, 31, 14, 0, tzinfo=config.TZ),
+            end=datetime(2026, 7, 31, 18, 0, tzinfo=config.TZ),
+            note="收集月份：2026-08",
+        )
+
+        assert repositories.availability_slot_month(item) == "2026-08"
+        assert repositories.is_monthly_pool_slot(item, "2026-08")
+
+    def test_monthly_pool_slot_falls_back_to_start_month_for_legacy_data(self):
+        item = slot(
+            start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
+            end=datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ),
+            note="收集性質：月度可配合時段",
+        )
+
+        assert repositories.availability_slot_month(item) == "2026-08"
+        assert repositories.is_monthly_pool_slot(item, "2026-08")
+
+    def test_busy_time_is_removed_before_common_window_matching(self):
+        slots = [
+            slot(
+                page_id="a-slot",
+                artist_page_ids=["artist-1"],
+                start=datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 5, 22, 0, tzinfo=config.TZ),
+                note="收集月份：2026-08",
+            ),
+            slot(
+                page_id="b-slot",
+                artist_page_ids=["artist-2"],
+                start=datetime(2026, 8, 5, 13, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ),
+                note="收集月份：2026-08",
+            ),
+        ]
+        busy = {
+            "artist-1": [
+                repositories.BusyInterval(
+                    source_id="task-1",
+                    source_name="錄音",
+                    source_type="Task",
+                    start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
+                    end=datetime(2026, 8, 5, 17, 0, tzinfo=config.TZ),
+                )
+            ]
+        }
+
+        result = repositories.match_monthly_pool_windows(
+            slots=slots,
+            artist_page_ids=["artist-1", "artist-2"],
+            month="2026-08",
+            duration_minutes=60,
+            busy_by_artist_page_id=busy,
+        )
+
+        assert result.missing_artist_page_ids == []
+        assert result.participants["artist-1"] == [
+            (
+                datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ),
+                datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
+            ),
+            (
+                datetime(2026, 8, 5, 17, 0, tzinfo=config.TZ),
+                datetime(2026, 8, 5, 22, 0, tzinfo=config.TZ),
+            ),
+        ]
+        assert result.windows == [
+            (
+                datetime(2026, 8, 5, 13, 0, tzinfo=config.TZ),
+                datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
+            ),
+            (
+                datetime(2026, 8, 5, 17, 0, tzinfo=config.TZ),
+                datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ),
+            ),
+        ]
+
+    def test_missing_artist_is_reported_when_no_monthly_slots(self):
+        slots = [
+            slot(
+                page_id="a-slot",
+                artist_page_ids=["artist-1"],
+                start=datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 5, 22, 0, tzinfo=config.TZ),
+                note="收集月份：2026-08",
+            ),
+        ]
+
+        result = repositories.match_monthly_pool_windows(
+            slots=slots,
+            artist_page_ids=["artist-1", "artist-2"],
+            month="2026-08",
+            duration_minutes=60,
+        )
+
+        assert result.missing_artist_page_ids == ["artist-2"]
+        assert result.windows == []
+
+    def test_candidate_start_times_step_every_30_minutes(self):
+        starts = repositories.candidate_start_times(
+            datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
+            datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ),
+            duration_minutes=60,
+        )
+
+        assert [start.strftime("%H:%M") for start in starts] == [
+            "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00",
+        ]
+
+    def test_duration_display_uses_hours(self):
+        assert repositories.format_duration_hours(240) == "4 小時"
+        assert repositories.format_duration_hours(90) == "1.5 小時"
+
+    def test_monthly_pool_progress_counts_only_pool_slots(self):
+        slots = [
+            slot(
+                page_id="artist-1-pool",
+                artist_page_ids=["artist-1"],
+                start=datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 5, 22, 0, tzinfo=config.TZ),
+                note="收集月份：2026-08",
+            ),
+            slot(
+                page_id="artist-2-request",
+                artist_page_ids=["artist-2"],
+                request_page_ids=["request-1"],
+                start=datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 5, 22, 0, tzinfo=config.TZ),
+                note="收集月份：2026-08",
+            ),
+        ]
+
+        progress = repositories.monthly_pool_progress_from_slots(
+            slots,
+            artist_page_ids=["artist-1", "artist-2"],
+            month="2026-08",
+        )
+
+        assert progress.filled_artist_page_ids == ["artist-1"]
+        assert progress.missing_artist_page_ids == ["artist-2"]
+        assert not progress.is_complete
+
+
 class TestCourseSessionOccupiedDates:
     def test_returns_future_occupied_dates_for_artist(self):
         sessions = [
@@ -608,6 +764,45 @@ class TestFutureOnlyQueries:
 
         asyncio.run(repositories.get_slots_for_artist("artist-1", future_only=False))
         assert captured["filter"] == {"property": "填寫藝人", "relation": {"contains": "artist-1"}}
+
+
+class TestTaskDiscordDisplayProperty:
+    def test_reads_new_discord_display_checkbox_name(self):
+        page = {
+            "id": "task-1",
+            "url": "",
+            "properties": {
+                "任務名稱": {"title": [{"plain_text": "錄音"}]},
+                "Discord 顯示": {"checkbox": True},
+            },
+        }
+
+        assert repositories._task_discord_visible(page) is True
+
+    def test_falls_back_to_legacy_discord_visible_checkbox_name(self):
+        page = {
+            "id": "task-1",
+            "url": "",
+            "properties": {
+                "任務名稱": {"title": [{"plain_text": "錄音"}]},
+                "Discord 可見": {"checkbox": True},
+            },
+        }
+
+        assert repositories._task_discord_visible(page) is True
+
+    def test_prefers_new_discord_display_checkbox_name(self):
+        page = {
+            "id": "task-1",
+            "url": "",
+            "properties": {
+                "任務名稱": {"title": [{"plain_text": "錄音"}]},
+                "Discord 顯示": {"checkbox": False},
+                "Discord 可見": {"checkbox": True},
+            },
+        }
+
+        assert repositories._task_discord_visible(page) is False
 
 
 def display_task(

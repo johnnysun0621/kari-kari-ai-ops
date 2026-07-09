@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from cogs import channel_guard
 from cogs.scheduling_artist import make_announcement_view, make_pool_availability_view
 from services import audit, overlap, repositories, time_collection, timeparse
 
@@ -45,6 +46,8 @@ def is_admin():
 
 COURSE_TYPE_CHOICES = [app_commands.Choice(name=t, value=t) for t in config.COURSE_TYPES]
 AVAILABILITY_CLEANUP_PREVIEW_LIMIT = 20
+MONTHLY_POOL_RESULT_LIMIT = 10
+MONTHLY_POOL_START_TIME_LIMIT = 14
 
 
 async def _open_request_choices(current: str) -> list[app_commands.Choice[str]]:
@@ -75,6 +78,64 @@ def _trim_message(text: str, limit: int = 1900) -> str:
     if len(text) <= limit:
         return text
     return text[:limit - 18].rstrip() + "\n...清單過長已截斷"
+
+
+def _pool_window_text(start: datetime, end: datetime) -> str:
+    if start.date() == end.date():
+        return f"{start.month}/{start.day} {start:%H:%M}-{end:%H:%M}"
+    return f"{start.month}/{start.day} {start:%H:%M}-{end.month}/{end.day} {end:%H:%M}"
+
+
+def _format_start_times(starts: list[datetime]) -> str:
+    if not starts:
+        return "無"
+    labels = [start.strftime("%H:%M") for start in starts]
+    if len(labels) <= MONTHLY_POOL_START_TIME_LIMIT:
+        return "、".join(labels)
+    shown = "、".join(labels[:MONTHLY_POOL_START_TIME_LIMIT])
+    return f"{shown}、...（共 {len(labels)} 個）"
+
+
+def _monthly_pool_result_text(
+    month: str,
+    duration_minutes: int,
+    artists: list[repositories.Artist],
+    result: repositories.MonthlyPoolMatchResult,
+) -> str:
+    name_of = {artist.page_id: artist.name for artist in artists}
+    missing = [name_of[pid] for pid in result.missing_artist_page_ids if pid in name_of]
+    filled_count = len(artists) - len(missing)
+    lines = [
+        f"**{month} 時間池比對**｜需要 {repositories.format_duration_hours(duration_minutes)}",
+        f"比對藝人：{ '、'.join(artist.name for artist in artists) }",
+        f"已填月度時段：{filled_count}/{len(artists)} 位",
+    ]
+    if missing:
+        lines.append(f"⚠️ 未填：{ '、'.join(missing) }")
+
+    if not result.windows:
+        lines.append("")
+        lines.append("目前沒有符合條件的共同空檔。")
+        if missing:
+            lines.append("可以先請未填藝人補填，或改選已填的人先安排。")
+        else:
+            lines.append("可以改選較少藝人、縮短需要時長，或請藝人補填更多時段。")
+        return _trim_message("\n".join(lines))
+
+    lines.append("")
+    lines.append("共同空檔：")
+    for index, (start, end) in enumerate(result.windows[:MONTHLY_POOL_RESULT_LIMIT], start=1):
+        window_minutes = int((end - start).total_seconds() // 60)
+        starts = repositories.candidate_start_times(start, end, duration_minutes)
+        lines.append(
+            f"`{index}.` {_pool_window_text(start, end)}｜可排 {repositories.format_duration_hours(window_minutes)}\n"
+            f"　可開始：{_format_start_times(starts)}"
+        )
+    if len(result.windows) > MONTHLY_POOL_RESULT_LIMIT:
+        lines.append(f"另有 {len(result.windows) - MONTHLY_POOL_RESULT_LIMIT} 個共同空檔未顯示。")
+    lines.append("")
+    lines.append("這裡只列候選，不會建立 Notion Project / Task。正式安排請由營運判斷後建立。")
+    return _trim_message("\n".join(lines))
 
 
 def _cleanup_preview_text(
@@ -269,6 +330,84 @@ class ArtistSelectView(discord.ui.View):
         self.stop()
 
 
+class MonthlyPoolArtistSelectView(discord.ui.View):
+    """/時間池比對 的第二步：手動選擇要比對共同空檔的藝人。"""
+
+    def __init__(
+        self,
+        artists: list[repositories.Artist],
+        month: str,
+        duration_minutes: int,
+        operator: discord.abc.User,
+    ):
+        super().__init__(timeout=600)
+        self.artists = {artist.page_id: artist for artist in artists}
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.operator_id = operator.id
+        options = [
+            discord.SelectOption(
+                label=artist.name[:100],
+                value=artist.page_id,
+                description=(artist.status or "合約狀態未填")[:100],
+            )
+            for artist in artists[:25]
+        ]
+        self.select = discord.ui.Select(
+            placeholder="選擇要比對的藝人（可多選）…",
+            options=options,
+            min_values=1,
+            max_values=len(options),
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個比對選單只能由原本執行指令的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        chosen = [self.artists[page_id] for page_id in self.select.values]
+        artist_page_ids = [artist.page_id for artist in chosen]
+        try:
+            slots = await repositories.get_monthly_pool_slots_for_artists(artist_page_ids)
+            busy_by_artist: dict[str, list[repositories.BusyInterval]] = {}
+            for artist_page_id in artist_page_ids:
+                context = await repositories.get_schedule_impact_context_for_artist(artist_page_id)
+                busy_by_artist[artist_page_id] = context.busy_intervals
+            result = repositories.match_monthly_pool_windows(
+                slots=slots,
+                artist_page_ids=artist_page_ids,
+                month=self.month,
+                duration_minutes=self.duration_minutes,
+                busy_by_artist_page_id=busy_by_artist,
+            )
+        except Exception:
+            logger.exception("月度時間池比對失敗")
+            await interaction.followup.send("❌ 時間池比對失敗，請稍後再試或查看 bot log。", ephemeral=True)
+            return
+
+        await audit.log_event(
+            event_name=f"月度時間池比對｜{self.month}",
+            action_type="查詢",
+            operator=str(interaction.user),
+            discord_user_id=str(interaction.user.id),
+            target_db="Availability Slots",
+            after=(
+                f"{len(chosen)} 位藝人｜需 {repositories.format_duration_hours(self.duration_minutes)}｜"
+                f"共同空檔 {len(result.windows)} 個｜未填 {len(result.missing_artist_page_ids)} 位"
+            ),
+        )
+        await interaction.followup.send(
+            _monthly_pool_result_text(self.month, self.duration_minutes, chosen, result),
+            ephemeral=True,
+        )
+        self.stop()
+
+
 class CandidateSelectView(discord.ui.View):
     """/排課比對 結果：勾選最多 5 個候選時段回寫 Notion。"""
 
@@ -449,6 +588,7 @@ class SchedulingAdminCog(commands.Cog):
 
     # ---------- /時間收集建立 ----------
     @app_commands.command(name="時間收集建立", description="發起月度可配合時段收集，不綁定單一排課需求")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         月份="要收集的月份，例：2026-08",
         截止天數="幾天內要填完月度可配合時段（預設 7 天）",
@@ -462,6 +602,8 @@ class SchedulingAdminCog(commands.Cog):
         截止天數: app_commands.Range[int, 1, 30] = 7,
         說明: str = "",
     ):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         month = time_collection.normalize_month(月份)
         if month is None:
@@ -486,6 +628,11 @@ class SchedulingAdminCog(commands.Cog):
 
         deadline = datetime.now(config.TZ) + timedelta(days=截止天數)
         deadline_str = deadline.strftime("%m/%d %H:%M")
+        time_collection.register_active_collection(
+            month,
+            deadline,
+            [artist.page_id for artist in artists],
+        )
         mentions = " ".join(f"<@{a.discord_user_id}>" for a in artists)
         description = (
             f"{time_collection.availability_announcement_copy(month)}\n\n"
@@ -545,8 +692,11 @@ class SchedulingAdminCog(commands.Cog):
 
     # ---------- /時間池整理 ----------
     @app_commands.command(name="時間池整理", description="主動整理未來可用時段，合併重疊並清除重複資料")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def cleanup_availability_pool(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             all_slots = await repositories.get_all_availability_slots()
@@ -574,8 +724,58 @@ class SchedulingAdminCog(commands.Cog):
             ephemeral=True,
         )
 
+    # ---------- /時間池比對 ----------
+    @app_commands.command(name="時間池比對", description="比對月度可配合時間池，找多位藝人的共同空檔")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(
+        月份="要比對的月份，例：2026-08",
+        時長分鐘="需要連續可安排的時長，例：60、90、240",
+    )
+    @is_admin()
+    async def match_availability_pool(
+        self,
+        interaction: discord.Interaction,
+        月份: str,
+        時長分鐘: app_commands.Range[int, 15, 600],
+    ):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        month = time_collection.normalize_month(月份)
+        if month is None:
+            await interaction.followup.send("❌ 月份格式請用 `2026-08`。", ephemeral=True)
+            return
+        try:
+            artists = await repositories.get_active_artists()
+        except Exception:
+            logger.exception("讀取藝人清單失敗")
+            await interaction.followup.send(
+                "❌ 讀不到 Notion 藝人資料，請確認 NOTION_TOKEN 與資料庫已 share 給 integration。",
+                ephemeral=True,
+            )
+            return
+        if not artists:
+            await interaction.followup.send(
+                "❌ Artists 裡沒有可比對藝人，請先到 Notion 補 Discord User ID。",
+                ephemeral=True,
+            )
+            return
+        limit_note = ""
+        if len(artists) > 25:
+            limit_note = "\n⚠️ Discord 單次選單最多顯示 25 位，這次先列前 25 位可排課藝人。"
+        await interaction.followup.send(
+            (
+                f"請選擇要比對 **{month}** 月度時間池的藝人。\n"
+                f"需要連續時長：{repositories.format_duration_hours(時長分鐘)}"
+                f"{limit_note}"
+            ),
+            view=MonthlyPoolArtistSelectView(artists[:25], month, 時長分鐘, interaction.user),
+            ephemeral=True,
+        )
+
     # ---------- /排課建立 ----------
     @app_commands.command(name="排課建立", description="建立排課需求並通知藝人填寫可用時間")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         名稱="排課名稱，例：7月歌唱課第2週",
         課程類型="課程類型",
@@ -595,6 +795,8 @@ class SchedulingAdminCog(commands.Cog):
         截止小時: app_commands.Range[int, 1, 168] = config.DEFAULT_FILL_DEADLINE_HOURS,
         月份週次: str = "", 備註: str = "",
     ):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             artists = await repositories.get_active_artists()
@@ -622,9 +824,12 @@ class SchedulingAdminCog(commands.Cog):
 
     # ---------- /排課比對 ----------
     @app_commands.command(name="排課比對", description="比對已填寫的可用時間，找出共同時段")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(排課="選擇要比對的排課需求")
     @is_admin()
     async def match_schedule(self, interaction: discord.Interaction, 排課: str):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         request = await repositories.get_request(排課)
         if request is None:
@@ -680,9 +885,12 @@ class SchedulingAdminCog(commands.Cog):
 
     # ---------- /排課確認 ----------
     @app_commands.command(name="排課確認", description="老師同意後，確認最終時段並發布正式通告")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(排課="選擇要確認的排課需求")
     @is_admin()
     async def confirm_schedule(self, interaction: discord.Interaction, 排課: str):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         request = await repositories.get_request(排課)
         if request is None:
@@ -706,8 +914,11 @@ class SchedulingAdminCog(commands.Cog):
 
     # ---------- /排課狀態 ----------
     @app_commands.command(name="排課狀態", description="查看所有進行中排課需求的狀態與 SLA")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def schedule_status(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_schedule_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         requests = await repositories.get_requests_by_status(repositories.OPEN_REQUEST_STATUSES)
         if not requests:

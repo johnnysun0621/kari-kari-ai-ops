@@ -4,10 +4,11 @@ Notion 欄位名稱是中文（與正式資料庫完全一致），若 Notion �
 """
 import time
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import config
-from services import notion_api, time_collection
+from services import notion_api, overlap, time_collection
+from services.notion_api import NotionAPIError
 
 # ---------- property payload builders ----------
 
@@ -69,6 +70,13 @@ def _read_number(page: dict, name: str) -> float | None:
 
 def _read_checkbox(page: dict, name: str) -> bool:
     return bool(page["properties"].get(name, {}).get("checkbox"))
+
+
+def _read_first_checkbox(page: dict, names: list[str]) -> bool:
+    for name in names:
+        if name in page.get("properties", {}):
+            return _read_checkbox(page, name)
+    return False
 
 
 def _read_date_start(page: dict, name: str) -> datetime | None:
@@ -418,8 +426,19 @@ def _to_task(page: dict) -> TaskItem:
         open_for_submission=_read_checkbox(page, "是否開放提交"),
         latest_submission_url=_read_url(page, "最新提交 URL"),
         task_id=_read_unique_id(page, "Task ID"),
-        discord_visible=_read_checkbox(page, "Discord 可見"),
+        discord_visible=_task_discord_visible(page),
         reminder_rules=_read_multi_select(page, "提醒規則"),
+    )
+
+
+TASK_DISCORD_DISPLAY_PROPERTY = "Discord 顯示"
+TASK_DISCORD_VISIBLE_LEGACY_PROPERTY = "Discord 可見"
+
+
+def _task_discord_visible(page: dict) -> bool:
+    return _read_first_checkbox(
+        page,
+        [TASK_DISCORD_DISPLAY_PROPERTY, TASK_DISCORD_VISIBLE_LEGACY_PROPERTY],
     )
 
 
@@ -643,12 +662,21 @@ TASK_DUE_SOON_DAYS = 3
 
 
 async def get_discord_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
-    """/我的任務：Discord 可見＋直接關聯該藝人（Notion 端過濾，不撈全表）。"""
+    """/我的任務：Discord 顯示＋直接關聯該藝人（Notion 端過濾，不撈全表）。"""
     filter_ = {"and": [
-        {"property": "Discord 可見", "checkbox": {"equals": True}},
+        {"property": TASK_DISCORD_DISPLAY_PROPERTY, "checkbox": {"equals": True}},
         {"property": "關聯藝人", "relation": {"contains": artist_page_id}},
     ]}
-    pages = await notion_api.query_data_source(config.DS_TASKS, filter_=filter_)
+    try:
+        pages = await notion_api.query_data_source(config.DS_TASKS, filter_=filter_)
+    except NotionAPIError as e:
+        if TASK_DISCORD_DISPLAY_PROPERTY not in str(e):
+            raise
+        legacy_filter = {"and": [
+            {"property": TASK_DISCORD_VISIBLE_LEGACY_PROPERTY, "checkbox": {"equals": True}},
+            {"property": "關聯藝人", "relation": {"contains": artist_page_id}},
+        ]}
+        pages = await notion_api.query_data_source(config.DS_TASKS, filter_=legacy_filter)
     return [_to_task(p) for p in pages]
 
 
@@ -783,6 +811,23 @@ class AvailabilitySlot:
     start: datetime | None
     end: datetime | None
     note: str = ""
+
+
+@dataclass
+class MonthlyPoolMatchResult:
+    participants: dict[str, list[overlap.Interval]]
+    windows: list[overlap.Interval]
+    missing_artist_page_ids: list[str]
+
+
+@dataclass
+class MonthlyPoolProgress:
+    filled_artist_page_ids: list[str]
+    missing_artist_page_ids: list[str]
+
+    @property
+    def is_complete(self) -> bool:
+        return not self.missing_artist_page_ids
 
 
 @dataclass
@@ -1029,6 +1074,137 @@ async def create_availability_slot_if_absent(
     return created, True
 
 
+def availability_slot_month(slot: AvailabilitySlot) -> str | None:
+    """Return the collection month for a pool slot.
+
+    New monthly collection slots write `收集月份：YYYY-MM` into notes. Legacy slots
+    do not have that marker, so they fall back to the slot start month.
+    """
+    explicit_month = _note_field(slot.note, "收集月份")
+    if explicit_month:
+        return time_collection.normalize_month(explicit_month)
+    if slot.start:
+        return slot.start.strftime("%Y-%m")
+    return None
+
+
+def is_monthly_pool_slot(slot: AvailabilitySlot, month: str) -> bool:
+    normalized_month = time_collection.normalize_month(month)
+    if normalized_month is None:
+        return False
+    if slot.request_page_ids:
+        return False
+    if not slot.start or not slot.end or slot.end <= slot.start:
+        return False
+    return availability_slot_month(slot) == normalized_month
+
+
+def candidate_start_times(
+    start: datetime,
+    end: datetime,
+    duration_minutes: int,
+    step_minutes: int = 30,
+) -> list[datetime]:
+    """Return valid start times inside a candidate window, stepping by 30 minutes."""
+    if duration_minutes <= 0 or step_minutes <= 0 or end <= start:
+        return []
+    latest_start = end - timedelta(minutes=duration_minutes)
+    starts: list[datetime] = []
+    current = start
+    while current <= latest_start:
+        starts.append(current)
+        current += timedelta(minutes=step_minutes)
+    return starts
+
+
+def format_duration_hours(duration_minutes: int) -> str:
+    hours = duration_minutes / 60
+    if hours.is_integer():
+        return f"{int(hours)} 小時"
+    text = f"{hours:.2f}".rstrip("0").rstrip(".")
+    return f"{text} 小時"
+
+
+def match_monthly_pool_windows(
+    *,
+    slots: list[AvailabilitySlot],
+    artist_page_ids: list[str],
+    month: str,
+    duration_minutes: int,
+    busy_by_artist_page_id: dict[str, list[BusyInterval]] | None = None,
+) -> MonthlyPoolMatchResult:
+    """Build common availability windows from monthly pool slots.
+
+    The pool only includes slots not tied to a Schedule Request. Each selected
+    artist's slots are split by formal busy intervals before the all-person
+    intersection is calculated.
+    """
+    normalized_month = time_collection.normalize_month(month)
+    if normalized_month is None:
+        raise ValueError(f"Invalid month: {month}")
+
+    busy_by_artist_page_id = busy_by_artist_page_id or {}
+    participants: dict[str, list[overlap.Interval]] = {
+        artist_page_id: [] for artist_page_id in artist_page_ids
+    }
+    for slot in slots:
+        if not is_monthly_pool_slot(slot, normalized_month):
+            continue
+        for artist_page_id in slot.artist_page_ids:
+            if artist_page_id not in participants:
+                continue
+            split_windows = split_availability_by_busy_intervals(
+                slot.start,
+                slot.end,
+                busy_by_artist_page_id.get(artist_page_id, []),
+            )
+            participants[artist_page_id].extend(split_windows)
+
+    participants = {
+        artist_page_id: overlap.merge_intervals(intervals)
+        for artist_page_id, intervals in participants.items()
+    }
+    missing_artist_page_ids = [
+        artist_page_id for artist_page_id, intervals in participants.items()
+        if not intervals
+    ]
+    windows = (
+        [] if missing_artist_page_ids
+        else overlap.find_common_windows(participants, duration_minutes)
+    )
+    return MonthlyPoolMatchResult(
+        participants=participants,
+        windows=windows,
+        missing_artist_page_ids=missing_artist_page_ids,
+    )
+
+
+def monthly_pool_progress_from_slots(
+    slots: list[AvailabilitySlot],
+    artist_page_ids: list[str],
+    month: str,
+) -> MonthlyPoolProgress:
+    expected_ids = list(dict.fromkeys(artist_page_ids))
+    filled_ids: set[str] = set()
+    for slot in slots:
+        if not is_monthly_pool_slot(slot, month):
+            continue
+        for artist_page_id in slot.artist_page_ids:
+            if artist_page_id in expected_ids:
+                filled_ids.add(artist_page_id)
+    filled = [artist_page_id for artist_page_id in expected_ids if artist_page_id in filled_ids]
+    missing = [artist_page_id for artist_page_id in expected_ids if artist_page_id not in filled_ids]
+    return MonthlyPoolProgress(filled_artist_page_ids=filled, missing_artist_page_ids=missing)
+
+
+async def get_monthly_pool_progress(
+    month: str,
+    artist_page_ids: list[str],
+) -> MonthlyPoolProgress:
+    slots = await get_monthly_pool_slots_for_artists(artist_page_ids)
+    return monthly_pool_progress_from_slots(slots, artist_page_ids, month)
+
+
 async def get_slots_for_request(request_page_id: str) -> list[AvailabilitySlot]:
     pages = await notion_api.query_data_source(
         config.DS_AVAILABILITY_SLOTS,
@@ -1057,6 +1233,18 @@ async def get_slots_for_artist(
         filter_ = {"and": [filter_, _future_date_filter("可用結束時間")]}
     pages = await notion_api.query_data_source(config.DS_AVAILABILITY_SLOTS, filter_=filter_)
     return [_to_slot(p) for p in pages]
+
+
+async def get_monthly_pool_slots_for_artists(
+    artist_page_ids: list[str],
+    future_only: bool = True,
+) -> list[AvailabilitySlot]:
+    """Fetch pool candidate slots for selected artists, deduping shared pages."""
+    slots_by_id: dict[str, AvailabilitySlot] = {}
+    for artist_page_id in artist_page_ids:
+        for slot in await get_slots_for_artist(artist_page_id, future_only=future_only):
+            slots_by_id[slot.page_id] = slot
+    return list(slots_by_id.values())
 
 
 async def get_all_availability_slots(future_only: bool = True) -> list[AvailabilitySlot]:

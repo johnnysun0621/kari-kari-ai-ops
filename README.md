@@ -1,19 +1,32 @@
-# KariKari AI Ops Bot｜P0-1 排課 MVP
+# KariKari AI Ops Bot
 
-以 Discord 為入口、Notion 為營運資料層的排課系統。目標：把排課從 1 週以上的人工往返，壓縮到 **2 天內完成**。
+Discord 作為操作入口、Notion 作為營運資料層的藝人管理公司排程與任務 bot。  
+KariKari 是第一個測試站；專案方向是可套用到多家公司，而不是一次性客製。
 
-> Product note: KariKari is the first test implementation. This project should evolve into a reusable operations scheduling system for multiple companies. See [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md).
+## 主流程
 
-## 排課流程
+目前主流程是：
 
-1. 管理者 `/排課建立` → 選參與藝人 → 排課頻道公告 + DM 通知
-2. 藝人點「📅 填寫可用時間」按鈕 → 填時段（可多筆）→ Bot 檢查 Tasks / Projects / Course Sessions 後寫入 Notion
-3. 管理者 `/排課比對` → 自動算出全員共同時段 → 勾選候選（最多 5 個）
-4. 管理者用既有管道（LINE 等）向老師確認
-5. 管理者 `/排課確認` → 選定時段 + 填最終開始時間 → 自動建立正式課程、發布通告（頻道 + DM）
-6. 背景任務：截止前 6 小時催收、逾期通知管理者、超過 48 小時自動標記 SLA 並升級
+`/時間收集建立` → 藝人填月度可配合時段 → `/時間池比對` → 控方建立正式 Project / Task
 
-其他指令：`/排課狀態`（管理者總覽）、`/我的時段`（藝人查看／刪除自己填的時段）
+舊 MVP 指定需求流程仍保留：
+
+`/排課建立` → `/排課比對` → `/排課確認` → `/排課狀態`
+
+## 常用文件
+
+| 文件 | 用途 |
+|---|---|
+| [HANDOFF.md](HANDOFF.md) | AI / 工程師協作者接手指南 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 工程架構與模組責任 |
+| [TESTING.md](TESTING.md) | 自動測試、Discord 驗收、Notion 驗收 |
+| [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) | Discord 頻道組成與 slash command 對應 |
+| [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md) | Discord slash command 使用手冊 |
+| [OPERATIONS_PLAYBOOK.md](OPERATIONS_PLAYBOOK.md) | 控方營運 SOP |
+| [NOTION_SCHEMA.md](NOTION_SCHEMA.md) | Notion 資料庫交互邏輯 |
+| [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則與平展化方向 |
+| [ROADMAP.md](ROADMAP.md) | 開發進度與下一步 |
+| [RESEARCH.md](RESEARCH.md) | 需求研究與歷史脈絡 |
 
 ## 安裝
 
@@ -25,69 +38,38 @@ cp .env.example .env   # 填入下方設定
 python bot.py
 ```
 
-## .env 設定
+啟動時 bot 會自動做 Notion smoke test：讀 Artists、寫一筆 Audit Log，console log 會顯示結果。
+
+## 必填環境變數
 
 | 變數 | 說明 |
 |---|---|
 | `DISCORD_TOKEN` | Discord Developer Portal → Bot → Token |
-| `GUILD_ID` | 伺服器 ID（開發者模式右鍵複製） |
-| `SCHEDULE_CHANNEL_ID` | #排課 頻道 ID（公告與通告發布處） |
-| `ADMIN_ROLE_ID` | 管理者身分組 ID（管理指令權限） |
+| `GUILD_ID` | 目前租戶 / 公司的 Discord 伺服器 ID |
+| `SCHEDULE_CHANNEL_ID` | 時間資訊彙整頻道 ID（公告與時間池互動處） |
+| `ADMIN_ROLE_ID` | 控方 / 管理者身分組 ID（管理指令權限） |
+| `TASK_CHANNEL_ID` | 任務查詢入口頻道 ID（留空則不限制任務指令頻道） |
 | `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（留空則用排課頻道） |
 | `NOTION_TOKEN` | Notion → Settings → Integrations 建立的 internal integration secret |
 
-### Discord bot 需要的設定
+這些 ID 都是租戶設定：換到其他公司時，頻道名稱 / 用途可以維持一致，但實際 Discord ID、role ID、Notion Data Source ID 會改。  
+KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫或換租戶時，才需要在 `.env` 覆寫 `NOTION_DS_*`。
+
+## Discord / Notion 前置設定
 
 - 邀請連結 scopes：`bot` + `applications.commands`
 - Bot 權限：View Channels、Send Messages、Embed Links、Mention Everyone（點名用）
-- 不需要 privileged intents
-
-### Notion 需要的設定
-
-1. 建立 internal integration（讀寫權限）
-2. 把「KariKari 營運中心｜正式資料層」底下這些資料庫都 **Share → 加入該 integration**：
-   Artists、Schedule Requests、Availability Slots、Course Sessions、Tasks、Projects、Audit Log
-   （或直接 share 營運中心整頁，底下資料庫會一併授權）
-3. Artists 的每位可排課藝人要填：`Discord User ID`（純數字），且 `合約狀態` 不要是 `暫停` / `封存`
-
-Data Source ID 已內建在 `config.py`（與 Notion「KariKari 營運中心」頁的工程設定區一致），Notion 端重建資料庫時才需要在 .env 覆寫。
+- 控方成員需具備 Discord Administrator 權限，才會看到管理端 slash commands
+- 建議分兩個頻道：時間資訊彙整放時間池公告與比對；任務查詢入口放 `/我的任務`、`/任務總覽` 與任務提醒
+- Notion integration 要能讀寫：Artists、Availability Slots、Tasks、Projects、Course Sessions、Schedule Requests、Audit Log
+- Artists 的可排課藝人要填 `Discord User ID`，且 `合約狀態` 不要是 `暫停` / `封存`
 
 ## 測試
 
 ```bash
-pytest tests/ -v
+.venv/bin/python -m compileall bot.py cogs services tests config.py
+.venv/bin/python -m pytest tests/ -q
 ```
-
-啟動時 bot 會自動做 Notion 連線 smoke test（讀 Artists、寫一筆「Bot 啟動」Audit Log），看 console log 即可確認串接成功。
-
-## Mac 常駐部署（launchd）
-
-1. 把整個專案資料夾放到 Mac，例如 `~/karikari-bot`，照上面步驟建 venv 與 .env
-2. 建立 `~/Library/LaunchAgents/com.karikari.bot.plist`：
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.karikari.bot</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Users/你的帳號/karikari-bot/.venv/bin/python</string>
-    <string>/Users/你的帳號/karikari-bot/bot.py</string>
-  </array>
-  <key>WorkingDirectory</key><string>/Users/你的帳號/karikari-bot</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/你的帳號/karikari-bot/bot.log</string>
-  <key>StandardErrorPath</key><string>/Users/你的帳號/karikari-bot/bot.log</string>
-</dict>
-</plist>
-```
-
-3. 啟用：`launchctl load ~/Library/LaunchAgents/com.karikari.bot.plist`
-   （停用：`launchctl unload …`；看 log：`tail -f ~/karikari-bot/bot.log`）
 
 ## 專案結構
 
@@ -101,8 +83,9 @@ services/
   timeparse.py            # Modal 輸入解析、候選時段文字格式
   audit.py                # Audit Log 寫入（失敗不阻斷主流程）
 cogs/
-  scheduling_admin.py     # /排課建立 /排課比對 /排課確認 /排課狀態
-  scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段
+  scheduling_admin.py     # /時間收集建立 /時間池比對 /時間池整理 /排課*
+  scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段 /補填時間
+  tasks_artist.py         # /我的任務 /任務總覽
   reminders.py            # 催收與 SLA 背景任務（每 30 分鐘）
-tests/test_overlap.py     # 演算法與解析單元測試
+tests/                    # 純函式、互動邏輯、資料層測試
 ```

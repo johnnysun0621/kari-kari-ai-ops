@@ -7,24 +7,27 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 
 | 文件 | 內容 |
 |---|---|
+| [HANDOFF.md](HANDOFF.md) | AI／工程師協作者接手規則、改檔對照、測試要求 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 程式模組責任、資料邊界、平轉狀態 |
+| [TESTING.md](TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
 | [ROADMAP.md](ROADMAP.md) | **進度總表＋下一步**＋進度日誌＋待 Johnny 提供事項——接手先看這裡 |
 | [RESEARCH.md](RESEARCH.md) | 需求研究：Kickoff 客戶需求、11 張 Notion 資料庫欄位對應、Gap 分析、決策收斂紀錄 |
 | [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則（多租戶平展化、資料安全）——Johnny 親寫，架構決策的最高依據 |
-| [README.md](README.md) | 安裝、.env 設定、launchd 部署 |
+| [README.md](README.md) | 專案入口、安裝、.env 設定、常用文件 |
 
 ## 接手流程
 
 1. 看 ROADMAP「Phase 進度總表」找下一個 🔜/⬜ 項目（含實作要點）
 2. 依下方鐵則實作；重用 services/ 既有 helper（先 grep 再寫新的）
-3. 驗證：`pytest tests/ -q` 全綠 ＋ `python -m pyflakes <改動檔>` 乾淨 ＋ cog 可 import
+3. 驗證：`.venv/bin/python -m compileall bot.py cogs services tests config.py` ＋ `.venv/bin/python -m pytest tests/ -q`
 4. Commit（訊息含 Phase 編號），並更新 ROADMAP 的進度總表與進度日誌
 
 ## 開發指令
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/ -q        # 目前 91 tests，必須全綠
-python -m pyflakes config.py services/*.py cogs/*.py
+python -m compileall bot.py cogs services tests config.py
+python -m pytest tests/ -q
 python bot.py                      # 需 .env（見 README）
 ```
 
@@ -35,8 +38,8 @@ python bot.py                      # 需 .env（見 README）
 - [services/notion_api.py](services/notion_api.py)：Notion 薄封裝；**per-token 連線＋節流（~3 req/s）**
 - [services/repositories.py](services/repositories.py)：**中文欄位名 → API payload 的唯一對應處**；
   Notion 改欄位名只改這裡。含 dataclass 模型、純函式（分區/去重/提醒階段）
-- [cogs/](cogs/)：scheduling_admin（排課管理）、scheduling_artist（藝人填時段）、
-  tasks_artist（任務查詢）、reminders（背景提醒 loop，30 分鐘一輪）
+- [cogs/](cogs/)：channel_guard（頻道分流）、scheduling_admin（排課管理）、
+  scheduling_artist（藝人填時段）、tasks_artist（任務查詢）、reminders（背景提醒 loop，30 分鐘一輪）
 - 測試全是純函式測試（不打網路）；async 用 `asyncio.run` ＋ monkeypatch `notion_api.query_data_source`
 
 ## 鐵則（違反＝review 打回）
@@ -65,7 +68,7 @@ python bot.py                      # 需 .env（見 README）
 - 欄位級 schema 與功能對應：見 RESEARCH.md 第二節
 - Audit Log 寫入失敗不阻斷主流程（audit.py 已包好）
 
-## 目前狀態（2026-07-08）
+## 目前狀態（2026-07-09）
 
-分支 `feat/p0-foundation`；Phase 0、1a、1d 完成；**下一步 Phase 1b**（/提交任務：
-連結/文字先行，Drive 上傳等 Johnny 提供 OAuth 憑證）→ 1c 審核流。細節見 ROADMAP。
+分支 `feat/p0-foundation`；Phase 0、1a、1d 完成；月度時間池主流程、任務查詢、任務提醒、雙頻道分流已落地。  
+**下一步 Phase 1b**（/提交任務：連結/文字先行，Drive 上傳等 Johnny 提供 OAuth 憑證）→ 1c 審核流。細節見 ROADMAP。

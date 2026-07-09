@@ -36,6 +36,7 @@ class TenantConfig:
     schedule_channel_id: int
     admin_role_id: int
     admin_notify_channel_id: int
+    task_channel_id: int
 
     # === Notion ===
     notion_token: str
@@ -79,6 +80,7 @@ def _load_karikari_from_env() -> TenantConfig:
         schedule_channel_id=schedule_channel_id,
         admin_role_id=_env_int("ADMIN_ROLE_ID"),
         admin_notify_channel_id=_env_int("ADMIN_NOTIFY_CHANNEL_ID", schedule_channel_id),
+        task_channel_id=_env_int("TASK_CHANNEL_ID"),
         notion_token=os.getenv("NOTION_TOKEN", ""),
         notion_version="2025-09-03",
         ds_artists=os.getenv("NOTION_DS_ARTISTS", "c0253aec-d18c-47de-a92f-e4a6f9eda641"),
@@ -122,6 +124,7 @@ GUILD_ID = TENANT.guild_id
 SCHEDULE_CHANNEL_ID = TENANT.schedule_channel_id
 ADMIN_ROLE_ID = TENANT.admin_role_id
 ADMIN_NOTIFY_CHANNEL_ID = TENANT.admin_notify_channel_id
+TASK_CHANNEL_ID = TENANT.task_channel_id
 
 # === Notion ===
 NOTION_TOKEN = TENANT.notion_token

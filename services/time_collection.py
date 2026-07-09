@@ -48,6 +48,13 @@ class CollectionNature:
     announcement: str
 
 
+@dataclass(frozen=True)
+class ActiveCollection:
+    month: str
+    deadline_ts: int
+    artist_page_ids: tuple[str, ...]
+
+
 DEFAULT_DAY_START = time(10, 0)
 DEFAULT_DAY_END = time(22, 0)
 DEFAULT_COLLECTION_NATURE = "monthly_reference"
@@ -82,13 +89,53 @@ COLLECTION_NATURES = [
     ),
 ]
 
+_active_collections: dict[tuple[str, int], ActiveCollection] = {}
+_sent_collection_notices: set[tuple[str, int, str]] = set()
+
+
+def register_active_collection(
+    month: str,
+    deadline: datetime,
+    artist_page_ids: list[str],
+) -> ActiveCollection:
+    normalized_month = normalize_month(month)
+    if normalized_month is None:
+        raise ValueError(f"Invalid month: {month}")
+    collection = ActiveCollection(
+        month=normalized_month,
+        deadline_ts=int(deadline.timestamp()),
+        artist_page_ids=tuple(dict.fromkeys(artist_page_ids)),
+    )
+    _active_collections[(collection.month, collection.deadline_ts)] = collection
+    return collection
+
+
+def active_collections() -> list[ActiveCollection]:
+    return sorted(_active_collections.values(), key=lambda item: (item.month, item.deadline_ts))
+
+
+def collection_notice_once(month: str, deadline_ts: int, stage: str) -> bool:
+    normalized_month = normalize_month(month)
+    if normalized_month is None:
+        raise ValueError(f"Invalid month: {month}")
+    key = (normalized_month, int(deadline_ts), stage)
+    if key in _sent_collection_notices:
+        return False
+    _sent_collection_notices.add(key)
+    return True
+
+
+def clear_active_collections_for_tests() -> None:
+    _active_collections.clear()
+    _sent_collection_notices.clear()
+
 
 def availability_announcement_copy(month: str) -> str:
     return (
         f"請回報 **{month} 可配合時間**。\n"
         "這只是營運初步排課、錄音、通告的參考，**不是正式預約**。\n"
         "之後真的要安排時，營運會再跟你確認。\n\n"
-        "可一次填很多天；不同日期時間不一樣，就分批送出。\n"
+        "可以一次勾多天套用同一段時間；日期時間不同時再分批填。\n"
         "備註只寫限制或偏好，例如：17:00 後較穩、不能太晚、需提前一天確認。"
     )
 
@@ -97,9 +144,10 @@ def availability_selection_sop() -> str:
     return (
         "**怎麼填**\n"
         "1. 選週次，可一次選整個月。\n"
-        "2. 勾同一批日期；同一批日期會套用同一個時間。\n"
-        "3. 選時間模式後送出。\n"
-        "4. 其他日期時間不同，再按「繼續選下一組日期」。"
+        "2. 每頁顯示 7 天，勾同一批可套用同一時段的日期。\n"
+        "3. 按時間按鈕，只填一次就會套用到剛剛勾的日期。\n"
+        "4. 日期時間不同就分批填；同一天多段時間可重複勾同一天。\n"
+        "5. 填完按「完成」，營運會收到通知。"
     )
 
 

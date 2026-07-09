@@ -28,9 +28,10 @@ class TestAvailabilitySelectionSop:
     def test_sop_is_short_and_user_oriented(self):
         sop = time_collection.availability_selection_sop()
 
-        assert "同一批日期會套用同一個時間" in sop
-        assert "其他日期時間不同" in sop
-        assert len(sop) < 180
+        assert "每頁顯示 7 天" in sop
+        assert "一次" in sop
+        assert "重複勾同一天" in sop
+        assert len(sop) < 220
 
     def test_page_hint_changes_by_selection_state(self):
         assert "先勾日期" in time_collection.availability_page_hint(0, None)
@@ -183,3 +184,41 @@ class TestBuildModeSlot:
 
         assert start == datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ)
         assert end == datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ)
+
+
+class TestActiveCollectionRegistry:
+    def test_registers_active_monthly_collection(self):
+        time_collection.clear_active_collections_for_tests()
+        deadline = datetime(2026, 8, 1, 12, 0, tzinfo=config.TZ)
+
+        collection = time_collection.register_active_collection(
+            "2026-8",
+            deadline,
+            ["artist-1", "artist-2"],
+        )
+
+        assert collection.month == "2026-08"
+        assert collection.deadline_ts == int(deadline.timestamp())
+        assert collection.artist_page_ids == ("artist-1", "artist-2")
+        assert time_collection.active_collections() == [collection]
+
+    def test_collection_notice_once_deduplicates_stages(self):
+        time_collection.clear_active_collections_for_tests()
+
+        assert time_collection.collection_notice_once("2026-08", 123, "all_done")
+        assert not time_collection.collection_notice_once("2026-08", 123, "all_done")
+        assert time_collection.collection_notice_once("2026-08", 123, "pre_deadline")
+
+    def test_rejects_invalid_active_collection_month(self):
+        time_collection.clear_active_collections_for_tests()
+
+        try:
+            time_collection.register_active_collection(
+                "bad-month",
+                datetime(2026, 8, 1, 12, 0, tzinfo=config.TZ),
+                ["artist-1"],
+            )
+        except ValueError as exc:
+            assert "Invalid month" in str(exc)
+        else:
+            raise AssertionError("expected ValueError")
