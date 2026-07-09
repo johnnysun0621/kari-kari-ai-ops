@@ -20,6 +20,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 | [HANDOFF.md](HANDOFF.md) | AI / 工程師協作者接手指南 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 工程架構與模組責任 |
 | [TESTING.md](TESTING.md) | 自動測試、Discord 驗收、Notion 驗收 |
+| [FLOWCHART.md](FLOWCHART.md) | Mermaid 主流程圖與資料庫責任分界 |
 | [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) | Discord 頻道組成與 slash command 對應 |
 | [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md) | Discord slash command 使用手冊 |
 | [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Discord 上傳限制、10MB 分界、審核通知 |
