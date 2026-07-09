@@ -10,6 +10,7 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 | [HANDOFF.md](HANDOFF.md) | AI／工程師協作者接手規則、改檔對照、測試要求 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 程式模組責任、資料邊界、平轉狀態 |
 | [TESTING.md](TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
+| [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔 OAuth 設定教學（含平轉重跑流程） |
 | [ROADMAP.md](ROADMAP.md) | **進度總表＋下一步**＋進度日誌＋待 Johnny 提供事項——接手先看這裡 |
 | [RESEARCH.md](RESEARCH.md) | 需求研究：Kickoff 客戶需求、11 張 Notion 資料庫欄位對應、Gap 分析、決策收斂紀錄 |
 | [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則（多租戶平展化、資料安全）——Johnny 親寫，架構決策的最高依據 |

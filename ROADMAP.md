@@ -107,10 +107,10 @@
 
 ## 待 Johnny 提供／決定
 
-- [ ] **Google Drive OAuth 憑證**（檔案上傳歸檔用；連結/文字提交不需要）
-- [ ] Drive 建「藝人專區」資料夾（振華專區、Chenhua專區…），連結填入 Artists.`Google Drive 資料夾`；
+- [ ] **跑 Drive 授權**：`scripts/authorize_drive.py` → `scripts/check_drive.py`（教學：DRIVE_OAUTH_SETUP.md；
+      舊用戶端已複製、總資料夾 ID 已入 .env ✅）
+- [ ] Drive 總資料夾底下建「藝人專區」（振華專區、Chenhua專區…），連結填入 Artists.`Google Drive 資料夾`；
       子資料夾（類型夾/月份夾）bot 會自動建，不用手動
-- [ ] 總資料夾分享給 bot 使用的 Google 帳號（編輯權限）
 - [ ] Tasks 42 筆舊資料人工確認 `Discord 顯示`（公司方作業）
 - [ ] 一個網域（Phase 2 老師確認連結，Cloudflare Tunnel 用，~US$10/年）
 - [ ] 財務核決模式與公司確認（單人 vs 多人；不阻塞前面 Phase）

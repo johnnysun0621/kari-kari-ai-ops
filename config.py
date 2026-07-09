@@ -67,6 +67,10 @@ class TenantConfig:
     # 預設填寫截止時間（小時，從建立起算）
     default_fill_deadline_hours: int
 
+    # === Google Drive（作業歸檔）===
+    # 總資料夾 ID（底下放各藝人專區）；空字串＝Drive 歸檔未啟用
+    drive_root_folder_id: str = ""
+
 
 def _load_karikari_from_env() -> TenantConfig:
     """KariKari 租戶：正式資料層（2026-07-07 拍板，11 張資料庫）。
@@ -106,6 +110,7 @@ def _load_karikari_from_env() -> TenantConfig:
         remind_before_deadline_hours=6,
         reminder_interval_minutes=30,
         default_fill_deadline_hours=24,
+        drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
     )
 
 
@@ -151,6 +156,7 @@ SLA_HARD_LIMIT_HOURS = TENANT.sla_hard_limit_hours
 REMIND_BEFORE_DEADLINE_HOURS = TENANT.remind_before_deadline_hours
 REMINDER_INTERVAL_MINUTES = TENANT.reminder_interval_minutes
 DEFAULT_FILL_DEADLINE_HOURS = TENANT.default_fill_deadline_hours
+DRIVE_ROOT_FOLDER_ID = TENANT.drive_root_folder_id
 
 # 候選時段在 Notion「候選時段」text 欄位中的格式：每行 "YYYY-MM-DD HH:MM~HH:MM"
 # （內部資料格式，跨租戶共用，不屬於 TenantConfig）
