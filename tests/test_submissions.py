@@ -109,8 +109,10 @@ class TestBuildSubmissionProps:
 
 
 class TestSubmitHint:
-    def test_file_method_redirects_to_link(self):
-        assert "檔案上傳尚未開通" in submit_hint_for_task(task(submit_method="檔案"))
+    def test_file_method_points_to_attachment_param(self):
+        hint = submit_hint_for_task(task(submit_method="檔案"))
+        assert "檔案:" in hint  # 引導用附件參數
+        assert "尚未開通" not in hint  # 舊文案不得復活
 
     def test_text_method_asks_for_text(self):
         assert "文字" in submit_hint_for_task(task(submit_method="文字"))

@@ -1,4 +1,4 @@
-"""P0-3 作業提交：/提交任務（連結／文字先行；檔案上傳等 Drive 憑證後開通）。"""
+"""P0-3 作業提交：/提交任務（檔案自動歸檔 Drive；連結／文字走表單）。"""
 import logging
 from datetime import datetime
 
@@ -32,10 +32,13 @@ def is_valid_link(link_url: str) -> bool:
 
 
 def submit_hint_for_task(task: repositories.TaskItem) -> str:
-    """Modal 開頭給藝人的提示：依任務的提交方式引導，檔案任務先導向雲端連結。"""
+    """Modal 開頭給藝人的提示：依任務的提交方式引導。"""
     method = task.submit_method
     if method == "檔案":
-        return "此任務原定上傳檔案；檔案上傳尚未開通，請先貼雲端連結（Drive／雲端硬碟）。"
+        return (
+            f"此任務要求交檔案：建議改打「/提交任務 檔案:」直接附檔"
+            f"（≤{MAX_UPLOAD_MB}MB 會自動歸檔）；大檔請貼雲端連結。"
+        )
     if method == "Drive 連結":
         return "請貼上作品的雲端連結（記得開啟共用權限）。"
     if method == "文字":
