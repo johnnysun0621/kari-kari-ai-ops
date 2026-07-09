@@ -120,15 +120,17 @@ class SubmissionModal(discord.ui.Modal):
             after=f"{submit_type}｜任務轉待審核" + (f"｜取代 {replaced} 筆舊版" if replaced else ""),
         )
 
-        # 通知控方（營運內部；未設定則管理通知 fallback 鏈）
+        # 通知控方（營運內部）。通知失敗只記 log，不影響藝人的提交確認
         internal = interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-        if internal:
-            link_part = f"\n連結：{link_url}" if link_url else ""
-            await internal.send(
+        link_part = f"\n連結：{link_url}" if link_url else ""
+        await channel_guard.try_send(
+            internal,
+            content=(
                 f"📥 **新提交待審核**\n"
                 f"任務：{self.task.name}｜{artist.name}｜{submit_type}"
                 f"{link_part}\nNotion：{submission_page.get('url', '')}"
-            )
+            ),
+        )
 
         resubmit_note = f"\n（已取代先前 {replaced} 筆提交，這筆為最新版）" if replaced else ""
         await interaction.followup.send(

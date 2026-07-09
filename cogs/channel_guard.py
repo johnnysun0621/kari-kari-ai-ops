@@ -1,7 +1,32 @@
 """Discord slash command channel routing helpers."""
+import logging
+
 import discord
 
 import config
+
+logger = logging.getLogger(__name__)
+
+
+async def try_send(channel, **kwargs) -> discord.Message | None:
+    """發訊息到頻道，權限不足或頻道不存在時記 log 不拋例外。
+
+    附帶通知（控方通知、升級訊息）用這個：通知失敗不該毀掉主流程
+    （例如藝人提交成功後的確認回覆）。
+    """
+    if channel is None:
+        return None
+    try:
+        return await channel.send(**kwargs)
+    except discord.Forbidden:
+        logger.warning(
+            "無權發送訊息到頻道 %s（請確認 bot 有檢視＋發送權限）",
+            getattr(channel, "id", "?"),
+        )
+        return None
+    except discord.HTTPException:
+        logger.exception("發送頻道訊息失敗（channel=%s）", getattr(channel, "id", "?"))
+        return None
 
 
 def _is_allowed_channel(expected_channel_id: int, actual_channel_id: int | None) -> bool:
