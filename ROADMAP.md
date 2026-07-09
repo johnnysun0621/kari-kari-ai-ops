@@ -121,3 +121,4 @@ schema 草案會先開給 Johnny 在 Notion 確認再實作。
 - Notion 速率 ~3 req/s（per integration）是天花板；已用快取/節流緩解，
   賣錢版若遇瓶頸再加本地讀快取層（架構已預留）
 - 排課流程超過 3 天即失效（Kickoff 紅線）——老師連結（Phase 2）是閉環關鍵
+- 技術債備忘：repositories.py ~1,500 行（單一責任仍成立＝欄位對應，但建議 Phase 3 拆成 repositories/ 套件按資料庫分檔）

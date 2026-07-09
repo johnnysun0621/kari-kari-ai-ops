@@ -7,8 +7,8 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from cogs import channel_guard
-from cogs.scheduling_admin import is_admin
+from cogs import channel_guard, ui_text
+from services.permissions import is_admin
 from services import repositories
 
 logger = logging.getLogger(__name__)
@@ -23,29 +23,9 @@ SECTION_ORDER = [
 ]
 
 
-def _trim_message(text: str, limit: int = 1900) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit - 18].rstrip() + "\n...清單過長已截斷"
-
-
-def _deadline_text(task: repositories.TaskItem, now: datetime) -> str:
-    if not task.end:
-        return "無截止日"
-    day_diff = (task.end.date() - now.date()).days
-    date_text = f"{task.end.month}/{task.end.day}"
-    if task.end_has_time:
-        date_text += task.end.strftime(" %H:%M")
-    if day_diff < 0:
-        return f"截止 {date_text}（已過 {-day_diff} 天）"
-    if day_diff == 0:
-        return f"截止 {date_text}（今天）"
-    return f"截止 {date_text}（剩 {day_diff} 天）"
-
-
 def _task_line(task: repositories.TaskItem, now: datetime, extra: str = "") -> str:
     type_text = task.task_type or "任務"
-    line = f"・**{task.name}**｜{type_text}｜{_deadline_text(task, now)}"
+    line = f"・**{task.name}**｜{type_text}｜{ui_text.deadline_text(task, now)}"
     if extra:
         line += f"｜{extra}"
     return line
@@ -103,7 +83,7 @@ class TasksCog(commands.Cog):
             await interaction.followup.send("🎉 目前沒有進行中的任務。", ephemeral=True)
             return
         await interaction.followup.send(
-            _trim_message(f"📑 {artist.name} 的任務：\n\n{body}"), ephemeral=True
+            ui_text.trim_message(f"📑 {artist.name} 的任務：\n\n{body}"), ephemeral=True
         )
 
     @app_commands.command(name="任務總覽", description="管理端：全部未結案任務（待審核／逾期／即將到期）")
@@ -129,7 +109,7 @@ class TasksCog(commands.Cog):
             return
         total = sum(len(v) for v in buckets.values())
         await interaction.followup.send(
-            _trim_message(f"📋 未結案任務總覽（{total} 筆）：\n\n{body}"), ephemeral=True
+            ui_text.trim_message(f"📋 未結案任務總覽（{total} 筆）：\n\n{body}"), ephemeral=True
         )
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error):

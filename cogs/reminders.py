@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 
 import config
-from cogs import tasks_artist
+from cogs import ui_text
 from services import audit, repositories, time_collection
 
 logger = logging.getLogger(__name__)
@@ -283,7 +283,7 @@ class RemindersCog(commands.Cog):
             for stage in stages:
                 self._once(f"task:{t.page_id}", stage)  # 一次標記全部，補跑不重複發
             is_overdue = repositories.OVERDUE_STAGE in stages
-            deadline_text = tasks_artist._deadline_text(t, now)
+            deadline_text = ui_text.deadline_text(t, now)
             artists = [artist_map[pid] for pid in t.artist_page_ids if pid in artist_map]
 
             # DM 藝人（僅 Discord 顯示的任務；內部行政任務不打擾藝人）

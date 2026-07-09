@@ -8,9 +8,10 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from cogs import channel_guard
+from cogs import channel_guard, ui_text
 from cogs.scheduling_artist import make_announcement_view, make_pool_availability_view
 from services import audit, overlap, repositories, time_collection, timeparse
+from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,6 @@ async def _get_open_requests_cached() -> list[repositories.ScheduleRequest]:
     requests = await repositories.get_requests_by_status(repositories.OPEN_REQUEST_STATUSES)
     _open_requests_cache[key] = (now, requests)
     return requests
-
-
-def is_admin():
-    def predicate(interaction: discord.Interaction) -> bool:
-        if interaction.user.guild_permissions.administrator:
-            return True
-        return any(r.id == config.ADMIN_ROLE_ID for r in getattr(interaction.user, "roles", []))
-    return app_commands.check(predicate)
 
 
 COURSE_TYPE_CHOICES = [app_commands.Choice(name=t, value=t) for t in config.COURSE_TYPES]
@@ -72,12 +65,6 @@ def _admin_slot_line(slot: repositories.AvailabilitySlot) -> str:
     else:
         time_text = slot.name or "未命名時段"
     return f"{slot.name or '未命名時段'}｜{time_text}"
-
-
-def _trim_message(text: str, limit: int = 1900) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit - 18].rstrip() + "\n...清單過長已截斷"
 
 
 def _pool_window_text(start: datetime, end: datetime) -> str:
@@ -120,7 +107,7 @@ def _monthly_pool_result_text(
             lines.append("可以先請未填藝人補填，或改選已填的人先安排。")
         else:
             lines.append("可以改選較少藝人、縮短需要時長，或請藝人補填更多時段。")
-        return _trim_message("\n".join(lines))
+        return ui_text.trim_message("\n".join(lines))
 
     lines.append("")
     lines.append("共同空檔：")
@@ -135,7 +122,7 @@ def _monthly_pool_result_text(
         lines.append(f"另有 {len(result.windows) - MONTHLY_POOL_RESULT_LIMIT} 個共同空檔未顯示。")
     lines.append("")
     lines.append("這裡只列候選，不會建立 Notion Project / Task。正式安排請由營運判斷後建立。")
-    return _trim_message("\n".join(lines))
+    return ui_text.trim_message("\n".join(lines))
 
 
 def _cleanup_preview_text(
@@ -170,7 +157,7 @@ def _cleanup_preview_text(
         lines.append("\n目前沒有需要整理的重複或重疊資料。")
     else:
         lines.append("\n確認後才會更新 / 封存 Notion 資料。")
-    return _trim_message("\n".join(lines))
+    return ui_text.trim_message("\n".join(lines))
 
 
 class AvailabilityCleanupPreviewView(discord.ui.View):

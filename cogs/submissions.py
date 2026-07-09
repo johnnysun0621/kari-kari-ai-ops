@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from cogs import channel_guard, tasks_artist
+from cogs import channel_guard, ui_text
 from services import audit, repositories
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ class SubmitTaskSelect(discord.ui.Select):
                 label=t.name[:100],
                 value=t.page_id,
                 description=(
-                    f"{t.task_type or '任務'}｜{tasks_artist._deadline_text(t, now)}"
+                    f"{t.task_type or '任務'}｜{ui_text.deadline_text(t, now)}"
                 )[:100],
             )
             for t in tasks[:25]

@@ -36,6 +36,7 @@ python bot.py                      # 需 .env（見 README）
 - [config.py](config.py)：`TenantConfig` dataclass ＝ 一間公司的全部設定；`get_tenant()` 取得。
   模組常數是向後相容別名，**新程式碼一律用 `get_tenant()`**
 - [services/notion_api.py](services/notion_api.py)：Notion 薄封裝；**per-token 連線＋節流（~3 req/s）**
+- [services/permissions.py](services/permissions.py)：身分／權限判斷唯一入口（Phase 3 權限層起點）
 - [services/repositories.py](services/repositories.py)：**中文欄位名 → API payload 的唯一對應處**；
   Notion 改欄位名只改這裡。含 dataclass 模型、純函式（分區/去重/提醒階段）
 - [cogs/](cogs/)：channel_guard（頻道分流＋公告頻道 fallback）、scheduling_admin（排課管理）、
@@ -50,6 +51,9 @@ python bot.py                      # 需 .env（見 README）
 4. 破壞性操作先預覽；封存（archive）不刪除；重要操作寫 `audit.log_event`
 5. 互動處理第一行先 `defer()` 或立即回應（Discord 3 秒硬限）；autocomplete 必須走快取
 6. 每個功能配純函式測試；新增測試工廠前先 grep `tests/`（曾發生同名 `task()` 遮蔽既有工廠）
+7. **模組化／積木化**（Johnny 明確要求）：共用邏輯放 services/（permissions、repositories…）、
+   共用 UI helper 放獨立模組（channel_guard、ui_text 模式）；**cog 之間不 import 彼此的私有函式**；
+   helper 重複第二次就抽出來
 
 ## 刻意設計——看起來像 bug 但不是（別「修」它們）
 
