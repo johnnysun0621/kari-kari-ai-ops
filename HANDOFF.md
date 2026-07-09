@@ -10,9 +10,10 @@
 3. [ROADMAP.md](ROADMAP.md)：目前進度與下一步。
 4. [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md)：Discord 頻道組成與 slash command 分流。
 5. [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md)：每個 slash command 用途與 Notion 互動。
-6. [NOTION_SCHEMA.md](NOTION_SCHEMA.md)：Notion 資料庫交互邏輯。
-7. [ARCHITECTURE.md](ARCHITECTURE.md)：工程架構與程式責任切分。
-8. [TESTING.md](TESTING.md)：測試與驗收方式。
+6. [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)：任務提交方式、Discord 上傳限制、10MB 分界、審核通知。
+7. [NOTION_SCHEMA.md](NOTION_SCHEMA.md)：Notion 資料庫交互邏輯。
+8. [ARCHITECTURE.md](ARCHITECTURE.md)：工程架構與程式責任切分。
+9. [TESTING.md](TESTING.md)：測試與驗收方式。
 
 ## 目前產品方向
 
@@ -43,6 +44,8 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 2. 需要藝人看到時，勾 `Discord 顯示`。
 3. 藝人在 `任務查詢入口` 執行 `/我的任務`。
 4. 控方在 `任務查詢入口` 執行 `/任務總覽`。
+5. 需要交作業／作品時，藝人執行 `/提交任務`，Bot 依 Notion `提交方式` 引導。
+6. 控方用 `/審核提交` 回覆通過／需修改／退回，Bot DM 藝人審核結果。
 
 舊排課流程：
 
@@ -104,6 +107,9 @@ pgrep -fl "python.*bot.py"
 | 月度時間 UI / 文案 | `services/time_collection.py`、`cogs/scheduling_artist.py` |
 | Notion 欄位 / CRUD | `services/repositories.py` |
 | Notion API request | `services/notion_api.py` |
+| 任務 / 作業提交 / 審核通知 | `cogs/submissions.py`、`SUBMISSION_FLOW.md` |
+| Drive 歸檔路徑 | `services/drive_archive.py` |
+| Google Drive 上傳 | `services/drive_api.py`、`DRIVE_OAUTH_SETUP.md` |
 | 共同時段演算法 | `services/overlap.py` |
 | 時間解析 / 顯示 | `services/timeparse.py` |
 | Audit Log | `services/audit.py` |
@@ -117,6 +123,7 @@ pgrep -fl "python.*bot.py"
 | 新增 / 修改 slash command | `DISCORD_COMMANDS.md` |
 | 調整 Discord 頻道或權限 | `DISCORD_CHANNELS.md`、`OPERATIONS_PLAYBOOK.md` |
 | 改 Notion 欄位或資料庫用途 | `NOTION_SCHEMA.md` |
+| 改提交方式 / 檔案大小分界 | `SUBMISSION_FLOW.md`、`DISCORD_COMMANDS.md`、`OPERATIONS_PLAYBOOK.md` |
 | 改營運流程 | `OPERATIONS_PLAYBOOK.md` |
 | 改工程架構 | `ARCHITECTURE.md` |
 | 改測試方式或驗收情境 | `TESTING.md` |

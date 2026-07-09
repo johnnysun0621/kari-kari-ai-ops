@@ -134,6 +134,27 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - 控方查全部未結案任務。
 - 任務分區顯示：逾期、需修改、三天內截止、進行中 / 待提交、待審核。
 
+### `cogs/submissions.py`
+
+任務 / 作業提交入口。
+
+主要指令：
+
+- `/提交任務`
+- `/審核提交`
+
+主要責任：
+
+- 讀 Notion `Tasks.提交方式`，依控方指派方式引導提交。
+- 支援 `檔案`、`Drive 連結`、`文字`、`混合`。
+- Discord 檔案 `<=10MB` 時自動歸檔 Google Drive。
+- `>10MB` 檔案不走 Discord，上雲端後貼連結。
+- 寫 `Submissions & File Index`。
+- 將 Task 轉為 `待審核` 並回寫 `最新提交 URL`。
+- 審核最新版提交，回寫審核欄位，依結果更新 Task 並 DM 藝人。
+
+完整產品規則見 [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)。
+
 ### `cogs/reminders.py`
 
 背景提醒 loop。
@@ -206,6 +227,28 @@ Notion 資料層與純邏輯集中處。
 - Discord modal 時間文字解析。
 - 候選時段文字格式。
 - 人類可讀時間顯示。
+
+### `services/drive_archive.py`
+
+Drive 歸檔路徑純邏輯。
+
+責任：
+
+- 從藝人專區 URL 解析 folder ID。
+- 依任務類型決定資料夾。
+- 回傳 `藝人專區 / 任務類型夾 / YYYY-MM` 路徑。
+- 任務有指定 `Google Drive Folder` 時優先使用任務資料夾。
+
+### `services/drive_api.py`
+
+Google Drive API 操作。
+
+責任：
+
+- 讀 OAuth token。
+- find-or-create 資料夾。
+- 上傳 Discord attachment 到 Google Drive。
+- 回傳 Drive File ID / URL。
 
 ### `services/audit.py`
 

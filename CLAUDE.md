@@ -10,6 +10,7 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 | [HANDOFF.md](HANDOFF.md) | AI／工程師協作者接手規則、改檔對照、測試要求 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 程式模組責任、資料邊界、平轉狀態 |
 | [TESTING.md](TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
+| [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Discord 附件限制、10MB 分界、審核通知 |
 | [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔 OAuth 設定教學（含平轉重跑流程） |
 | [ROADMAP.md](ROADMAP.md) | **進度總表＋下一步**＋進度日誌＋待 Johnny 提供事項——接手先看這裡 |
 | [RESEARCH.md](RESEARCH.md) | 需求研究：Kickoff 客戶需求、11 張 Notion 資料庫欄位對應、Gap 分析、決策收斂紀錄 |
@@ -41,7 +42,7 @@ python bot.py                      # 需 .env（見 README）
 - [services/repositories.py](services/repositories.py)：**中文欄位名 → API payload 的唯一對應處**；
   Notion 改欄位名只改這裡。含 dataclass 模型、純函式（分區/去重/提醒階段）
 - [cogs/](cogs/)：channel_guard（頻道分流＋公告頻道 fallback）、scheduling_admin（排課管理）、
-  scheduling_artist（藝人填時段）、tasks_artist（任務查詢）、submissions（作業提交）、reminders（背景提醒 loop，30 分鐘一輪）
+  scheduling_artist（藝人填時段）、tasks_artist（任務查詢）、submissions（作業提交與審核通知）、reminders（背景提醒 loop，30 分鐘一輪）
 - 測試全是純函式測試（不打網路）；async 用 `asyncio.run` ＋ monkeypatch `notion_api.query_data_source`
 
 ## 鐵則（違反＝review 打回）
@@ -74,7 +75,7 @@ python bot.py                      # 需 .env（見 README）
 - Audit Log 寫入失敗不阻斷主流程（audit.py 已包好）
 - 月度收集進行中狀態持久化在 `.state/time_collection.json`（bot 本機狀態，非營運資料；已 gitignore）
 
-## 目前狀態（2026-07-09）
+## 目前狀態（2026-07-10）
 
-分支 `feat/p0-foundation`；Phase 0、1a、1d 完成；月度時間池主流程、任務查詢、任務提醒、雙頻道分流已落地。  
-**下一步 Phase 1c 審核流**（/審核：通過/需修改/退回＋DM 藝人）；1b 的檔案上傳待 Johnny 提供 Drive OAuth 憑證。細節見 ROADMAP。
+月度時間池主流程、任務查詢、任務提醒、雙頻道分流、Drive 檔案歸檔、`/提交任務`、`/審核提交` 已落地。  
+檔案提交標準以免費 Discord 使用者為準：10MB 以下走同頻道附件，入口 3 小時有效；10MB 以上走 Drive 連結。細節見 ROADMAP。

@@ -11,7 +11,7 @@
 | 總資料夾 | ✅ 「Kali Kali AI Ops Testing」，ID 已入 `.env` 的 `GOOGLE_DRIVE_ROOT_FOLDER_ID` |
 | 藝人專區 | ✅ Johnny、Chenhua 兩區已建立 |
 | Notion 回填 | ✅ 兩位藝人的 Artists「Google Drive 資料夾」欄位已填入專區連結 |
-| 檔案上傳功能 | ✅ 已上線（`/提交任務 檔案:<拖檔案>`；2026-07-10 真機驗證通過） |
+| 檔案上傳功能 | ✅ 已上線（`/提交任務` 選任務後，同頻道等待附件；2026-07-10 真機驗證通過） |
 
 之後**新增藝人**時的步驟：總資料夾底下建「<藝人>專區」→ 跑 `scripts/check_drive.py`
 拿到連結 → 填入該藝人 Notion Artists 的「Google Drive 資料夾」欄位。完成。
@@ -111,16 +111,22 @@ Notion Artists 的「Google Drive 資料夾」欄位**，歸檔就接通了。
 
 ## 檔案上傳流程（設計說明）
 
-Discord 的限制：**Modal 表單不能附檔案**。所以提交有兩條入口：
+提交方式由 Notion `Tasks.提交方式` 決定；Discord 端只依設定引導。  
+Discord 的限制是：**Modal 表單不能附檔案**。所以檔案任務改走同頻道等待附件，不要求藝人退出後重打指令或跳到私訊。
 
 | 提交內容 | 入口 | 流程 |
 |---|---|---|
-| 雲端連結／文字 | `/提交任務`（現行） | 選任務 → 表單貼連結或填文字 → 寫 Notion |
-| 檔案 | `/提交任務 檔案:<拖檔案>` | 打指令時直接把檔案拖進附件參數 → 選任務 → bot 下載檔案 → 上傳到 `專區/類型夾/YYYY-MM/` → 寫 Submissions（Drive URL＋File ID＋原始檔名＋大小） |
+| 雲端連結／文字 | `/提交任務` | 選任務 → Bot 依 Notion `提交方式` 開對應表單 → 寫 Notion |
+| 檔案 | `/提交任務` | 選任務 → 同頻道上傳一個附件（入口 3 小時有效） → bot 下載檔案 → 上傳到 `專區/類型夾/YYYY-MM/` → 寫 Submissions（Drive URL＋File ID＋原始檔名＋大小） |
 
-- Discord 附件上限 8–25MB（依伺服器加成）；**大檔（Stem／DAW 專案）仍走雲端連結**
+- 本產品檔案自動歸檔標準分界固定為 **10MB**：`<=10MB` 可走 Discord 附件，`>10MB` 一律走雲端連結
+- 即使 Discord Nitro 或 server boost 允許更大附件，Bot 仍用 10MB 作為免費藝人的標準流程，避免要求藝人付費
+- 大檔（Stem／DAW 專案、影片、大型音檔）應在 Notion 指定 `Drive 連結` 或 `混合`
 - 上傳失敗不寫入半套資料：bot 清楚提示改貼雲端連結；Drive 成功但 Notion 失敗時會給 Drive 連結請營運補登
+- 舊入口 `/提交任務 檔案:<拖檔案>` 保留作為 fallback，但不是主要教學流程
 - 歸檔路徑邏輯在 `services/drive_archive.py`（純函式）；Drive API 操作在 `services/drive_api.py`
+
+完整產品規則見 [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)。
 
 ## 常見問題
 

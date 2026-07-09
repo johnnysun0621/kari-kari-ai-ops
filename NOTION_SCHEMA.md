@@ -22,7 +22,7 @@ Bot 讀取：
 | `藝人名稱` | Discord 顯示名稱 |
 | `Discord User ID` | 將 Discord 使用者對應到 Notion 藝人 |
 | `合約狀態` | 判斷是否可排課 |
-| `Google Drive 資料夾` | 藝人專區連結——作業歸檔基底（Drive OAuth 到位後啟用） |
+| `Google Drive 資料夾` | 藝人專區連結，作業檔案自動歸檔基底 |
 
 可排課條件：
 
@@ -132,29 +132,44 @@ Bot 寫入：
 | `提交名稱` | 藝人｜任務｜時間 |
 | `提交藝人` / `關聯任務` | relation 對回 Artists / Tasks |
 | `提交來源` | Discord |
-| `提交類型` | Drive 連結／文字／混合（檔案待 Drive OAuth） |
+| `提交類型` | 檔案／Drive 連結／文字／混合 |
 | `檔案類型` | 依任務類型自動對應（課程作業→課程作業、創作交付→Demo、企劃提案→企劃書、業配內容→業配素材、錄音→錄音檔、其他→其他） |
-| `Drive URL` | 藝人貼的雲端連結（未來＝歸檔後的公司 Drive 連結） |
+| `Drive URL` | 藝人貼的雲端連結，或 Bot 歸檔後的公司 Drive 連結 |
 | `備註` | 純文字提交的內容 |
+| `Drive File ID` / `原始檔名` / `檔案大小 MB` | Discord 檔案自動歸檔時回寫 |
 | `提交時間` / `是否最新版` / `審核狀態`(待審核) / `權限等級`(藝人本人) | 狀態欄位 |
+| `審核回饋` | 老師或控方給藝人的文字回饋 |
+| `審核者` | Discord 審核者或 Notion 手動審核者 |
+| `審核來源` | `Discord` / `Notion`，用來判斷通知來源 |
+| `審核通知時間` | Bot 成功通知藝人的時間，避免重複通知 |
 
 重交規則：同任務舊提交自動取消 `是否最新版`——查最新版只要 filter `是否最新版=true`。
 
-### 檔案實際存放位置（現在 vs 之後）
+### 提交方式與檔案實際存放位置
 
-- **現在**：bot 不經手檔案本體；檔案在藝人自己的雲端，Notion 只存連結。
-- **之後（Drive OAuth 到位）**：Discord 上傳檔案自動歸檔公司 Google Drive。
+- Notion `Tasks.提交方式` 是唯一提交方式來源；Discord 端只依此引導與阻擋錯誤提交。
+- Discord 上傳檔案自動歸檔公司 Google Drive。
   結構（2026-07-10 拍板，取代 Kickoff 的課程→日期→藝人）：
-  **藝人專區 → 任務類型夾 → YYYY-MM**（每類型一夾，隱私隔離：專區只分享給該藝人）；
-  `Artists.Google Drive 資料夾` 存專區連結，bot 自動 find-or-create 子資料夾；
-  任務的 `Google Drive Folder` 有值則優先歸該資料夾；
-  回寫 `Drive URL`＋`Drive File ID`＋`原始檔名`＋`檔案大小 MB`。
-  路徑邏輯已實作於 `services/drive_archive.py`（純函式，等憑證接 API）。
-- **大檔（5GB+）永遠走連結**（Discord 上傳上限 8–25MB）。
+  **藝人專區 → 任務類型夾 → YYYY-MM**（每類型一夾，隱私隔離：專區只分享給該藝人）。
+- `Artists.Google Drive 資料夾` 存專區連結，Bot 自動 find-or-create 子資料夾。
+- 任務的 `Google Drive Folder` 有值則優先歸該資料夾。
+- 回寫 `Drive URL`＋`Drive File ID`＋`原始檔名`＋`檔案大小 MB`。
+- 路徑邏輯在 `services/drive_archive.py`；Drive API 操作在 `services/drive_api.py`。
+- 自動歸檔標準分界：`<=10MB` 走 Discord 同頻道附件；`>10MB` 走雲端連結。
+- 大型 Stem、DAW 專案、影片、大型音檔請在 Notion 指定 `Drive 連結` 或 `混合`。
 - **P2**：冷資料轉 NAS，`NAS 路徑` 欄位已預留。
 
-審核流（Phase 1c 規劃中）：控方 `/審核` 改 `審核狀態`（通過／需修改／退回）＋填 `回饋`，
-同步改 Tasks `任務狀態` 並 DM 藝人。
+完整規則見 [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)。
+
+### 審核流
+
+- Discord `/審核提交` 會讀取最新版 `待審核` 提交。
+- 控方選 `通過`、`需修改` 或 `退回`，可填 `審核回饋`。
+- Bot 更新 Submissions 審核欄位，並同步更新 Tasks：
+  - `通過` → Task `已完成`
+  - `需修改` / `退回` → Task `需修改`
+- Bot DM 藝人審核結果與回饋。
+- Notion 端手動審核也支援：若 `審核狀態` 是結果值，且有 `審核回饋`、`審核者` 或 `審核來源` 任一欄，背景 loop 會通知藝人並回寫 `審核通知時間`。
 ## Projects｜專案
 
 用途：上層歸屬與提醒來源。

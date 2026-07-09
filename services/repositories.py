@@ -362,6 +362,24 @@ class TaskItem:
     drive_folder_url: str = ""
 
 
+@dataclass
+class SubmissionItem:
+    page_id: str
+    name: str
+    status: str | None
+    artist_page_ids: list[str] = field(default_factory=list)
+    task_page_ids: list[str] = field(default_factory=list)
+    latest: bool = False
+    submit_type: str | None = None
+    drive_url: str = ""
+    note: str = ""
+    review_feedback: str = ""
+    reviewer: str = ""
+    review_source: str | None = None
+    review_notified_at: datetime | None = None
+    url: str = ""
+
+
 @dataclass(frozen=True)
 class BusyInterval:
     source_id: str
@@ -433,6 +451,25 @@ def _to_task(page: dict) -> TaskItem:
         discord_visible=_task_discord_visible(page),
         reminder_rules=_read_multi_select(page, "提醒規則"),
         drive_folder_url=_read_url(page, "Google Drive Folder"),
+    )
+
+
+def _to_submission(page: dict) -> SubmissionItem:
+    return SubmissionItem(
+        page_id=page["id"],
+        name=_read_title(page, "提交名稱"),
+        status=_read_select(page, "審核狀態"),
+        artist_page_ids=_read_relation_ids(page, "提交藝人"),
+        task_page_ids=_read_relation_ids(page, "關聯任務"),
+        latest=_read_checkbox(page, "是否最新版"),
+        submit_type=_read_select(page, "提交類型"),
+        drive_url=_read_url(page, "Drive URL"),
+        note=_read_rich_text(page, "備註"),
+        review_feedback=_read_rich_text(page, "審核回饋"),
+        reviewer=_read_rich_text(page, "審核者"),
+        review_source=_read_select(page, "審核來源"),
+        review_notified_at=_read_date_start(page, "審核通知時間"),
+        url=page.get("url", ""),
     )
 
 
@@ -876,6 +913,112 @@ async def set_task_under_review(task_page_id: str, latest_url: str) -> None:
     if latest_url:
         props["最新提交 URL"] = _url(latest_url)
     await notion_api.update_page(task_page_id, props)
+
+
+# ---------- P0-5 審核通知（Submissions → Tasks → Discord DM） ----------
+
+REVIEW_RESULT_STATUSES = ("通過", "需修改", "退回")
+
+
+def review_update_props(
+    *,
+    status: str,
+    feedback: str = "",
+    reviewer: str = "",
+    source: str = "",
+    notified_at: datetime | None = None,
+) -> dict:
+    props: dict = {"審核狀態": _select(status)}
+    if feedback:
+        props["審核回饋"] = _rich_text(feedback)
+    if reviewer:
+        props["審核者"] = _rich_text(reviewer)
+    if source:
+        props["審核來源"] = _select(source)
+    if notified_at:
+        props["審核通知時間"] = _date(notified_at)
+    return props
+
+
+async def get_submissions_by_review_status(
+    statuses: list[str] | tuple[str, ...],
+    *,
+    latest_only: bool = True,
+) -> list[SubmissionItem]:
+    status_filters = [
+        {"property": "審核狀態", "select": {"equals": status}}
+        for status in statuses
+    ]
+    filters: list[dict] = [{"or": status_filters}] if len(status_filters) > 1 else status_filters
+    if latest_only:
+        filters.append({"property": "是否最新版", "checkbox": {"equals": True}})
+    pages = await notion_api.query_data_source(config.DS_SUBMISSIONS, filter_={"and": filters})
+    return [_to_submission(page) for page in pages]
+
+
+async def get_reviewable_submissions() -> list[SubmissionItem]:
+    return await get_submissions_by_review_status(["待審核"], latest_only=True)
+
+
+def review_submission_ready_for_auto_notify(submission: SubmissionItem) -> bool:
+    """Notion 端手動審核通知的保護條件。
+
+    只改 `審核狀態` 可能是歷史資料或整理資料，不一定代表老師剛審完。
+    需要至少有回饋、審核者或審核來源其中一項，才由背景 loop 推送給藝人。
+    Discord `/審核提交` 會直接寫 `審核來源=Discord`，不受影響。
+    """
+    return bool(
+        submission.review_feedback.strip()
+        or submission.reviewer.strip()
+        or submission.review_source
+    )
+
+
+async def get_pending_review_notifications() -> list[SubmissionItem]:
+    submissions = await get_submissions_by_review_status(REVIEW_RESULT_STATUSES, latest_only=True)
+    return [
+        submission for submission in submissions
+        if submission.review_notified_at is None
+        and review_submission_ready_for_auto_notify(submission)
+    ]
+
+
+
+async def update_submission_review(
+    page_id: str,
+    *,
+    status: str,
+    feedback: str = "",
+    reviewer: str = "",
+    source: str = "",
+    notified_at: datetime | None = None,
+) -> None:
+    await notion_api.update_page(
+        page_id,
+        review_update_props(
+            status=status,
+            feedback=feedback,
+            reviewer=reviewer,
+            source=source,
+            notified_at=notified_at,
+        ),
+    )
+
+
+async def mark_submission_review_notified(
+    page_id: str,
+    *,
+    source: str = "Notion",
+    notified_at: datetime | None = None,
+) -> None:
+    notified_at = notified_at or datetime.now(config.TZ)
+    await notion_api.update_page(
+        page_id,
+        {
+            "審核來源": _select(source),
+            "審核通知時間": _date(notified_at),
+        },
+    )
 
 
 # 「撞課」情境（Tasks/Projects/Sessions）每次填時段都要算，且含兩次全表掃描。

@@ -22,6 +22,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 | [TESTING.md](TESTING.md) | 自動測試、Discord 驗收、Notion 驗收 |
 | [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) | Discord 頻道組成與 slash command 對應 |
 | [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md) | Discord slash command 使用手冊 |
+| [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Discord 上傳限制、10MB 分界、審核通知 |
 | [OPERATIONS_PLAYBOOK.md](OPERATIONS_PLAYBOOK.md) | 控方營運 SOP |
 | [NOTION_SCHEMA.md](NOTION_SCHEMA.md) | Notion 資料庫交互邏輯 |
 | [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則與平展化方向 |
@@ -87,6 +88,7 @@ cogs/
   scheduling_admin.py     # /時間收集建立 /時間池比對 /時間池整理 /排課*
   scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段 /補填時間
   tasks_artist.py         # /我的任務 /任務總覽
+  submissions.py          # /提交任務 /審核提交
   reminders.py            # 催收與 SLA 背景任務（每 30 分鐘）
 tests/                    # 純函式、互動邏輯、資料層測試
 ```
