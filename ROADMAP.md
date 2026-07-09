@@ -47,6 +47,16 @@
 
 ## 進度日誌
 
+### 2026-07-10（Drive 整合前置全通）
+
+- 還原 6/29 smoke test 的 OAuth 設定（~/Documents/Kali Kali AI Ops），重用其用戶端
+- `ee8e182` Drive OAuth 套件：DRIVE_OAUTH_SETUP.md 教學（重用/從零兩路線）、
+  authorize_drive.py／check_drive.py 腳本、TenantConfig.drive_root_folder_id
+- 完成授權（完整 drive scope，取代舊 drive.file）；驗證總資料夾＋2 個藝人專區；
+  專區連結回填 Notion Artists ✅
+- 歸檔結構拍板：藝人專區→任務類型夾→YYYY-MM（`09f0ae9` 路徑積木＋11 測試）
+- 下一步：drive_api 上傳層（/提交任務 加 Discord 附件參數；Modal 不能附檔）
+
 ### 2026-07-09 深夜（Phase 1b 作業提交）
 
 - `/提交任務`：藝人選開放提交的任務 → 表單貼雲端連結或填文字（至少一項）→
@@ -107,10 +117,8 @@
 
 ## 待 Johnny 提供／決定
 
-- [ ] **跑 Drive 授權**：`scripts/authorize_drive.py` → `scripts/check_drive.py`（教學：DRIVE_OAUTH_SETUP.md；
-      舊用戶端已複製、總資料夾 ID 已入 .env ✅）
-- [ ] Drive 總資料夾底下建「藝人專區」（振華專區、Chenhua專區…），連結填入 Artists.`Google Drive 資料夾`；
-      子資料夾（類型夾/月份夾）bot 會自動建，不用手動
+- [x] ~~Drive 授權~~（2026-07-10 完成：token 已存、總資料夾可存取）
+- [x] ~~藝人專區＋Notion 回填~~（Johnny／Chenhua 專區連結已填入 Artists）
 - [ ] Tasks 42 筆舊資料人工確認 `Discord 顯示`（公司方作業）
 - [ ] 一個網域（Phase 2 老師確認連結，Cloudflare Tunnel 用，~US$10/年）
 - [ ] 財務核決模式與公司確認（單人 vs 多人；不阻塞前面 Phase）

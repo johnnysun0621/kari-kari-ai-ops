@@ -3,6 +3,19 @@
 讓 bot 能把藝人提交的檔案自動歸檔到公司 Google Drive。
 照本文操作一次約 5–10 分鐘；平轉到其他公司時照同一份教學重跑即可。
 
+## KariKari 目前狀態（2026-07-10 已完成 ✅）
+
+| 項目 | 狀態 |
+|---|---|
+| OAuth 授權 | ✅ 已完成（完整 `drive` scope，token 在 `credentials/token.json`） |
+| 總資料夾 | ✅ 「Kali Kali AI Ops Testing」，ID 已入 `.env` 的 `GOOGLE_DRIVE_ROOT_FOLDER_ID` |
+| 藝人專區 | ✅ Johnny、Chenhua 兩區已建立 |
+| Notion 回填 | ✅ 兩位藝人的 Artists「Google Drive 資料夾」欄位已填入專區連結 |
+| 檔案上傳功能 | 🔜 開發中（見下方「檔案上傳流程」） |
+
+之後**新增藝人**時的步驟：總資料夾底下建「<藝人>專區」→ 跑 `scripts/check_drive.py`
+拿到連結 → 填入該藝人 Notion Artists 的「Google Drive 資料夾」欄位。完成。
+
 ## 整體圖像
 
 ```
@@ -95,6 +108,19 @@ Notion Artists 的「Google Drive 資料夾」欄位**，歸檔就接通了。
 - 隱私：每個專區只分享給該藝人（＋控方），藝人看不到彼此
 - 特例：任務的 `Google Drive Folder` 欄位有值 → 該任務的提交直接歸那裡
 - 對應表（任務類型→資料夾名）在 `services/drive_archive.py`，租戶可覆寫
+
+## 檔案上傳流程（設計說明）
+
+Discord 的限制：**Modal 表單不能附檔案**。所以提交有兩條入口：
+
+| 提交內容 | 入口 | 流程 |
+|---|---|---|
+| 雲端連結／文字 | `/提交任務`（現行） | 選任務 → 表單貼連結或填文字 → 寫 Notion |
+| 檔案 | `/提交任務 檔案:<拖檔案>`（開發中） | 打指令時直接把檔案拖進附件參數 → 選任務 → bot 下載檔案 → 上傳到 `專區/類型夾/YYYY-MM/` → 寫 Submissions（Drive URL＋File ID＋原始檔名＋大小） |
+
+- Discord 附件上限 8–25MB（依伺服器加成）；**大檔（Stem／DAW 專案）仍走雲端連結**
+- 上傳失敗不會弄丟提交：bot 會 fallback 記錄成連結／文字提交並提示藝人
+- 歸檔路徑邏輯在 `services/drive_archive.py`（純函式）；Drive API 操作在 `services/drive_api.py`
 
 ## 常見問題
 
