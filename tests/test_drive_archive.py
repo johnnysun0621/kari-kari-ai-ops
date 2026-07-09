@@ -1,0 +1,75 @@
+"""作業歸檔路徑邏輯測試（藝人專區→類型夾→月份夾，2026-07-10 拍板）。"""
+
+from datetime import datetime
+
+import config
+from services import drive_archive, repositories
+
+NOW = datetime(2026, 7, 10, 15, 0, tzinfo=config.TZ)
+
+
+def task(task_type: str | None = "課程作業", drive_folder_url: str = ""):
+    return repositories.TaskItem(
+        page_id="task-1",
+        name="編曲作業",
+        status="待提交",
+        task_type=task_type,
+        drive_folder_url=drive_folder_url,
+    )
+
+
+class TestExtractDriveFolderId:
+    def test_standard_folder_url(self):
+        url = "https://drive.google.com/drive/folders/1AbC_dEf-123?usp=sharing"
+        assert drive_archive.extract_drive_folder_id(url) == "1AbC_dEf-123"
+
+    def test_user_scoped_folder_url(self):
+        url = "https://drive.google.com/drive/u/0/folders/1XyZ987"
+        assert drive_archive.extract_drive_folder_id(url) == "1XyZ987"
+
+    def test_open_id_url(self):
+        url = "https://drive.google.com/open?id=1QwE456"
+        assert drive_archive.extract_drive_folder_id(url) == "1QwE456"
+
+    def test_non_folder_url_returns_none(self):
+        assert drive_archive.extract_drive_folder_id("https://example.com/x") is None
+        assert drive_archive.extract_drive_folder_id("") is None
+
+
+class TestTypeFolderMapping:
+    def test_each_type_gets_own_folder(self):
+        assert drive_archive.type_folder_for_task("課程作業") == "課程作業"
+        assert drive_archive.type_folder_for_task("創作交付") == "創作交付"
+        assert drive_archive.type_folder_for_task("業配內容") == "業配內容"
+
+    def test_unknown_type_falls_back(self):
+        assert drive_archive.type_folder_for_task(None) == "其他"
+        assert drive_archive.type_folder_for_task("神秘類型") == "其他"
+
+    def test_tenant_can_override_mapping(self):
+        mapping = {"課程作業": "功課"}
+        assert drive_archive.type_folder_for_task("課程作業", mapping) == "功課"
+        assert drive_archive.type_folder_for_task("創作交付", mapping) == "其他"
+
+
+class TestArchivePath:
+    def test_path_is_type_folder_then_month(self):
+        assert drive_archive.archive_path_for_submission(task(), NOW) == ["課程作業", "2026-07"]
+
+
+class TestResolveArchiveTarget:
+    ZONE = "https://drive.google.com/drive/folders/ZoneId123"
+
+    def test_task_folder_overrides_zone(self):
+        t = task(drive_folder_url="https://drive.google.com/drive/folders/TaskFolder9")
+
+        assert drive_archive.resolve_archive_target(t, self.ZONE, NOW) == ("TaskFolder9", [])
+
+    def test_zone_with_type_and_month_path(self):
+        assert drive_archive.resolve_archive_target(task(), self.ZONE, NOW) == (
+            "ZoneId123", ["課程作業", "2026-07"],
+        )
+
+    def test_no_usable_folder_returns_none(self):
+        assert drive_archive.resolve_archive_target(task(), "", NOW) is None
+        assert drive_archive.resolve_archive_target(task(), "https://example.com", NOW) is None

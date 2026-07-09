@@ -22,6 +22,7 @@ Bot 讀取：
 | `藝人名稱` | Discord 顯示名稱 |
 | `Discord User ID` | 將 Discord 使用者對應到 Notion 藝人 |
 | `合約狀態` | 判斷是否可排課 |
+| `Google Drive 資料夾` | 藝人專區連結——作業歸檔基底（Drive OAuth 到位後啟用） |
 
 可排課條件：
 
@@ -142,9 +143,13 @@ Bot 寫入：
 ### 檔案實際存放位置（現在 vs 之後）
 
 - **現在**：bot 不經手檔案本體；檔案在藝人自己的雲端，Notion 只存連結。
-- **之後（Drive OAuth 到位）**：Discord 上傳檔案自動歸檔公司 Google Drive，
-  結構 **課程 → 日期 → 藝人**；任務的 `Google Drive Folder` 有值則優先歸該資料夾；
+- **之後（Drive OAuth 到位）**：Discord 上傳檔案自動歸檔公司 Google Drive。
+  結構（2026-07-10 拍板，取代 Kickoff 的課程→日期→藝人）：
+  **藝人專區 → 任務類型夾 → YYYY-MM**（每類型一夾，隱私隔離：專區只分享給該藝人）；
+  `Artists.Google Drive 資料夾` 存專區連結，bot 自動 find-or-create 子資料夾；
+  任務的 `Google Drive Folder` 有值則優先歸該資料夾；
   回寫 `Drive URL`＋`Drive File ID`＋`原始檔名`＋`檔案大小 MB`。
+  路徑邏輯已實作於 `services/drive_archive.py`（純函式，等憑證接 API）。
 - **大檔（5GB+）永遠走連結**（Discord 上傳上限 8–25MB）。
 - **P2**：冷資料轉 NAS，`NAS 路徑` 欄位已預留。
 

@@ -148,6 +148,7 @@ class Artist:
     name: str
     discord_user_id: str
     status: str | None = None  # KariKari schema: 合約狀態
+    drive_folder_url: str = ""  # 藝人專區資料夾連結（作業歸檔基底）
 
 
 def _to_artist(page: dict) -> Artist:
@@ -156,6 +157,7 @@ def _to_artist(page: dict) -> Artist:
         name=_read_title(page, "藝人名稱"),
         discord_user_id=_read_rich_text(page, "Discord User ID").strip(),
         status=_read_select(page, "合約狀態"),
+        drive_folder_url=_read_url(page, "Google Drive 資料夾"),
     )
 
 
@@ -356,6 +358,8 @@ class TaskItem:
     # P0-4 任務提醒用
     discord_visible: bool = False
     reminder_rules: list[str] = field(default_factory=list)
+    # P0-3 歸檔用：任務指定資料夾（優先於藝人專區）
+    drive_folder_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -428,6 +432,7 @@ def _to_task(page: dict) -> TaskItem:
         task_id=_read_unique_id(page, "Task ID"),
         discord_visible=_task_discord_visible(page),
         reminder_rules=_read_multi_select(page, "提醒規則"),
+        drive_folder_url=_read_url(page, "Google Drive Folder"),
     )
 
 

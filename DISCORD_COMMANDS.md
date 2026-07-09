@@ -116,8 +116,8 @@ Notion 互動：
 - **現在**：Bot 不經手檔案本體。檔案放在藝人自己的雲端，Notion 只存連結（Drive URL）。
   藝人移動檔案或改權限，連結會失效——過渡狀態。
 - **之後（Drive OAuth 憑證到位後）**：Discord 上傳的檔案由 bot 自動歸檔到公司 Google Drive，
-  結構為 **課程 → 日期 → 藝人**（Kickoff 決議）；任務有指定 `Google Drive Folder` 則優先歸該資料夾。
-  歸檔後回寫 Drive URL＋File ID＋原始檔名＋檔案大小。
+  結構為 **藝人專區 → 任務類型夾 → 月份**（2026-07-10 拍板；專區只分享給該藝人，隱私一刀切）；
+  任務有指定 `Google Drive Folder` 則優先歸該資料夾。歸檔後回寫 Drive URL＋File ID＋原始檔名＋檔案大小。
 - **大檔（5GB+ 的 Stem／DAW 專案）永遠走連結**：Discord 上傳上限 8–25MB，大檔由藝人自行上雲端後貼連結。
 - **長期（P2）**：冷資料轉 NAS 封存，`NAS 路徑` 欄位已預留。
 
