@@ -766,6 +766,99 @@ async def update_task_status(page_id: str, status: str) -> None:
     await notion_api.update_page(page_id, {"任務狀態": _select(status)})
 
 
+# ---------- P0-3 作業提交（Submissions & File Index） ----------
+
+# Submissions.檔案類型 的 select 選項對應任務類型；對不上的一律「其他」
+SUBMISSION_FILE_TYPE_BY_TASK_TYPE = {
+    "課程作業": "課程作業",
+    "創作交付": "Demo",
+    "企劃提案": "企劃書",
+    "業配內容": "業配素材",
+    "錄音": "錄音檔",
+}
+
+SUBMITTABLE_TASK_STATUSES = {"尚未開始", "進行中", "待提交", "需修改", "已逾期"}
+
+
+def submission_file_type_for_task(task_type: str | None) -> str:
+    return SUBMISSION_FILE_TYPE_BY_TASK_TYPE.get(task_type or "", "其他")
+
+
+def is_task_submittable(task: TaskItem) -> bool:
+    """可提交＝任務開放提交且還沒進入審核/結案狀態（待審核可重交由審核流退回）。"""
+    if not task.open_for_submission:
+        return False
+    if task.status is None:
+        return True
+    return task.status in SUBMITTABLE_TASK_STATUSES
+
+
+def _build_submission_props(
+    task: TaskItem,
+    artist: Artist,
+    *,
+    submit_type: str,  # 「Drive 連結」或「文字」（檔案上傳等 Drive 憑證後開通）
+    link_url: str = "",
+    content: str = "",
+    now: datetime | None = None,
+) -> dict:
+    now = now or datetime.now(config.TZ)
+    name = f"{artist.name}｜{task.name}"[:80] + f"｜{now.strftime('%m/%d %H:%M')}"
+    props = {
+        "提交名稱": _title(name),
+        "提交藝人": _relation([artist.page_id]),
+        "關聯任務": _relation([task.page_id]),
+        "提交來源": _select("Discord"),
+        "提交類型": _select(submit_type),
+        "檔案類型": _select(submission_file_type_for_task(task.task_type)),
+        "提交時間": _date(now),
+        "是否最新版": _checkbox(True),
+        "審核狀態": _select("待審核"),
+        "權限等級": _select("藝人本人"),
+    }
+    if link_url:
+        props["Drive URL"] = _url(link_url)
+    if content:
+        props["備註"] = _rich_text(content)
+    return props
+
+
+async def create_submission(
+    task: TaskItem,
+    artist: Artist,
+    *,
+    submit_type: str,
+    link_url: str = "",
+    content: str = "",
+) -> dict:
+    props = _build_submission_props(
+        task, artist, submit_type=submit_type, link_url=link_url, content=content
+    )
+    return await notion_api.create_page(config.DS_SUBMISSIONS, props)
+
+
+async def mark_previous_submissions_not_latest(task_page_id: str) -> int:
+    """同一任務的舊提交取消「是否最新版」，回傳處理筆數。"""
+    pages = await notion_api.query_data_source(
+        config.DS_SUBMISSIONS,
+        filter_={"and": [
+            {"property": "關聯任務", "relation": {"contains": task_page_id}},
+            {"property": "是否最新版", "checkbox": {"equals": True}},
+        ]},
+    )
+    for page in pages:
+        await notion_api.update_page(page["id"], {"是否最新版": _checkbox(False)})
+    return len(pages)
+
+
+async def set_task_under_review(task_page_id: str, latest_url: str) -> None:
+    """提交完成：任務轉待審核並記最新提交 URL。"""
+    props: dict = {"任務狀態": _select("待審核")}
+    if latest_url:
+        props["最新提交 URL"] = _url(latest_url)
+    await notion_api.update_page(task_page_id, props)
+
+
 # 「撞課」情境（Tasks/Projects/Sessions）每次填時段都要算，且含兩次全表掃描。
 # 以 artist page id 為 key 做短 TTL 快取（Notion page id 全域唯一，跨租戶不會撞），
 # 讓同一藝人連續填多筆、或一次批次多筆時只查一次 Notion。

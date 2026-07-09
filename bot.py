@@ -18,6 +18,7 @@ EXTENSIONS = [
     "cogs.scheduling_admin",
     "cogs.scheduling_artist",
     "cogs.tasks_artist",
+    "cogs.submissions",
     "cogs.reminders",
 ]
 

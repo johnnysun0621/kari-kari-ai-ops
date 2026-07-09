@@ -39,7 +39,7 @@ python bot.py                      # 需 .env（見 README）
 - [services/repositories.py](services/repositories.py)：**中文欄位名 → API payload 的唯一對應處**；
   Notion 改欄位名只改這裡。含 dataclass 模型、純函式（分區/去重/提醒階段）
 - [cogs/](cogs/)：channel_guard（頻道分流＋公告頻道 fallback）、scheduling_admin（排課管理）、
-  scheduling_artist（藝人填時段）、tasks_artist（任務查詢）、reminders（背景提醒 loop，30 分鐘一輪）
+  scheduling_artist（藝人填時段）、tasks_artist（任務查詢）、submissions（作業提交）、reminders（背景提醒 loop，30 分鐘一輪）
 - 測試全是純函式測試（不打網路）；async 用 `asyncio.run` ＋ monkeypatch `notion_api.query_data_source`
 
 ## 鐵則（違反＝review 打回）
@@ -72,4 +72,4 @@ python bot.py                      # 需 .env（見 README）
 ## 目前狀態（2026-07-09）
 
 分支 `feat/p0-foundation`；Phase 0、1a、1d 完成；月度時間池主流程、任務查詢、任務提醒、雙頻道分流已落地。  
-**下一步 Phase 1b**（/提交任務：連結/文字先行，Drive 上傳等 Johnny 提供 OAuth 憑證）→ 1c 審核流。細節見 ROADMAP。
+**下一步 Phase 1c 審核流**（/審核：通過/需修改/退回＋DM 藝人）；1b 的檔案上傳待 Johnny 提供 Drive OAuth 憑證。細節見 ROADMAP。
