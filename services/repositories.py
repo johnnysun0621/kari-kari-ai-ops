@@ -802,9 +802,12 @@ def _build_submission_props(
     task: TaskItem,
     artist: Artist,
     *,
-    submit_type: str,  # 「Drive 連結」或「文字」（檔案上傳等 Drive 憑證後開通）
+    submit_type: str,  # 「檔案」「Drive 連結」「文字」「混合」
     link_url: str = "",
     content: str = "",
+    drive_file_id: str = "",
+    original_filename: str = "",
+    file_size_mb: float | None = None,
     now: datetime | None = None,
 ) -> dict:
     now = now or datetime.now(config.TZ)
@@ -825,6 +828,12 @@ def _build_submission_props(
         props["Drive URL"] = _url(link_url)
     if content:
         props["備註"] = _rich_text(content)
+    if drive_file_id:
+        props["Drive File ID"] = _rich_text(drive_file_id)
+    if original_filename:
+        props["原始檔名"] = _rich_text(original_filename)
+    if file_size_mb is not None:
+        props["檔案大小 MB"] = _number(file_size_mb)
     return props
 
 
@@ -835,9 +844,14 @@ async def create_submission(
     submit_type: str,
     link_url: str = "",
     content: str = "",
+    drive_file_id: str = "",
+    original_filename: str = "",
+    file_size_mb: float | None = None,
 ) -> dict:
     props = _build_submission_props(
-        task, artist, submit_type=submit_type, link_url=link_url, content=content
+        task, artist, submit_type=submit_type, link_url=link_url, content=content,
+        drive_file_id=drive_file_id, original_filename=original_filename,
+        file_size_mb=file_size_mb,
     )
     return await notion_api.create_page(config.DS_SUBMISSIONS, props)
 
