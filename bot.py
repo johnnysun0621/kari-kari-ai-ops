@@ -36,6 +36,9 @@ class KariKariBot(commands.Bot):
     async def setup_hook(self):
         for ext in EXTENSIONS:
             await self.load_extension(ext)
+        # 老師外部確認 web 服務（TEACHER_LINK_SECRET 未設定則不啟動）
+        from web import server as web_server
+        self.web_runner = await web_server.start(self)
         # persistent 按鈕：bot 重啟後公告上的「填寫可用時間」仍可用
         self.add_dynamic_items(FillAvailabilityButton)
         self.add_dynamic_items(PoolAvailabilityButton)
@@ -66,6 +69,8 @@ class KariKariBot(commands.Bot):
             )
 
     async def close(self):
+        if getattr(self, "web_runner", None) is not None:
+            await self.web_runner.cleanup()
         await notion_api.close_client()
         await super().close()
 

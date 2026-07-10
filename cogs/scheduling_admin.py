@@ -10,7 +10,7 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, ui_text
 from cogs.scheduling_artist import make_announcement_view, make_pool_availability_view
-from services import audit, overlap, repositories, time_collection, timeparse
+from services import audit, overlap, repositories, scheduling_flow, teacher_confirm, time_collection, timeparse
 from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
@@ -435,9 +435,28 @@ class CandidateSelectView(discord.ui.View):
             before=self.request.status or "", after=f"等待老師確認｜{len(chosen)} 個候選",
         )
         lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in chosen)
+        teacher_note = (
+            f"請用你的管道向老師（{self.request.teacher or '未填'}）確認後，執行 `/排課確認`。"
+        )
+        if teacher_confirm.can_generate_links():
+            import time as _time
+            expires_ts = int(_time.time()) + teacher_confirm.TOKEN_TTL_HOURS * 3600
+            token = teacher_confirm.sign_token(self.request.page_id, expires_ts)
+            link = teacher_confirm.confirm_url(token)
+            teacher_note = (
+                f"🔗 **老師確認連結**（{teacher_confirm.TOKEN_TTL_HOURS} 小時有效、確認一次即失效）：\n{link}\n"
+                f"直接複製傳給老師（LINE 等）；老師點選時段後會**自動發布正式通告**。\n"
+                f"（也可照舊人工確認後執行 `/排課確認`）"
+            )
+            await audit.log_event(
+                event_name=f"產生老師確認連結｜{self.request.name}",
+                action_type="建立", operator=str(interaction.user),
+                discord_user_id=str(interaction.user.id),
+                target_db="Schedule Requests", target_url=self.request.url,
+                after=f"{len(chosen)} 個候選｜{teacher_confirm.TOKEN_TTL_HOURS}h 有效",
+            )
         await interaction.followup.send(
-            f"✅ 已選定 {len(chosen)} 個候選時段，狀態改為「等待老師確認」：\n{lines}\n\n"
-            f"請用你的管道向老師（{self.request.teacher or '未填'}）確認後，執行 `/排課確認`。",
+            f"✅ 已選定 {len(chosen)} 個候選時段，狀態改為「等待老師確認」：\n{lines}\n\n{teacher_note}",
             ephemeral=True,
         )
         self.stop()
@@ -482,68 +501,19 @@ class FinalizeModal(discord.ui.Modal, title="確認最終上課時間"):
             return
 
         req = self.request
-        session_name = f"{req.course_type or '課程'}｜{start.strftime('%m/%d')}｜{req.name}"
         try:
-            session_page = await repositories.create_course_session(
-                name=session_name, course_type=req.course_type or "歌唱課",
-                artist_page_ids=req.artist_page_ids, teacher=req.teacher,
-                start=start, end=end, request_page_id=req.page_id,
+            result = await scheduling_flow.publish_confirmed_schedule(
+                interaction.client, req, start, end,
                 location=self.location_input.value or "",
-            )
-            await repositories.set_request_confirmed(
-                req.page_id, start, end, session_page["id"],
-                notice_url=session_page.get("url", ""),
+                operator=str(interaction.user),
+                discord_user_id=str(interaction.user.id),
             )
         except Exception:
             logger.exception("建立正式課程失敗")
             await interaction.followup.send("❌ 建立 Notion 正式課程失敗，請稍後再試。", ephemeral=True)
             return
-
-        # 發正式通告：頻道 + DM
-        artists = await repositories.get_artists_by_ids(req.artist_page_ids)
-        mentions = " ".join(f"<@{a.discord_user_id}>" for a in artists if a.discord_user_id)
-        embed = discord.Embed(
-            title=f"📢 正式通告｜{req.name}",
-            description=(
-                f"**課程**：{req.course_type}\n"
-                f"**時間**：{timeparse.humanize(start, end)}\n"
-                f"**老師**：{req.teacher or '待定'}\n"
-                f"**地點**：{self.location_input.value or '待通知'}\n"
-                f"**參與**：{ '、'.join(a.name for a in artists) }"
-            ),
-            color=discord.Color.gold(),
-        )
-        channel = interaction.client.get_channel(channel_guard.announce_channel_id())
-        notify_parts = []
-        if channel:
-            msg = await channel.send(content=mentions, embed=embed)
-            notify_parts.append(f"頻道 {msg.jump_url}")
-        dm_ok = 0
-        for a in artists:
-            if not a.discord_user_id:
-                continue
-            try:
-                user = await interaction.client.fetch_user(int(a.discord_user_id))
-                await user.send(embed=embed)
-                dm_ok += 1
-            except Exception:
-                pass
-        notify_parts.append(f"DM {dm_ok}/{len(artists)} 位")
-        notify_record = f"{datetime.now(config.TZ).strftime('%Y-%m-%d %H:%M')}｜" + "、".join(notify_parts)
-        try:
-            await repositories.mark_session_notified(session_page["id"], notify_record)
-        except Exception:
-            logger.exception("回寫通知紀錄失敗")
-
-        await audit.log_event(
-            event_name=f"發布正式通告｜{session_name}",
-            action_type="建立", operator=str(interaction.user),
-            discord_user_id=str(interaction.user.id),
-            target_db="Course Sessions", target_url=session_page.get("url", ""),
-            after=f"{timeparse.humanize(start, end)}｜{notify_record}",
-        )
         await interaction.followup.send(
-            f"✅ 正式課程已建立並發布通告！\n**{session_name}**\n{timeparse.humanize(start, end)}\n{ '、'.join(notify_parts) }",
+            f"✅ 正式課程已建立並發布通告！\n**{result.session_name}**\n{result.time_text}\n{result.notify_summary}",
             ephemeral=True,
         )
 

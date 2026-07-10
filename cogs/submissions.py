@@ -656,7 +656,7 @@ class SubmissionsCog(commands.Cog):
                 notified_at=now,
             )
             await self._update_review_task_status(submission, result)
-        except NotionAPIError as exc:
+        except NotionAPIError:
             logger.exception("審核寫入 Notion 失敗")
             await interaction.followup.send(
                 "❌ 審核寫入 Notion 失敗。請確認 Submissions 已新增："

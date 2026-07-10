@@ -55,6 +55,8 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 - `/排課狀態`
 
 這組仍保留，但不是月度時間池主流程。
+如果設定 `TEACHER_LINK_SECRET` 與 `TEACHER_LINK_BASE_URL`，`/排課比對` 選定候選後會產生老師外部確認連結；
+老師點連結選時段後，會自動建立 `Course Sessions` 並發布正式通告。沒設定時維持人工 `/排課確認`。
 
 ## 開發前檢查
 
@@ -110,6 +112,7 @@ pgrep -fl "python.*bot.py"
 | 任務 / 作業提交 / 審核通知 | `cogs/submissions.py`、`SUBMISSION_FLOW.md` |
 | Drive 歸檔路徑 | `services/drive_archive.py` |
 | Google Drive 上傳 | `services/drive_api.py`、`DRIVE_OAUTH_SETUP.md` |
+| 老師確認連結 | `services/teacher_confirm.py`、`web/server.py`、`services/scheduling_flow.py` |
 | 共同時段演算法 | `services/overlap.py` |
 | 時間解析 / 顯示 | `services/timeparse.py` |
 | Audit Log | `services/audit.py` |
@@ -178,9 +181,7 @@ pgrep -fl "python.*bot.py"
 - 尚未完整多租戶；目前一次跑一個 `TenantConfig`。
 - Notion property names 仍偏 KariKari schema，未抽成 mapping。
 - Discord command 在錯頻道「不出現」需要 Discord App / Integration 權限設定，不是程式可完全控制。
-- 月度 active collection 進度提醒目前是 in-memory，Bot 重啟後可能需要重新發公告或靠既有資料判斷。
-- Google Drive OAuth / 作業上傳流程尚未完成。
-- 老師外部確認連結尚未完成。
+- 老師外部確認連結已有開發版；仍需 Cloudflare Tunnel 真機驗收與固定網域決策。
 
 ## 接手時的安全提醒
 

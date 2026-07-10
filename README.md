@@ -58,6 +58,15 @@ python bot.py
 這些 ID 都是租戶設定：換到其他公司時，頻道名稱 / 用途可以維持一致，但實際 Discord ID、role ID、Notion Data Source ID 會改。  
 KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫或換租戶時，才需要在 `.env` 覆寫 `NOTION_DS_*`。
 
+## 選填環境變數
+
+| 變數 | 說明 |
+|---|---|
+| `GOOGLE_DRIVE_ROOT_FOLDER_ID` | 啟用 Discord 小檔自動歸檔到公司 Google Drive |
+| `TEACHER_LINK_SECRET` | 啟用老師外部確認連結的簽名 secret；留空則維持人工 `/排課確認` |
+| `TEACHER_LINK_BASE_URL` | 對外網址，例如 Cloudflare Tunnel URL |
+| `WEB_PORT` | 本機 web server port，預設 `8787` |
+
 ## Discord / Notion 前置設定
 
 - 邀請連結 scopes：`bot` + `applications.commands`
@@ -85,11 +94,15 @@ services/
   overlap.py              # 共同時段交集演算法（純函式）
   timeparse.py            # Modal 輸入解析、候選時段文字格式
   audit.py                # Audit Log 寫入（失敗不阻斷主流程）
+  teacher_confirm.py      # 老師確認連結 token 簽名、驗證、一次性使用
+  scheduling_flow.py      # 排課確認後建 Course Session、發通告的共用流程
 cogs/
   scheduling_admin.py     # /時間收集建立 /時間池比對 /時間池整理 /排課*
   scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段 /補填時間
   tasks_artist.py         # /我的任務 /任務總覽
   submissions.py          # /提交任務 /審核提交
   reminders.py            # 催收與 SLA 背景任務（每 30 分鐘）
+web/
+  server.py               # 老師外部確認頁（TEACHER_LINK_SECRET 未設定則不啟動）
 tests/                    # 純函式、互動邏輯、資料層測試
 ```

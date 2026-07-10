@@ -71,6 +71,17 @@ class TenantConfig:
     # 總資料夾 ID（底下放各藝人專區）；空字串＝Drive 歸檔未啟用
     drive_root_folder_id: str = ""
 
+    # === 老師外部確認連結（Phase 2）===
+    # secret 未設定＝功能停用；base_url＝Tunnel 對外網址（開發期用 trycloudflare）
+    teacher_link_secret: str = ""
+    teacher_link_base_url: str = ""
+    web_port: int = 8787
+
+    @property
+    def resolved_announce_channel_id(self) -> int:
+        """公告發送目標：公告區，未設定 fallback 排課頻道（單一來源）。"""
+        return self.announce_channel_id or self.schedule_channel_id
+
 
 def _load_karikari_from_env() -> TenantConfig:
     """KariKari 租戶：正式資料層（2026-07-07 拍板，11 張資料庫）。
@@ -111,6 +122,9 @@ def _load_karikari_from_env() -> TenantConfig:
         reminder_interval_minutes=30,
         default_fill_deadline_hours=24,
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
+        teacher_link_secret=os.getenv("TEACHER_LINK_SECRET", ""),
+        teacher_link_base_url=os.getenv("TEACHER_LINK_BASE_URL", ""),
+        web_port=_env_int("WEB_PORT", 8787),
     )
 
 

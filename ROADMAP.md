@@ -39,13 +39,22 @@
 | 1b | 作業提交（P0-3）：/提交任務（連結/文字/檔案歸檔 全通） | ✅ 完成 | `見日誌` |
 | 1c | 審核流：/審核提交 通過/需修改/退回＋DM 藝人 | ✅ 完成 | `見日誌` |
 | 1e | 頻道/身分組初始化（P0-①）：/伺服器初始化 或 SOP | ⬜ 待做 | — |
-| 2 | 老師外部確認連結（web 服務＋簽名 token＋Tunnel） | ⬜ 8 月上旬 | — |
+| 2 | 老師外部確認連結（web 服務＋簽名 token＋Tunnel） | 🟡 開發版完成，待 Tunnel 真機驗收 | — |
 | 3 | AI-ready：permissions 權限層、/查詢 結構化查詢、LLM adapter 預留 | ⬜ 8 月底 | — |
 | 4 | 合約履約提醒（新 Notion DB＋90/30 天預警＋補救任務） | ⬜ 9 月 | — |
 | 5 | 財務審批（新 Notion DB＋申請→核決→執行→結案） | ⬜ 9-10 月 | — |
 | 6 | 商品化收尾：遷雲端 VPS、tenant onboarding 包 | ⬜ 10 月 | — |
 
 ## 進度日誌
+
+### 2026-07-10 深夜（Phase 2 老師外部確認連結開發版）
+
+- 新增 `TEACHER_LINK_SECRET` / `TEACHER_LINK_BASE_URL` / `WEB_PORT` 設定；未設定 secret 時功能停用，既有人工 `/排課確認` 流程不受影響
+- 新增 aiohttp web 服務：`/confirm/{token}` 顯示候選時段，老師可免 Discord 選時段或回覆都不行
+- 新增簽名 token：HMAC-SHA256、24 小時有效、成功確認後一次性失效，狀態存 `.state/teacher_confirm.json`
+- `/排課比對` 選定候選後，若已設定對外網址，會產生老師確認連結；老師確認後共用同一條 `scheduling_flow` 建 Course Session、更新 Schedule Request、發正式通告與 DM
+- 新增 `scripts/start_tunnel.sh`：開發期可用 Cloudflare quick tunnel，把外部網址填入 `.env` 後重啟 bot
+- 測試：`168 passed`，包含 token 簽名/過期/一次性、HTML escape、既有 command permission 回歸
 
 ### 2026-07-10 晚（提交 UX＋審核通知＝Phase 1b/1c 完全體）
 
@@ -126,6 +135,7 @@
 - [ ] `/時間池比對 月份:2026-08 時長分鐘:60` → 選 2 位以上藝人 → 看共同空檔與可開始時間
 - [ ] `/時間池整理`：預覽 → 套用（資料變動會提示）
 - [ ] 既有排課流程回歸：/排課建立 → 填時間 → /排課比對 → /排課確認（保留給明確單一需求）
+- [ ] 老師確認連結：設定 `TEACHER_LINK_SECRET` + Tunnel URL → /排課比對 產生連結 → 老師頁面選時段 → 自動建立 Course Session / 發通告
 
 ## 待 Johnny 提供／決定
 

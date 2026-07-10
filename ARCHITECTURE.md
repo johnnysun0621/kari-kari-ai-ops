@@ -15,6 +15,10 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 `/排課建立` → `/排課比對` → `/排課確認` → `/排課狀態`
 
+老師外部確認連結是舊 MVP 流程的加速器：
+
+`/排課比對` 選候選 → 產生外部連結 → 老師免 Discord 確認 → 共用正式發布流程
+
 ## 核心資料邊界
 
 | 資料 | 定位 |
@@ -34,6 +38,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 - 建立 `discord.py` bot。
 - 載入 cogs。
+- 啟動老師確認 web 服務（`TEACHER_LINK_SECRET` 未設定時不啟動）。
 - 註冊 persistent buttons。
 - 同步 slash commands。
 - 啟動時做 Notion smoke test：讀 `Artists`，寫 `Audit Log`。
@@ -258,6 +263,52 @@ Audit Log 寫入。
 
 - 寫入重要操作紀錄。
 - 失敗不阻斷主流程。
+
+### `services/teacher_confirm.py`
+
+老師外部確認連結 token 層。
+
+責任：
+
+- HMAC-SHA256 簽名與驗證。
+- 24 小時有效期。
+- 成功確認後一次性使用，狀態寫入 `.state/teacher_confirm.json`。
+- 依 `TenantConfig.teacher_link_secret` / `teacher_link_base_url` 判斷功能是否啟用。
+
+### `services/scheduling_flow.py`
+
+排課確認後的共用落地流程。
+
+責任：
+
+- 建立 `Course Sessions`。
+- 更新 `Schedule Requests`。
+- 發正式通告到公告區。
+- DM 參與藝人。
+- 回寫通知紀錄與 `Audit Log`。
+
+呼叫來源：
+
+- Discord `/排課確認`。
+- web 老師確認連結。
+
+## Web
+
+### `web/server.py`
+
+老師外部確認頁。
+
+責任：
+
+- `GET /confirm/{token}`：驗證 token、讀候選時段、顯示 HTML 表單。
+- `POST /confirm/{token}`：老師選時段或回覆都不行。
+- 確認成功後呼叫 `services/scheduling_flow.py`。
+
+安全邊界：
+
+- 未設定 `TEACHER_LINK_SECRET` 時不啟動。
+- 本機只綁 `127.0.0.1`；對外由 Cloudflare Tunnel 或正式反向代理處理。
+- token 只存排課需求 ID 與過期時間，不包含 Notion token 或 Discord token。
 
 ## Discord 互動限制
 

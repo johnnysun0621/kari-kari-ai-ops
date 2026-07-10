@@ -26,6 +26,7 @@
 - Tasks / Projects / Course Sessions 對排程的影響。
 - 共同時段交集演算法。
 - 時間字串解析。
+- 老師確認 token 簽名、過期、一次性使用與 HTML escape。
 
 ## 啟動驗收
 
@@ -224,6 +225,28 @@
 4. 控方勾候選。
 5. 控方執行 `/排課確認`。
 6. Bot 建立 `Course Sessions` 並更新 `Schedule Requests`。
+
+### 老師外部確認連結
+
+這是舊排課 MVP 的加速器；未設定環境變數時不啟用。
+
+驗收流程：
+
+1. `.env` 設定 `TEACHER_LINK_SECRET`。
+2. 執行 `bash scripts/start_tunnel.sh`，取得 `https://xxxx.trycloudflare.com`。
+3. `.env` 設定 `TEACHER_LINK_BASE_URL` 為該網址。
+4. 重啟 bot，確認 console 顯示老師確認 web 服務啟動。
+5. 走 `/排課建立` → 藝人填時間 → `/排課比對`。
+6. 控方勾候選後，確認 Discord 回覆有老師確認連結。
+7. 用瀏覽器開連結，選一個時段。
+8. 確認 Bot 建立 `Course Sessions`、更新 `Schedule Requests`、發布正式通告並通知控方。
+
+驗收重點：
+
+- 連結 24 小時有效。
+- 同一連結確認一次後，再開應顯示已使用或不可重複確認。
+- 選「都不行」時，只通知控方重新協調，不建立 Course Session。
+- 沒有 `TEACHER_LINK_BASE_URL` 時，`/排課比對` 應維持人工 `/排課確認` 文案。
 
 ## Notion 驗收
 
