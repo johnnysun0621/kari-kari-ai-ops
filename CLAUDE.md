@@ -21,14 +21,14 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 
 1. 看 ROADMAP「Phase 進度總表」找下一個 🔜/⬜ 項目（含實作要點）
 2. 依下方鐵則實作；重用 services/ 既有 helper（先 grep 再寫新的）
-3. 驗證：`.venv/bin/python -m compileall bot.py cogs services tests config.py` ＋ `.venv/bin/python -m pytest tests/ -q`
+3. 驗證：`.venv/bin/python -m compileall bot.py cogs services tests config.py web` ＋ `.venv/bin/python -m pytest tests/ -q`
 4. Commit（訊息含 Phase 編號），並更新 ROADMAP 的進度總表與進度日誌
 
 ## 開發指令
 
 ```bash
 source .venv/bin/activate
-python -m compileall bot.py cogs services tests config.py
+python -m compileall bot.py cogs services tests config.py web
 python -m pytest tests/ -q
 python bot.py                      # 需 .env（見 README）
 ```
@@ -78,4 +78,5 @@ python bot.py                      # 需 .env（見 README）
 ## 目前狀態（2026-07-10）
 
 月度時間池主流程、任務查詢、任務提醒、雙頻道分流、Drive 檔案歸檔、`/提交任務`、`/審核提交` 已落地。  
-檔案提交標準以免費 Discord 使用者為準：10MB 以下走同頻道附件，入口 3 小時有效；10MB 以上走 Drive 連結。細節見 ROADMAP。
+檔案提交標準以免費 Discord 使用者為準：10MB 以下走同頻道附件，入口 3 小時有效；10MB 以上走 Drive 連結。
+老師外部確認連結已有開發版：設定 `TEACHER_LINK_SECRET` 與 `TEACHER_LINK_BASE_URL` 後，`/排課比對` 可產生免登入確認頁；目前待 Cloudflare Tunnel 真機驗收。細節見 ROADMAP。

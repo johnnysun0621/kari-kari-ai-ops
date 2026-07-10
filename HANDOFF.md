@@ -73,7 +73,7 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 ```bash
 git status --short
 pgrep -fl "python.*bot.py"
-.venv/bin/python -m compileall bot.py cogs services tests config.py
+.venv/bin/python -m compileall bot.py cogs services tests config.py web
 .venv/bin/python -m pytest tests/ -q
 ```
 
@@ -138,7 +138,7 @@ pgrep -fl "python.*bot.py"
 程式行為變更至少跑：
 
 ```bash
-.venv/bin/python -m compileall bot.py cogs services tests config.py
+.venv/bin/python -m compileall bot.py cogs services tests config.py web
 .venv/bin/python -m pytest tests/ -q
 ```
 

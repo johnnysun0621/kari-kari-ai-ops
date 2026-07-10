@@ -8,7 +8,7 @@
 ### 語法檢查
 
 ```bash
-.venv/bin/python -m compileall bot.py cogs services tests config.py
+.venv/bin/python -m compileall bot.py cogs services tests config.py web
 ```
 
 ### 單元測試
@@ -196,6 +196,8 @@
 
 - Discord 審核會寫入 `審核狀態`、`審核回饋`、`審核者`、`審核來源`、`審核通知時間`。
 - Notion 手動審核時，只改狀態但沒有回饋／來源不應通知；補上 `審核回饋` 或 `審核者` 後，背景 loop 應通知藝人。
+- 若 Discord 顯示「審核寫入 Notion 失敗」，先檢查 `Submissions & File Index` 是否已新增
+  `審核回饋`、`審核者`、`審核來源`、`審核通知時間` 四個欄位。
 
 ### 任務提醒
 

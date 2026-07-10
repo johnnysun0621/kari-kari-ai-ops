@@ -212,7 +212,7 @@ Notion 資料層與純邏輯集中處。
 - 週次 / 日期分頁選項。
 - 時間模式文案。
 - 月度可配合時段文案。
-- in-memory active collection progress helper。
+- 月度收集進行中狀態與通知去重，持久化在 `.state/time_collection.json`。
 
 ### `services/overlap.py`
 

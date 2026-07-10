@@ -79,7 +79,7 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 ## 測試
 
 ```bash
-.venv/bin/python -m compileall bot.py cogs services tests config.py
+.venv/bin/python -m compileall bot.py cogs services tests config.py web
 .venv/bin/python -m pytest tests/ -q
 ```
 

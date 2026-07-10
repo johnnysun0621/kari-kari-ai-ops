@@ -155,6 +155,11 @@ Notion 端手動審核也支援：
 - `審核來源`：select，例如 `Discord`、`Notion`
 - `審核通知時間`：date
 
+常見錯誤：
+
+- Discord 顯示「審核寫入 Notion 失敗」時，通常是 `Submissions & File Index` 少了上述任一審核欄位。
+- 先補齊欄位後，再重新執行 `/審核提交`。
+
 ## 使用者說明文案基準
 
 給藝人的說法：
