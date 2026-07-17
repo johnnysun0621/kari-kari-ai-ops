@@ -285,7 +285,8 @@ class ArtistSelectView(discord.ui.View):
         )
         announce_msg = None
         if channel:
-            announce_msg = await channel.send(
+            announce_msg = await channel_guard.try_send(
+                channel,
                 content=mentions, embed=embed,
                 view=make_announcement_view(request.page_id),
             )
@@ -310,7 +311,11 @@ class ArtistSelectView(discord.ui.View):
             after=f"{p['course_type']}｜{p['duration']}分｜{len(chosen)}位藝人｜截止 {deadline_str}",
         )
         note = f"\n⚠️ DM 未送達：{ '、'.join(dm_failed) }（可能未開私訊）" if dm_failed else ""
-        where = "已在公告頻道發布公告" if announce_msg else "⚠️ 找不到公告頻道，公告未發出（請檢查 ANNOUNCE_CHANNEL_ID / SCHEDULE_CHANNEL_ID）"
+        where = (
+            "已在公告頻道發布公告"
+            if announce_msg else
+            "⚠️ 公告未發出：找不到公告頻道，或 bot 在公告頻道沒有「檢視頻道 / 傳送訊息 / 嵌入連結」權限。"
+        )
         await interaction.followup.send(
             f"✅ 排課需求已建立：**{p['name']}**（{len(chosen)} 位藝人）\n{where}{note}", ephemeral=True
         )
@@ -607,7 +612,8 @@ class SchedulingAdminCog(commands.Cog):
         channel = interaction.client.get_channel(channel_guard.announce_channel_id())
         announce_msg = None
         if channel:
-            announce_msg = await channel.send(
+            announce_msg = await channel_guard.try_send(
+                channel,
                 content=mentions,
                 embed=embed,
                 view=make_pool_availability_view(month, deadline, nature.value),
@@ -641,7 +647,11 @@ class SchedulingAdminCog(commands.Cog):
             after=f"{nature.label}｜{len(artists)} 位藝人｜截止 {deadline_str}",
         )
         note = f"\n⚠️ DM 未送達：{ '、'.join(dm_failed) }（可能未開私訊）" if dm_failed else ""
-        where = "已在公告頻道發布月度可配合時段收集公告" if announce_msg else "⚠️ 找不到公告頻道，公告未發出（請檢查 ANNOUNCE_CHANNEL_ID / SCHEDULE_CHANNEL_ID）"
+        where = (
+            "已在公告頻道發布月度可配合時段收集公告"
+            if announce_msg else
+            "⚠️ 公告未發出：找不到公告頻道，或 bot 在公告頻道沒有「檢視頻道 / 傳送訊息 / 嵌入連結」權限。"
+        )
         await interaction.followup.send(
             f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}",
             ephemeral=True,
