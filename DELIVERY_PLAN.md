@@ -32,8 +32,8 @@
 ## 任務清單
 
 ### D0｜起手（0.5 天）
-- [ ] Commit 工作區未入庫的公告 try_send 強化（`cogs/scheduling_admin.py`）
-- [ ] 確認 D3 前置現況：藝人按「完成」的自動整理是否仍運作、`/時間池整理` 正常
+- [x] Commit 工作區未入庫的公告 try_send 強化 — `96792f4`
+- [x] 確認 D3 前置現況：自動整理仍運作（三個完成按鈕都掛 `_cleanup_notice_for_user`）；`/時間池整理` 在
 
 ### D1｜審核體驗補強（會議 #1 #2，~1 天）
 - [ ] `ReviewSubmissionSelect` 選項與 `ReviewActionView` 訊息顯示：Drive 連結、文字內容摘要、Notion 提交頁連結、關聯任務連結（`SubmissionItem` 已有 drive_url/note/url/task_page_ids，純顯示層）
@@ -50,8 +50,8 @@
 - [ ] 確認「完成」批次自動整理正常；若已被移除則接回
 
 ### D4｜排課流程調整（會議 #12，~1 天）——**先做（不確定性最大）**
-- [ ] `/時間池比對` 結果加「勾選候選給老師確認」select → 幕後 `create_schedule_request`（名稱自動生成：藝人＋月份＋時長；狀態=等待老師確認；候選寫入）→ 產老師連結（搬移 `CandidateSelectView` 既有連結邏輯）
-- [ ] `/排課建立 /排課比對 /排課確認 /排課狀態` 移出指令註冊；DISCORD_COMMANDS 標「內部保留」
+- [x] `/時間池比對` 直通老師確認：新增 `MonthlyPoolTeacherConfirmView`（幕後建確認單＋候選寫入＋連結）；連結邏輯抽成共用 `_teacher_link_note`；指令加選填 課程類型/老師 參數
+- [x] 舊四指令移出選單（`LEGACY_SCHEDULING_COMMANDS_VISIBLE` 開關）＋守護測試＋DISCORD_COMMANDS 標記
 - [ ] 真機驗收：`brew install cloudflared` → `scripts/start_tunnel.sh` → 網址填 `.env TEACHER_LINK_BASE_URL` → 重啟 → 手機點連結 → 公告區自動通告
 
 ### D5｜洽談中權限（會議 #3，~0.25 天）

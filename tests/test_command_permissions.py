@@ -23,6 +23,23 @@ def test_admin_commands_are_hidden_from_non_admins():
         assert command.default_permissions.administrator is True, command.name
 
 
+def test_legacy_scheduling_commands_removed_from_tree():
+    """7/11 決議：排課建立流程取消——舊四指令不得出現在指令選單（程式保留）。"""
+    import asyncio
+
+    import discord
+    from discord.ext import commands as dpy_commands
+
+    async def load():
+        bot = dpy_commands.Bot(command_prefix="!", intents=discord.Intents.default())
+        await bot.load_extension("cogs.scheduling_admin")
+        return {c.name for c in bot.tree.get_commands()}
+
+    names = asyncio.run(load())
+    assert not ({"排課建立", "排課比對", "排課確認", "排課狀態"} & names)
+    assert "時間池比對" in names
+
+
 def test_task_channel_allows_anywhere_when_not_configured(monkeypatch):
     monkeypatch.setattr(channel_guard.config, "TASK_CHANNEL_ID", 0)
 

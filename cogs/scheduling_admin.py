@@ -322,6 +322,30 @@ class ArtistSelectView(discord.ui.View):
         self.stop()
 
 
+async def _teacher_link_note(
+    request: repositories.ScheduleRequest,
+    interaction: discord.Interaction,
+    candidate_count: int,
+) -> str:
+    """產生老師確認連結說明文字；未啟用連結功能時回人工流程指引。"""
+    if not teacher_confirm.can_generate_links():
+        return f"請用你的管道向老師（{request.teacher or '未填'}）確認後，執行 `/排課確認`。"
+    expires_ts = int(time.time()) + teacher_confirm.TOKEN_TTL_HOURS * 3600
+    token = teacher_confirm.sign_token(request.page_id, expires_ts)
+    link = teacher_confirm.confirm_url(token)
+    await audit.log_event(
+        event_name=f"產生老師確認連結｜{request.name}",
+        action_type="建立", operator=str(interaction.user),
+        discord_user_id=str(interaction.user.id),
+        target_db="Schedule Requests", target_url=request.url,
+        after=f"{candidate_count} 個候選｜{teacher_confirm.TOKEN_TTL_HOURS}h 有效",
+    )
+    return (
+        f"🔗 **老師確認連結**（{teacher_confirm.TOKEN_TTL_HOURS} 小時有效、確認一次即失效）：\n{link}\n"
+        f"直接複製傳給老師（LINE 等）；老師點選時段後會**自動發布正式通告**。"
+    )
+
+
 class MonthlyPoolArtistSelectView(discord.ui.View):
     """/時間池比對 的第二步：手動選擇要比對共同空檔的藝人。"""
 
@@ -331,12 +355,17 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
         month: str,
         duration_minutes: int,
         operator: discord.abc.User,
+        course_type: str | None = None,
+        teacher: str = "",
     ):
         super().__init__(timeout=600)
         self.artists = {artist.page_id: artist for artist in artists}
         self.month = month
         self.duration_minutes = duration_minutes
+        self.operator = operator
         self.operator_id = operator.id
+        self.course_type = course_type
+        self.teacher = teacher
         options = [
             discord.SelectOption(
                 label=artist.name[:100],
@@ -393,8 +422,106 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
                 f"共同空檔 {len(result.windows)} 個｜未填 {len(result.missing_artist_page_ids)} 位"
             ),
         )
+        result_text = _monthly_pool_result_text(self.month, self.duration_minutes, chosen, result)
+        if result.windows:
+            await interaction.followup.send(
+                result_text + "\n\n⬇️ 勾選候選時段即可產生老師確認連結（自動建確認單）：",
+                view=MonthlyPoolTeacherConfirmView(
+                    self.month, self.duration_minutes, chosen,
+                    result.windows[:25], self.operator,
+                    course_type=self.course_type, teacher=self.teacher,
+                ),
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(result_text, ephemeral=True)
+        self.stop()
+
+
+class MonthlyPoolTeacherConfirmView(discord.ui.View):
+    """/時間池比對 找到共同空檔後：勾選候選 → 幕後自動建排課需求 → 產老師確認連結。
+
+    7/11 會議決議：取消手動「排課建立」，正確流程＝先收集比對時段，再建立課程。
+    """
+
+    def __init__(
+        self,
+        month: str,
+        duration_minutes: int,
+        artists: list[repositories.Artist],
+        windows: list[overlap.Interval],
+        operator: discord.abc.User,
+        course_type: str | None = None,
+        teacher: str = "",
+    ):
+        super().__init__(timeout=600)
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.chosen_artists = artists
+        self.windows = windows
+        self.operator_id = operator.id
+        self.course_type = course_type
+        self.teacher = teacher
+        options = [
+            discord.SelectOption(
+                label=timeparse.humanize(s, e)[:100],
+                value=str(i),
+                description=f"可排 {int((e - s).total_seconds() // 60)} 分鐘",
+            )
+            for i, (s, e) in enumerate(windows[:25])
+        ]
+        self.select = discord.ui.Select(
+            placeholder="勾選要給老師確認的候選時段（最多 5 個）…",
+            options=options, min_values=1, max_values=min(5, len(options)),
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個選單只能由原本執行比對的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        chosen = [self.windows[int(v)] for v in sorted(self.select.values, key=int)]
+        tenant = config.get_tenant()
+        course_type = self.course_type or tenant.course_types[0]
+        names = "、".join(a.name for a in self.chosen_artists)
+        request_name = (
+            f"{self.month}｜{names}｜{repositories.format_duration_hours(self.duration_minutes)}"
+        )[:80]
+        candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in chosen)
+        try:
+            # 幕後自動建排課需求（填寫截止設為現在＝時間已收集完成，不再催填）
+            request = await repositories.create_schedule_request(
+                name=request_name,
+                course_type=course_type,
+                duration_minutes=self.duration_minutes,
+                artist_page_ids=[a.page_id for a in self.chosen_artists],
+                fill_deadline=datetime.now(tenant.tz),
+                teacher=self.teacher,
+                month_week=self.month,
+                note="由 /時間池比對 自動建立（7/11 決議流程）",
+            )
+            await repositories.set_request_candidates(request.page_id, candidates_text)
+        except Exception:
+            logger.exception("時間池候選建立排課需求失敗")
+            await interaction.followup.send("❌ 建立確認單失敗，請稍後再試或查看 bot log。", ephemeral=True)
+            return
+        await audit.log_event(
+            event_name=f"時間池候選送老師確認｜{request_name}",
+            action_type="建立", operator=str(interaction.user),
+            discord_user_id=str(interaction.user.id),
+            target_db="Schedule Requests", target_url=request.url,
+            after=f"{course_type}｜{len(chosen)} 個候選｜{names}",
+        )
+        lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in chosen)
+        teacher_note = await _teacher_link_note(request, interaction, len(chosen))
         await interaction.followup.send(
-            _monthly_pool_result_text(self.month, self.duration_minutes, chosen, result),
+            f"✅ 已建立確認單「**{request_name}**」（{course_type}），{len(chosen)} 個候選：\n"
+            f"{lines}\n\n{teacher_note}",
             ephemeral=True,
         )
         self.stop()
@@ -440,26 +567,7 @@ class CandidateSelectView(discord.ui.View):
             before=self.request.status or "", after=f"等待老師確認｜{len(chosen)} 個候選",
         )
         lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in chosen)
-        teacher_note = (
-            f"請用你的管道向老師（{self.request.teacher or '未填'}）確認後，執行 `/排課確認`。"
-        )
-        if teacher_confirm.can_generate_links():
-            import time as _time
-            expires_ts = int(_time.time()) + teacher_confirm.TOKEN_TTL_HOURS * 3600
-            token = teacher_confirm.sign_token(self.request.page_id, expires_ts)
-            link = teacher_confirm.confirm_url(token)
-            teacher_note = (
-                f"🔗 **老師確認連結**（{teacher_confirm.TOKEN_TTL_HOURS} 小時有效、確認一次即失效）：\n{link}\n"
-                f"直接複製傳給老師（LINE 等）；老師點選時段後會**自動發布正式通告**。\n"
-                f"（也可照舊人工確認後執行 `/排課確認`）"
-            )
-            await audit.log_event(
-                event_name=f"產生老師確認連結｜{self.request.name}",
-                action_type="建立", operator=str(interaction.user),
-                discord_user_id=str(interaction.user.id),
-                target_db="Schedule Requests", target_url=self.request.url,
-                after=f"{len(chosen)} 個候選｜{teacher_confirm.TOKEN_TTL_HOURS}h 有效",
-            )
+        teacher_note = await _teacher_link_note(self.request, interaction, len(chosen))
         await interaction.followup.send(
             f"✅ 已選定 {len(chosen)} 個候選時段，狀態改為「等待老師確認」：\n{lines}\n\n{teacher_note}",
             ephemeral=True,
@@ -699,11 +807,15 @@ class SchedulingAdminCog(commands.Cog):
         時長分鐘="需要連續可安排的時長，例：60、90、240",
     )
     @is_admin()
+    @app_commands.choices(課程類型=COURSE_TYPE_CHOICES)
+    @app_commands.describe(課程類型="確認單的課程類型（選填，預設第一種；Notion 可再改）", 老師="老師／確認對象名稱（選填）")
     async def match_availability_pool(
         self,
         interaction: discord.Interaction,
         月份: str,
         時長分鐘: app_commands.Range[int, 15, 600],
+        課程類型: app_commands.Choice[str] | None = None,
+        老師: str = "",
     ):
         if not await channel_guard.ensure_schedule_channel(interaction):
             return
@@ -736,7 +848,11 @@ class SchedulingAdminCog(commands.Cog):
                 f"需要連續時長：{repositories.format_duration_hours(時長分鐘)}"
                 f"{limit_note}"
             ),
-            view=MonthlyPoolArtistSelectView(artists[:25], month, 時長分鐘, interaction.user),
+            view=MonthlyPoolArtistSelectView(
+                artists[:25], month, 時長分鐘, interaction.user,
+                course_type=課程類型.value if 課程類型 else None,
+                teacher=老師,
+            ),
             ephemeral=True,
         )
 
@@ -922,5 +1038,14 @@ class SchedulingAdminCog(commands.Cog):
             await interaction.response.send_message(msg, ephemeral=True)
 
 
+# 7/11 會議決議：排課建立流程取消（改由 /時間池比對 直通老師確認）。
+# 舊指令程式與測試保留，僅從 Discord 指令選單移除；要臨時啟用改 True 重啟。
+LEGACY_SCHEDULING_COMMANDS_VISIBLE = False
+LEGACY_SCHEDULING_COMMAND_NAMES = ("排課建立", "排課比對", "排課確認", "排課狀態")
+
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(SchedulingAdminCog(bot))
+    if not LEGACY_SCHEDULING_COMMANDS_VISIBLE:
+        for name in LEGACY_SCHEDULING_COMMAND_NAMES:
+            bot.tree.remove_command(name)
