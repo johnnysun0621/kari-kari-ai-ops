@@ -7,6 +7,7 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 
 | 文件 | 內容 |
 |---|---|
+| [DELIVERY_PLAN.md](DELIVERY_PLAN.md) | **v1.0 交付衝刺執行中（D0-D8）——接手先做這裡的下一個未勾項** |
 | [HANDOFF.md](HANDOFF.md) | AI／工程師協作者接手規則、改檔對照、測試要求 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 程式模組責任、資料邊界、平轉狀態 |
 | [TESTING.md](TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
