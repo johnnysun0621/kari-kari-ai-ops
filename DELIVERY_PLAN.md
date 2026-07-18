@@ -52,7 +52,7 @@
 ### D4｜排課流程調整（會議 #12，~1 天）——**先做（不確定性最大）**
 - [x] `/時間池比對` 直通老師確認：新增 `MonthlyPoolTeacherConfirmView`（幕後建確認單＋候選寫入＋連結）；連結邏輯抽成共用 `_teacher_link_note`；指令加選填 課程類型/老師 參數
 - [x] 舊四指令移出選單（`LEGACY_SCHEDULING_COMMANDS_VISIBLE` 開關）＋守護測試＋DISCORD_COMMANDS 標記
-- [ ] 真機驗收：`brew install cloudflared` → `scripts/start_tunnel.sh` → 網址填 `.env TEACHER_LINK_BASE_URL` → 重啟 → 手機點連結 → 公告區自動通告
+- [x] Tunnel 上線：cloudflared 已裝、tunnel 執行中、TEACHER_LINK_SECRET/BASE_URL 已設、web 服務啟動、經 Tunnel 端到端驗證（無效 token→錯誤頁）✅；**剩 Johnny 手機實測一輪**（時間池比對→勾候選→點連結→自動通告）
 
 ### D5｜洽談中權限（會議 #3，~0.25 天）
 - [ ] `INACTIVE_ARTIST_STATUSES` 加「未簽」；文件明確「已簽約＋洽談中＝藝人指令全開」
