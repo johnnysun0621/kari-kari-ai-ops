@@ -8,13 +8,19 @@ from cogs.submissions import (
     FILE_UPLOAD_WAIT_MINUTES,
     MAX_UPLOAD_MB,
     PendingFileSubmission,
+    PendingReviewFeedbackFile,
     direct_upload_size_error,
+    feedback_with_attachment_links,
     file_upload_wait_label,
     is_valid_link,
     modal_field_spec,
+    notion_page_url,
+    review_feedback_file_dm_text,
+    review_submission_detail_text,
     review_task_status_for_result,
     submission_method_conflict,
     submission_type_for_input,
+    task_links_text,
     submit_hint_for_task,
     submit_method_label,
 )
@@ -219,6 +225,82 @@ class TestPendingFileSubmission:
 
         assert not pending.is_expired(now + timedelta(minutes=179, seconds=59))
         assert pending.is_expired(now + timedelta(minutes=180, seconds=1))
+
+
+class TestPendingReviewFeedbackFile:
+    def test_expires_after_deadline(self):
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
+        pending = PendingReviewFeedbackFile(
+            submission=repositories.SubmissionItem(page_id="submission-1", name="Johnny｜功課", status="通過"),
+            result="通過",
+            feedback="很好",
+            reviewer="A 老師｜123",
+            channel_id=456,
+            created_at=now,
+            expires_at=now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES),
+        )
+
+        assert not pending.is_expired(now + timedelta(minutes=179, seconds=59))
+        assert pending.is_expired(now + timedelta(minutes=180, seconds=1))
+
+
+class TestReviewDisplayHelpers:
+    def test_notion_page_url_removes_dashes(self):
+        assert notion_page_url("abcd-1234") == "https://www.notion.so/abcd1234"
+        assert notion_page_url("") == ""
+
+    def test_task_links_text_builds_related_task_links(self):
+        text = task_links_text(["task-1", "task-2"])
+
+        assert "[任務 1]" in text
+        assert "task1" in text
+        assert "[任務 2]" in text
+
+    def test_review_submission_detail_includes_drive_note_submission_and_tasks(self):
+        submission = repositories.SubmissionItem(
+            page_id="submission-1",
+            name="Johnny｜編曲作業",
+            status="待審核",
+            submit_type="檔案",
+            drive_url="https://drive.google.com/file/d/abc",
+            note="這是一段提交說明",
+            url="https://notion.so/submission",
+            task_page_ids=["task-1"],
+        )
+
+        text = review_submission_detail_text(submission)
+
+        assert "Drive" in text
+        assert "這是一段提交說明" in text
+        assert "Notion 提交頁" in text
+        assert "關聯任務" in text
+        assert "附批改檔" in text
+
+    def test_feedback_with_attachment_links_appends_drive_links(self):
+        text = feedback_with_attachment_links("副歌再修", ["https://drive/a", "https://drive/b"])
+
+        assert "副歌再修" in text
+        assert "批改檔：https://drive/a、https://drive/b" in text
+
+    def test_review_feedback_file_dm_mentions_result_feedback_and_file(self):
+        submission = repositories.SubmissionItem(
+            page_id="submission-1",
+            name="Johnny｜編曲作業",
+            status="通過",
+        )
+
+        text = review_feedback_file_dm_text(
+            submission,
+            result="通過",
+            feedback="做得很好",
+            reviewer="A 老師",
+            file_links=["https://drive/review"],
+        )
+
+        assert "批改檔" in text
+        assert "通過" in text
+        assert "做得很好" in text
+        assert "https://drive/review" in text
 
 
 class TestReviewResultMapping:

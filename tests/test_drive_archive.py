@@ -56,6 +56,9 @@ class TestArchivePath:
     def test_path_is_type_folder_then_month(self):
         assert drive_archive.archive_path_for_submission(task(), NOW) == ["課程作業", "2026-07"]
 
+    def test_review_feedback_path_is_fixed_folder_then_month(self):
+        assert drive_archive.archive_path_for_review_feedback(NOW) == ["老師回饋", "2026-07"]
+
 
 class TestResolveArchiveTarget:
     ZONE = "https://drive.google.com/drive/folders/ZoneId123"
@@ -73,3 +76,14 @@ class TestResolveArchiveTarget:
     def test_no_usable_folder_returns_none(self):
         assert drive_archive.resolve_archive_target(task(), "", NOW) is None
         assert drive_archive.resolve_archive_target(task(), "https://example.com", NOW) is None
+
+
+class TestResolveReviewFeedbackTarget:
+    def test_zone_with_review_feedback_path(self):
+        assert drive_archive.resolve_review_feedback_target("https://drive.google.com/drive/folders/ZoneId123", NOW) == (
+            "ZoneId123", ["老師回饋", "2026-07"],
+        )
+
+    def test_no_usable_folder_returns_none(self):
+        assert drive_archive.resolve_review_feedback_target("", NOW) is None
+        assert drive_archive.resolve_review_feedback_target("https://example.com", NOW) is None

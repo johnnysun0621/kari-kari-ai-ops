@@ -33,6 +33,7 @@ DEFAULT_TYPE_FOLDERS = {
     "發布上架": "發布上架",
 }
 FALLBACK_TYPE_FOLDER = "其他"
+REVIEW_FEEDBACK_FOLDER = "老師回饋"
 
 _FOLDER_URL_PATTERNS = [
     re.compile(r"drive\.google\.com/drive/(?:u/\d+/)?folders/([\w-]+)"),
@@ -71,6 +72,11 @@ def archive_path_for_submission(
     return [type_folder_for_task(task.task_type, type_folders), now.strftime("%Y-%m")]
 
 
+def archive_path_for_review_feedback(now: datetime) -> list[str]:
+    """老師批改檔固定進藝人專區 / 老師回饋 / YYYY-MM。"""
+    return [REVIEW_FEEDBACK_FOLDER, now.strftime("%Y-%m")]
+
+
 def resolve_archive_target(
     task: "repositories.TaskItem",
     artist_zone_url: str,
@@ -90,3 +96,11 @@ def resolve_archive_target(
     if zone_id:
         return zone_id, archive_path_for_submission(task, now, type_folders)
     return None
+
+
+def resolve_review_feedback_target(artist_zone_url: str, now: datetime) -> tuple[str, list[str]] | None:
+    """決定老師批改檔歸檔目標：(藝人專區 ID, ["老師回饋", YYYY-MM])。"""
+    zone_id = extract_drive_folder_id(artist_zone_url)
+    if not zone_id:
+        return None
+    return zone_id, archive_path_for_review_feedback(now)

@@ -36,8 +36,8 @@
 - [x] 確認 D3 前置現況：自動整理仍運作（三個完成按鈕都掛 `_cleanup_notice_for_user`）；`/時間池整理` 在
 
 ### D1｜審核體驗補強（會議 #1 #2，~1 天）
-- [ ] `ReviewSubmissionSelect` 選項與 `ReviewActionView` 訊息顯示：Drive 連結、文字內容摘要、Notion 提交頁連結、關聯任務連結（`SubmissionItem` 已有 drive_url/note/url/task_page_ids，純顯示層）
-- [ ] 老師回傳批改檔：審核選結果後加「附批改檔」→ 復用 pending-attachment（10MB 同標準）→ 歸檔 `藝人專區/老師回饋/YYYY-MM/`（drive_archive 對應表加項）→ DM 藝人（回饋文字＋批改檔連結）；連結併入 Submissions `回饋` 文字（不動 schema）；>10MB 引導控方貼連結
+- [x] `ReviewSubmissionSelect` 選項與 `ReviewActionView` 訊息顯示：Drive 連結、文字內容摘要、Notion 提交頁連結、關聯任務連結（`SubmissionItem` 已有 drive_url/note/url/task_page_ids，純顯示層）
+- [x] 老師回傳批改檔：審核選結果後加「附批改檔」→ 復用 pending-attachment（10MB 同標準）→ 歸檔 `藝人專區/老師回饋/YYYY-MM/`（drive_archive 對應表加項）→ DM 藝人（回饋文字＋批改檔連結）；連結併入 Submissions `回饋` 文字（不動 schema）；>10MB 引導控方貼連結
 
 ### D2｜大檔 Drive 資料夾流（會議 #4，~1 天）
 - [ ] 觸發點：附件 >10MB 被擋、或任務提交方式=Drive 連結 → 顯示「📁 取得上傳資料夾」按鈕
