@@ -15,6 +15,8 @@ from cogs.submissions import (
     is_valid_link,
     modal_field_spec,
     notion_page_url,
+    prefixed_review_feedback_filename,
+    prefixed_submission_filename,
     review_feedback_file_dm_text,
     review_submission_detail_text,
     review_task_status_for_result,
@@ -244,6 +246,35 @@ class TestUploadBoundary:
 
     def test_accepts_files_at_free_discord_standard(self):
         assert direct_upload_size_error(FREE_DISCORD_UPLOAD_MB * 1024 * 1024) is None
+
+
+class TestArchivedFilename:
+    def test_submission_file_gets_artist_and_task_prefix(self):
+        filename = prefixed_submission_filename(
+            artist_name="Johnny",
+            task_name="編曲作業",
+            original_filename="week1_demo.mp3",
+        )
+
+        assert filename == "Johnny_編曲作業_week1_demo.mp3"
+
+    def test_submission_filename_sanitizes_unsafe_characters_and_keeps_extension(self):
+        filename = prefixed_submission_filename(
+            artist_name="Johnny/Sun",
+            task_name="錄音:第一週?",
+            original_filename="my/demo:file?.wav",
+        )
+
+        assert filename == "Johnny_Sun_錄音_第一週_my_demo_file.wav"
+        assert filename.endswith(".wav")
+
+    def test_review_feedback_file_gets_submission_prefix(self):
+        filename = prefixed_review_feedback_filename(
+            submission_name="Johnny｜編曲作業",
+            original_filename="feedback.pdf",
+        )
+
+        assert filename == "老師回饋_Johnny｜編曲作業_feedback.pdf"
 
 
 class TestPendingFileSubmission:

@@ -163,7 +163,8 @@ Bot 寫入：
   **藝人專區 → 任務類型夾 → YYYY-MM**（每類型一夾，隱私隔離：專區只分享給該藝人）。
 - `Artists.Google Drive 資料夾` 存專區連結，Bot 自動 find-or-create 子資料夾。
 - 任務的 `Google Drive Folder` 有值則優先歸該資料夾。
-- 回寫 `Drive URL`＋`Drive File ID`＋`原始檔名`＋`檔案大小 MB`。
+- Drive 顯示檔名自動加前綴：藝人提交檔案為 `{藝人名稱}_{任務名稱}_{原檔名}`，老師批改檔為 `老師回饋_{提交名稱}_{原檔名}`。
+- 回寫 `Drive URL`＋`Drive File ID`＋`原始檔名`＋`檔案大小 MB`；其中 `原始檔名` 保留使用者上傳時的檔名。
 - 路徑邏輯在 `services/drive_archive.py`；Drive API 操作在 `services/drive_api.py`。
 - 自動歸檔標準分界：`<=10MB` 走 Discord 同頻道附件；`>10MB` 走雲端連結。
 - 大型 Stem、DAW 專案、影片、大型音檔請在 Notion 指定 `Drive 連結` 或 `混合`。

@@ -1,5 +1,6 @@
 """P0-3 作業提交：/提交任務（檔案自動歸檔 Drive；連結／文字走表單）。"""
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -20,6 +21,10 @@ FREE_DISCORD_UPLOAD_MB = 10
 MAX_UPLOAD_MB = FREE_DISCORD_UPLOAD_MB  # 標準流程假設藝人使用 Discord 免費方案
 FILE_UPLOAD_WAIT_MINUTES = 180
 REVIEW_RESULTS = ("通過", "需修改", "退回")
+FILENAME_COMPONENT_LIMIT = 60
+ORIGINAL_FILENAME_LIMIT = 120
+_UNSAFE_FILENAME_CHARS = re.compile(r'[\\/:*?"<>\|\r\n\t]+')
+_WHITESPACE_CHARS = re.compile(r"\s+")
 
 
 @dataclass
@@ -97,6 +102,58 @@ def _clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _safe_filename_part(value: str, *, fallback: str, limit: int = FILENAME_COMPONENT_LIMIT) -> str:
+    text = _UNSAFE_FILENAME_CHARS.sub("_", value or "")
+    text = _WHITESPACE_CHARS.sub(" ", text).strip(" ._")
+    text = re.sub(r"_+", "_", text)
+    text = text.replace("_.", ".")
+    if not text:
+        text = fallback
+    return text[:limit].rstrip(" ._") or fallback
+
+
+def _safe_original_filename(filename: str, *, limit: int = ORIGINAL_FILENAME_LIMIT) -> str:
+    safe = _safe_filename_part(filename, fallback="file", limit=limit)
+    if "." not in safe:
+        return safe
+    stem, ext = safe.rsplit(".", 1)
+    if not stem or not ext:
+        return safe[:limit].rstrip(" ._") or "file"
+    suffix = f".{ext[:20]}"
+    stem_limit = max(1, limit - len(suffix))
+    return f"{stem[:stem_limit].rstrip(' ._') or 'file'}{suffix}"
+
+
+def prefixed_submission_filename(
+    *,
+    artist_name: str,
+    task_name: str,
+    original_filename: str,
+) -> str:
+    """Drive 顯示檔名：藝人_任務_原檔名；Notion 另保留原始檔名。"""
+    return "_".join(
+        [
+            _safe_filename_part(artist_name, fallback="artist"),
+            _safe_filename_part(task_name, fallback="task"),
+            _safe_original_filename(original_filename),
+        ]
+    )
+
+
+def prefixed_review_feedback_filename(
+    *,
+    submission_name: str,
+    original_filename: str,
+) -> str:
+    return "_".join(
+        [
+            "老師回饋",
+            _safe_filename_part(submission_name, fallback="submission"),
+            _safe_original_filename(original_filename),
+        ]
+    )
 
 
 def notion_page_url(page_id: str) -> str:
@@ -404,10 +461,15 @@ async def _archive_file_submission(
 
     try:
         content = await attachment.read()
+        drive_filename = prefixed_submission_filename(
+            artist_name=artist.name,
+            task_name=task.name,
+            original_filename=attachment.filename,
+        )
         uploaded = await drive_api.upload_submission_file(
             base_folder_id=base_folder_id,
             path_segments=path_segments,
-            filename=attachment.filename,
+            filename=drive_filename,
             content=content,
             mime_type=attachment.content_type or "",
         )
@@ -442,7 +504,7 @@ async def _archive_file_submission(
         discord_user_id=str(discord_user_id),
         target_db="Submissions & File Index",
         target_url=submission_page.get("url", ""),
-        after=f"{attachment.filename}｜{file_size_mb}MB｜{folder_text}"
+        after=f"{drive_filename}｜原檔名 {attachment.filename}｜{file_size_mb}MB｜{folder_text}"
               + (f"｜取代 {replaced} 筆舊版" if replaced else ""),
     )
     internal = client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
@@ -450,14 +512,14 @@ async def _archive_file_submission(
         internal,
         content=(
             f"📥 **新提交待審核（檔案）**\n"
-            f"任務：{task.name}｜{artist.name}｜{attachment.filename}（{file_size_mb}MB）\n"
+            f"任務：{task.name}｜{artist.name}｜{drive_filename}（{file_size_mb}MB）\n"
             f"Drive：{drive_url}\nNotion：{submission_page.get('url', '')}"
         ),
     )
     resubmit_note = f"\n（已取代先前 {replaced} 筆提交，這筆為最新版）" if replaced else ""
     return True, (
         f"✅ 檔案已提交並歸檔：**{task.name}**\n"
-        f"📁 {artist.name}專區／{folder_text}／{attachment.filename}\n"
+        f"📁 {artist.name}專區／{folder_text}／{drive_filename}\n"
         f"任務狀態已轉「待審核」，審核結果會再通知你。{resubmit_note}"
     )
 
@@ -924,6 +986,10 @@ class SubmissionsCog(commands.Cog):
         links_by_artist: dict[str, list[str]] = {}
         flat_links: list[str] = []
         skipped: list[str] = []
+        drive_filename = prefixed_review_feedback_filename(
+            submission_name=pending.submission.name,
+            original_filename=attachment.filename,
+        )
         for artist in target_artists:
             target = drive_archive.resolve_review_feedback_target(artist.drive_folder_url, now)
             if target is None:
@@ -934,7 +1000,7 @@ class SubmissionsCog(commands.Cog):
                 uploaded = await drive_api.upload_submission_file(
                     base_folder_id=base_folder_id,
                     path_segments=path_segments,
-                    filename=attachment.filename,
+                    filename=drive_filename,
                     content=content,
                     mime_type=attachment.content_type or "",
                 )
@@ -985,12 +1051,12 @@ class SubmissionsCog(commands.Cog):
             discord_user_id=str(discord_user_id),
             target_db="Submissions & File Index",
             target_url=pending.submission.url,
-            after=f"{attachment.filename}｜{file_size_mb}MB｜通知 {sent} 位藝人",
+            after=f"{drive_filename}｜原檔名 {attachment.filename}｜{file_size_mb}MB｜通知 {sent} 位藝人",
         )
         skipped_text = f"\n未歸檔藝人（缺 Drive 專區）：{', '.join(skipped)}" if skipped else ""
         return True, (
             f"✅ 批改檔已歸檔並通知藝人：**{pending.submission.name}**\n"
-            f"檔案：{attachment.filename}｜通知 {sent} 位藝人{skipped_text}"
+            f"檔案：{drive_filename}｜通知 {sent} 位藝人{skipped_text}"
         )
 
     async def _update_review_task_status(self, submission: repositories.SubmissionItem, result: str) -> None:
