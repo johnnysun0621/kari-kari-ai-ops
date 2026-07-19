@@ -10,6 +10,8 @@ from cogs.submissions import (
     PendingFileSubmission,
     PendingDriveProofUpload,
     PendingReviewFeedbackFile,
+    PendingReviewFeedbackProofUpload,
+    ReviewFeedbackDriveTarget,
     direct_upload_size_error,
     feedback_with_attachment_links,
     file_upload_wait_label,
@@ -18,8 +20,10 @@ from cogs.submissions import (
     modal_field_spec,
     notion_page_url,
     prefixed_drive_proof_filename,
+    prefixed_review_feedback_proof_filename,
     prefixed_review_feedback_filename,
     prefixed_submission_filename,
+    review_feedback_drive_instruction,
     review_feedback_file_dm_text,
     review_submission_detail_text,
     review_task_status_for_result,
@@ -279,6 +283,14 @@ class TestArchivedFilename:
 
         assert filename == "老師回饋_Johnny｜編曲作業_feedback.pdf"
 
+    def test_review_feedback_proof_file_gets_proof_prefix(self):
+        filename = prefixed_review_feedback_proof_filename(
+            submission_name="Johnny｜編曲作業",
+            original_filename="upload done.png",
+        )
+
+        assert filename == "批改截圖_Johnny｜編曲作業_upload done.png"
+
     def test_drive_proof_file_gets_proof_prefix(self):
         filename = prefixed_drive_proof_filename(
             artist_name="Johnny",
@@ -307,6 +319,35 @@ class TestLargeFileDriveInstruction:
 
         assert "無法自動產生指定資料夾" in text
         assert "貼 Drive 連結完成提交" in text
+
+
+class TestReviewFeedbackDriveInstruction:
+    def test_with_targets_lists_teacher_feedback_folders(self):
+        text = review_feedback_drive_instruction(
+            submission_name="Johnny｜編曲作業",
+            targets=[
+                ReviewFeedbackDriveTarget(
+                    artist_page_id="artist-1",
+                    artist_name="Johnny",
+                    folder_url="https://drive.google.com/drive/folders/abc",
+                    base_folder_id="base-1",
+                    path_segments=["老師回饋", "2026-07"],
+                )
+            ],
+        )
+
+        assert "Johnny｜編曲作業" in text
+        assert "老師回饋資料夾" in text
+        assert "Johnny" in text
+        assert "https://drive.google.com/drive/folders/abc" in text
+        assert "貼 Drive 連結補回饋" in text
+        assert "截圖佐證" in text
+
+    def test_without_targets_falls_back_to_link_feedback(self):
+        text = review_feedback_drive_instruction(submission_name="Johnny｜編曲作業", targets=[])
+
+        assert "無法自動產生老師回饋資料夾" in text
+        assert "貼 Drive 連結補回饋" in text
 
 
 class TestPendingFileSubmission:
@@ -352,6 +393,32 @@ class TestPendingReviewFeedbackFile:
             result="通過",
             feedback="很好",
             reviewer="A 老師｜123",
+            channel_id=456,
+            created_at=now,
+            expires_at=now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES),
+        )
+
+        assert not pending.is_expired(now + timedelta(minutes=179, seconds=59))
+        assert pending.is_expired(now + timedelta(minutes=180, seconds=1))
+
+
+class TestPendingReviewFeedbackProofUpload:
+    def test_expires_after_deadline(self):
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
+        pending = PendingReviewFeedbackProofUpload(
+            submission=repositories.SubmissionItem(page_id="submission-1", name="Johnny｜功課", status="通過"),
+            result="通過",
+            feedback="很好",
+            reviewer="A 老師｜123",
+            targets=[
+                ReviewFeedbackDriveTarget(
+                    artist_page_id="artist-1",
+                    artist_name="Johnny",
+                    folder_url="https://drive.google.com/drive/folders/abc",
+                    base_folder_id="base-1",
+                    path_segments=["老師回饋", "2026-07"],
+                )
+            ],
             channel_id=456,
             created_at=now,
             expires_at=now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES),
