@@ -80,6 +80,13 @@ def _upload_sync(service, parent_id: str, filename: str, content: bytes, mime_ty
     ).execute()
 
 
+def _folder_resource_sync(service, folder_id: str) -> dict:
+    return service.files().get(
+        fileId=folder_id,
+        fields="id,name,webViewLink",
+    ).execute()
+
+
 async def upload_submission_file(
     *,
     base_folder_id: str,
@@ -98,5 +105,21 @@ async def upload_submission_file(
         for segment in path_segments:
             folder_id = _find_or_create_folder_sync(service, folder_id, segment)
         return _upload_sync(service, folder_id, filename, content, mime_type)
+
+    return await asyncio.to_thread(run)
+
+
+async def ensure_folder_path(
+    *,
+    base_folder_id: str,
+    path_segments: list[str],
+) -> dict:
+    """Find-or-create a folder path and return the final Drive folder resource."""
+    def run() -> dict:
+        service = _get_service()
+        folder_id = base_folder_id
+        for segment in path_segments:
+            folder_id = _find_or_create_folder_sync(service, folder_id, segment)
+        return _folder_resource_sync(service, folder_id)
 
     return await asyncio.to_thread(run)

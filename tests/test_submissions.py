@@ -8,13 +8,16 @@ from cogs.submissions import (
     FILE_UPLOAD_WAIT_MINUTES,
     MAX_UPLOAD_MB,
     PendingFileSubmission,
+    PendingDriveProofUpload,
     PendingReviewFeedbackFile,
     direct_upload_size_error,
     feedback_with_attachment_links,
     file_upload_wait_label,
     is_valid_link,
+    large_file_drive_instruction,
     modal_field_spec,
     notion_page_url,
+    prefixed_drive_proof_filename,
     prefixed_review_feedback_filename,
     prefixed_submission_filename,
     review_feedback_file_dm_text,
@@ -276,6 +279,35 @@ class TestArchivedFilename:
 
         assert filename == "老師回饋_Johnny｜編曲作業_feedback.pdf"
 
+    def test_drive_proof_file_gets_proof_prefix(self):
+        filename = prefixed_drive_proof_filename(
+            artist_name="Johnny",
+            task_name="編曲作業",
+            original_filename="upload done.png",
+        )
+
+        assert filename == "上傳截圖_Johnny_編曲作業_upload done.png"
+
+
+class TestLargeFileDriveInstruction:
+    def test_with_folder_link_guides_artist_to_upload_and_confirm(self):
+        text = large_file_drive_instruction(
+            task_name="編曲作業",
+            folder_url="https://drive.google.com/drive/folders/abc",
+        )
+
+        assert "編曲作業" in text
+        assert "指定上傳資料夾" in text
+        assert "https://drive.google.com/drive/folders/abc" in text
+        assert "貼 Drive 連結" in text
+        assert "截圖佐證" in text
+
+    def test_without_folder_link_falls_back_to_link_submission(self):
+        text = large_file_drive_instruction(task_name="編曲作業", folder_url=None)
+
+        assert "無法自動產生指定資料夾" in text
+        assert "貼 Drive 連結完成提交" in text
+
 
 class TestPendingFileSubmission:
     def test_expires_after_deadline(self):
@@ -285,6 +317,24 @@ class TestPendingFileSubmission:
         pending = PendingFileSubmission(
             task=task(submit_method="檔案"),
             artist=artist(),
+            channel_id=456,
+            created_at=now,
+            expires_at=now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES),
+        )
+
+        assert not pending.is_expired(now + timedelta(minutes=179, seconds=59))
+        assert pending.is_expired(now + timedelta(minutes=180, seconds=1))
+
+
+class TestPendingDriveProofUpload:
+    def test_expires_after_deadline(self):
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
+        pending = PendingDriveProofUpload(
+            task=task(submit_method="檔案"),
+            artist=artist(),
+            folder_url="https://drive.google.com/drive/folders/abc",
+            base_folder_id="folder-1",
+            path_segments=["課程作業", "2026-07"],
             channel_id=456,
             created_at=now,
             expires_at=now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES),

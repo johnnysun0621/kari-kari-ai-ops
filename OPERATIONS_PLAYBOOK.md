@@ -114,6 +114,7 @@ Discord 頻道與 slash command 對應總表請看 [DISCORD_CHANNELS.md](DISCORD
 
 Discord 端不讓藝人自由更改提交方式；Bot 會依 Notion `提交方式` 引導。藝人執行 `/提交任務` 後，
 第一個畫面會先看到可提交任務、提交方式與 `任務說明` 摘要；選定任務後才會進入上傳檔案或貼連結。
+若檔案超過 10MB，Bot 會提供該任務對應的 Drive 資料夾連結；藝人上傳後可貼 Drive 檔案連結完成提交，或用上傳完成截圖佐證。
 完整規則見 [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)。
 
 ## 提交審核 SOP
