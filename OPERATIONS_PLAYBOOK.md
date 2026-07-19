@@ -112,7 +112,9 @@ Discord 頻道與 slash command 對應總表請看 [DISCORD_CHANNELS.md](DISCORD
 - `文字`：心得、回覆、企劃文字。
 - `混合`：不確定藝人會交檔案還是連結。
 
-Discord 端不讓藝人自由更改提交方式；Bot 會依 Notion `提交方式` 引導。完整規則見 [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)。
+Discord 端不讓藝人自由更改提交方式；Bot 會依 Notion `提交方式` 引導。藝人執行 `/提交任務` 後，
+第一個畫面會先看到可提交任務、提交方式與 `任務說明` 摘要；選定任務後才會進入上傳檔案或貼連結。
+完整規則見 [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)。
 
 ## 提交審核 SOP
 

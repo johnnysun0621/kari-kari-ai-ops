@@ -195,6 +195,48 @@ def submit_method_label(method: str | None) -> str:
     return SUBMIT_METHOD_LABELS.get(method or "", "🔗📝 連結或文字")
 
 
+def submit_task_option_description(task: repositories.TaskItem, now: datetime) -> str:
+    """Select option 描述：第一眼就知道這筆任務要交什麼。"""
+    return (
+        f"{submit_method_label(task.submit_method)}｜"
+        f"{task.task_type or '任務'}｜"
+        f"{ui_text.deadline_text(task, now)}"
+    )[:100]
+
+
+def _teacher_requirement_text(task: repositories.TaskItem) -> str:
+    description = _clip(task.description, 80)
+    if description:
+        return f"\n  老師要求：{description}"
+    if task.submit_method == "檔案":
+        return f"\n  老師要求：依 Notion 任務說明上傳指定檔案；超過 {MAX_UPLOAD_MB}MB 請改貼 Drive 連結。"
+    return ""
+
+
+def submit_task_intro_text(
+    artist_name: str,
+    tasks: list[repositories.TaskItem],
+    now: datetime,
+) -> str:
+    """提交第一關文案：先讓藝人知道有哪些任務、各自要交什麼。"""
+    lines = [
+        f"📤 {artist_name} 可提交的任務（{len(tasks)}）：",
+        "先選任務；選定後我才會依 Notion 指定方式要求你上傳檔案、貼連結或填文字。",
+        "",
+    ]
+    for task in tasks[:10]:
+        lines.append(
+            f"・{task.name}｜{submit_method_label(task.submit_method)}｜"
+            f"{task.task_type or '任務'}｜{ui_text.deadline_text(task, now)}"
+            f"{_teacher_requirement_text(task)}"
+        )
+    if len(tasks) > 10:
+        lines.append(f"...另 {len(tasks) - 10} 筆請用下方選單查看")
+    lines.append("")
+    lines.append("檔案任務：選任務後直接在這個頻道上傳附件；10MB 以上請用 Drive 連結。")
+    return ui_text.trim_message("\n".join(lines))
+
+
 def submission_method_conflict(task: repositories.TaskItem, has_attachment: bool) -> str | None:
     """依 Notion assign 的提交方式強制引導；回傳擋下訊息，None＝可以進行。
 
@@ -459,9 +501,7 @@ class SubmitTaskSelect(discord.ui.Select):
             discord.SelectOption(
                 label=t.name[:100],
                 value=t.page_id,
-                description=(
-                    f"{submit_method_label(t.submit_method)}｜{t.task_type or '任務'}｜{ui_text.deadline_text(t, now)}"
-                )[:100],
+                description=submit_task_option_description(t, now),
             )
             for t in tasks[:25]
         ]
@@ -1064,28 +1104,12 @@ class SubmissionsCog(commands.Cog):
         name="提交任務",
         description="依 Notion 指定方式提交作業／作品，任務會轉待審核",
     )
-    @app_commands.describe(檔案=f"Notion 指定交檔案時使用；超過 {MAX_UPLOAD_MB}MB 請改貼雲端連結")
     async def submit_task(
         self,
         interaction: discord.Interaction,
-        檔案: discord.Attachment | None = None,
     ):
         if not await channel_guard.ensure_task_channel(interaction):
             return
-        if 檔案 is not None:
-            size_error = direct_upload_size_error(檔案.size)
-            if size_error:
-                await interaction.response.send_message(
-                    size_error,
-                    ephemeral=True,
-                )
-                return
-            if not drive_api.is_configured():
-                await interaction.response.send_message(
-                    "❌ Drive 歸檔尚未設定（見 DRIVE_OAUTH_SETUP.md），請先貼雲端連結提交。",
-                    ephemeral=True,
-                )
-                return
         await interaction.response.defer(ephemeral=True, thinking=True)
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if artist is None:
@@ -1110,16 +1134,9 @@ class SubmissionsCog(commands.Cog):
             return
         now = datetime.now(config.get_tenant().tz)
         submittable.sort(key=lambda t: (t.end is None, t.end or now))
-        if 檔案 is not None:
-            hint = f"已附檔案 **{檔案.filename}**——選擇任務後會自動歸檔到你的專區。"
-        else:
-            hint = (
-                "下方會顯示每個任務在 Notion 指定的提交方式。"
-                "選擇後 Bot 會自動開啟對應表單；若任務要求交檔案，請直接在同一個頻道上傳附件。"
-            )
         await interaction.followup.send(
-            f"📤 {artist.name} 可提交的任務（{len(submittable)}）：\n{hint}",
-            view=SubmitTaskView(self, submittable, now, attachment=檔案),
+            submit_task_intro_text(artist.name, submittable, now),
+            view=SubmitTaskView(self, submittable, now),
             ephemeral=True,
         )
 

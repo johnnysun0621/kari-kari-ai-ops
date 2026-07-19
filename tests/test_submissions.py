@@ -19,6 +19,8 @@ from cogs.submissions import (
     review_submission_detail_text,
     review_task_status_for_result,
     submission_method_conflict,
+    submit_task_intro_text,
+    submit_task_option_description,
     submission_type_for_input,
     task_links_text,
     submit_hint_for_task,
@@ -33,6 +35,7 @@ def task(
     open_for_submission: bool = True,
     task_type: str | None = "課程作業",
     submit_method: str | None = None,
+    description: str = "",
 ):
     return repositories.TaskItem(
         page_id="task-1",
@@ -41,6 +44,7 @@ def task(
         task_type=task_type,
         open_for_submission=open_for_submission,
         submit_method=submit_method,
+        description=description,
     )
 
 
@@ -192,6 +196,38 @@ class TestSubmitMethodLabel:
 
     def test_text_method_asks_for_text(self):
         assert "文字" in submit_hint_for_task(task(submit_method="文字"))
+
+
+class TestSubmitTaskFirstStepText:
+    def test_intro_lists_tasks_methods_and_teacher_requirements(self):
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
+        text = submit_task_intro_text(
+            "Johnny",
+            [
+                task(
+                    submit_method="檔案",
+                    task_type="課程作業",
+                    description="老師要求：請上傳 PDF 或簡報，不要傳壓縮檔。",
+                ),
+                task(submit_method="Drive 連結", task_type="錄音"),
+            ],
+            now,
+        )
+
+        assert "先選任務" in text
+        assert "交檔案" in text
+        assert "貼連結" in text
+        assert "老師要求" in text
+        assert "PDF" in text
+
+    def test_option_description_shows_method_type_and_deadline(self):
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
+        text = submit_task_option_description(task(submit_method="檔案"), now)
+
+        assert "交檔案" in text
+        assert "課程作業" in text
+        assert "無截止日" in text
+        assert len(text) <= 100
 
 
 class TestUploadBoundary:

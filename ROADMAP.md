@@ -68,7 +68,7 @@
 
 - services/drive_api.py：find-or-create 資料夾＋上傳（asyncio.to_thread 不卡 event loop、
   連線以 token 為 key）；Submissions 欄位擴充（File ID／原始檔名／大小 MB）
-- `/提交任務`：選任務後若 Notion 指定 `檔案`，Bot 在同頻道等待附件，不要求藝人跳私訊或重打；
+- `/提交任務`：第一關先顯示可提交任務、提交方式與老師要求摘要；選任務後若 Notion 指定 `檔案`，Bot 在同頻道等待附件，不要求藝人跳私訊或重打；
   入口 3 小時有效，10MB 以下自動歸檔 `專區/類型夾/YYYY-MM/`；>10MB 擋下引導貼連結；上傳失敗不寫半套資料
 - `/審核提交`：管理端審核最新版提交，支援 `通過` / `需修改` / `退回`＋回饋；
   同步更新 Tasks 並 DM 藝人；Notion 手動審核也可由背景 loop 通知

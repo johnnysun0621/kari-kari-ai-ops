@@ -1,5 +1,5 @@
 """overlap.py 與 timeparse.py 的單元測試。"""
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 
