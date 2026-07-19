@@ -77,21 +77,6 @@ class PendingReviewFeedbackProofUpload:
         return now > self.expires_at
 
 
-@dataclass
-class PendingDriveProofUpload:
-    task: repositories.TaskItem
-    artist: repositories.Artist
-    folder_url: str
-    base_folder_id: str
-    path_segments: list[str]
-    channel_id: int | None
-    created_at: datetime
-    expires_at: datetime
-
-    def is_expired(self, now: datetime) -> bool:
-        return now > self.expires_at
-
-
 def submission_type_for_input(link_url: str, content: str) -> str | None:
     """依實際填寫內容決定 Submissions.提交類型；兩者皆空回 None（呼叫端擋下）。"""
     if link_url and content:
@@ -209,22 +194,6 @@ def prefixed_review_feedback_proof_filename(
     )
 
 
-def prefixed_drive_proof_filename(
-    *,
-    artist_name: str,
-    task_name: str,
-    original_filename: str,
-) -> str:
-    return "_".join(
-        [
-            "上傳截圖",
-            _safe_filename_part(artist_name, fallback="artist"),
-            _safe_filename_part(task_name, fallback="task"),
-            _safe_original_filename(original_filename),
-        ]
-    )
-
-
 def large_file_drive_instruction(
     *,
     task_name: str,
@@ -235,7 +204,7 @@ def large_file_drive_instruction(
     ]
     if folder_url:
         lines.append(f"指定上傳資料夾：{folder_url}")
-        lines.append("上傳完成後，建議按「貼 Drive 連結完成提交」並貼檔案連結；也可以按「用截圖佐證」上傳完成畫面。")
+        lines.append("上傳完成後，請按「貼 Drive 連結完成提交」並貼檔案或資料夾連結。")
     else:
         lines.append("目前無法自動產生指定資料夾連結，請先把檔案上傳到你的雲端，再按「貼 Drive 連結完成提交」。")
     return "\n".join(lines)
@@ -605,7 +574,6 @@ class DriveLinkSubmissionModal(discord.ui.Modal):
             return
 
         self.cog.pending_file_submissions.pop(interaction.user.id, None)
-        self.cog.pending_drive_proof_uploads.pop(interaction.user.id, None)
         await audit.log_event(
             event_name=f"提交任務（大檔連結）｜{artist.name}｜{self.task.name}",
             action_type="提交", operator=artist.name,
@@ -929,21 +897,6 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
     async def submit_drive_link(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(DriveLinkSubmissionModal(self.cog, self.task, self.folder_url))
 
-    @discord.ui.button(label="用截圖佐證", style=discord.ButtonStyle.secondary)
-    async def upload_proof(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.folder_url or self.target is None:
-            await interaction.response.send_message(
-                "❌ 目前沒有可用的指定 Drive 資料夾，請改用「貼 Drive 連結完成提交」。",
-                ephemeral=True,
-            )
-            return
-        await self.cog.start_drive_proof_upload_wait(
-            interaction,
-            self.task,
-            folder_url=self.folder_url,
-            target=self.target,
-        )
-
 
 class ReviewFeedbackLargeFileChoiceView(discord.ui.View):
     def __init__(
@@ -1117,7 +1070,6 @@ class SubmissionsCog(commands.Cog):
         self.pending_file_submissions: dict[int, PendingFileSubmission] = {}
         self.pending_review_feedback_files: dict[int, PendingReviewFeedbackFile] = {}
         self.pending_review_feedback_proofs: dict[int, PendingReviewFeedbackProofUpload] = {}
-        self.pending_drive_proof_uploads: dict[int, PendingDriveProofUpload] = {}
         self._review_notified: set[str] = set()
         self.review_poll_loop.start()
 
@@ -1165,44 +1117,6 @@ class SubmissionsCog(commands.Cog):
             f"檔案請在 **{MAX_UPLOAD_MB}MB 以下**；我會等待你的下一個附件，入口 **{file_upload_wait_label()}**後失效。\n\n"
             + large_file_drive_instruction(task_name=task.name, folder_url=folder_url),
             view=LargeFileSubmissionChoiceView(self, task, folder_url=folder_url, target=target),
-            ephemeral=True,
-        )
-
-    async def start_drive_proof_upload_wait(
-        self,
-        interaction: discord.Interaction,
-        task: repositories.TaskItem,
-        *,
-        folder_url: str,
-        target: tuple[str, list[str]],
-    ) -> None:
-        """大檔已由藝人自行上傳 Drive；等待一張截圖作為佐證並建立提交紀錄。"""
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is None:
-            await interaction.followup.send(
-                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
-                ephemeral=True,
-            )
-            return
-        now = datetime.now(config.get_tenant().tz)
-        expires_at = now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES)
-        base_folder_id, path_segments = target
-        self.pending_file_submissions.pop(interaction.user.id, None)
-        self.pending_drive_proof_uploads[interaction.user.id] = PendingDriveProofUpload(
-            task=task,
-            artist=artist,
-            folder_url=folder_url,
-            base_folder_id=base_folder_id,
-            path_segments=path_segments,
-            channel_id=interaction.channel_id,
-            created_at=now,
-            expires_at=expires_at,
-        )
-        await interaction.followup.send(
-            f"📷 請直接在這個頻道上傳 **{task.name}** 的 Drive 上傳完成截圖。\n"
-            f"截圖請在 **{MAX_UPLOAD_MB}MB 以下**；入口 **{file_upload_wait_label()}**後失效。\n"
-            f"我會把提交連結記為指定資料夾：{folder_url}",
             ephemeral=True,
         )
 
@@ -1339,10 +1253,6 @@ class SubmissionsCog(commands.Cog):
         if pending_feedback_proof is not None:
             await self._handle_pending_review_feedback_proof_message(message, pending_feedback_proof)
             return
-        pending_proof = self.pending_drive_proof_uploads.get(message.author.id)
-        if pending_proof is not None:
-            await self._handle_pending_drive_proof_message(message, pending_proof)
-            return
         pending = self.pending_file_submissions.get(message.author.id)
         if pending is None:
             return
@@ -1380,120 +1290,6 @@ class SubmissionsCog(commands.Cog):
             discord_user_id=message.author.id,
         )
         await message.channel.send(result_message)
-
-    async def _handle_pending_drive_proof_message(
-        self,
-        message: discord.Message,
-        pending: PendingDriveProofUpload,
-    ) -> None:
-        if pending.channel_id is not None and message.channel.id != pending.channel_id:
-            return
-        now = datetime.now(config.get_tenant().tz)
-        if pending.is_expired(now):
-            self.pending_drive_proof_uploads.pop(message.author.id, None)
-            await message.channel.send("❌ 這次截圖佐證入口已過期，請重新執行 `/提交任務`。")
-            return
-        if not message.attachments:
-            await message.channel.send("請直接上傳一張截圖附件；如果要貼檔案連結，請重新按「貼 Drive 連結完成提交」。")
-            return
-        if len(message.attachments) > 1:
-            await message.channel.send("一次請上傳一張截圖；多張請先選最能證明已上傳完成的那張。")
-            return
-        attachment = message.attachments[0]
-        size_error = direct_upload_size_error(attachment.size)
-        if size_error:
-            await message.channel.send(f"{size_error}\n截圖超過標準大小時，請改用「貼 Drive 連結完成提交」。")
-            return
-        if not drive_api.is_configured():
-            await message.channel.send("❌ Drive 歸檔尚未設定，請改用「貼 Drive 連結完成提交」。")
-            return
-
-        self.pending_drive_proof_uploads.pop(message.author.id, None)
-        await message.channel.send("收到截圖，正在歸檔並建立提交紀錄...")
-        _ok, result_message = await self._archive_drive_proof_submission(
-            pending=pending,
-            attachment=attachment,
-            discord_user_id=message.author.id,
-        )
-        await message.channel.send(result_message)
-
-    async def _archive_drive_proof_submission(
-        self,
-        *,
-        pending: PendingDriveProofUpload,
-        attachment: discord.Attachment,
-        discord_user_id: int,
-    ) -> tuple[bool, str]:
-        try:
-            content = await attachment.read()
-            drive_filename = prefixed_drive_proof_filename(
-                artist_name=pending.artist.name,
-                task_name=pending.task.name,
-                original_filename=attachment.filename,
-            )
-            uploaded = await drive_api.upload_submission_file(
-                base_folder_id=pending.base_folder_id,
-                path_segments=pending.path_segments,
-                filename=drive_filename,
-                content=content,
-                mime_type=attachment.content_type or "",
-            )
-        except Exception:
-            logger.exception("Drive 截圖佐證上傳失敗")
-            return False, "❌ 截圖上傳 Google Drive 失敗（未寫入任何紀錄），請改用「貼 Drive 連結完成提交」。"
-
-        screenshot_url = uploaded.get("webViewLink", "")
-        file_size_mb = round(attachment.size / 1048576, 2)
-        note = (
-            "大檔已由藝人上傳到指定 Drive 資料夾。\n"
-            f"指定資料夾：{pending.folder_url}\n"
-            f"上傳截圖：{screenshot_url}"
-        )
-        try:
-            replaced = await repositories.mark_previous_submissions_not_latest(pending.task.page_id)
-            submission_page = await repositories.create_submission(
-                pending.task,
-                pending.artist,
-                submit_type="Drive 連結",
-                link_url=pending.folder_url,
-                content=note,
-                drive_file_id=uploaded.get("id", ""),
-                original_filename=attachment.filename,
-                file_size_mb=file_size_mb,
-            )
-            await repositories.set_task_under_review(pending.task.page_id, pending.folder_url)
-        except Exception:
-            logger.exception("截圖佐證寫入 Notion 失敗")
-            return False, (
-                f"⚠️ 截圖已上傳到 Drive（{screenshot_url}），但 Notion 紀錄寫入失敗，請聯絡營運補登。"
-            )
-
-        await audit.log_event(
-            event_name=f"提交任務（大檔截圖佐證）｜{pending.artist.name}｜{pending.task.name}",
-            action_type="提交",
-            operator=pending.artist.name,
-            discord_user_id=str(discord_user_id),
-            target_db="Submissions & File Index",
-            target_url=submission_page.get("url", ""),
-            after=f"{pending.folder_url}｜截圖 {drive_filename}｜{file_size_mb}MB"
-                  + (f"｜取代 {replaced} 筆舊版" if replaced else ""),
-        )
-        internal = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-        await channel_guard.try_send(
-            internal,
-            content=(
-                f"📥 **新提交待審核（大檔截圖佐證）**\n"
-                f"任務：{pending.task.name}｜{pending.artist.name}\n"
-                f"指定資料夾：{pending.folder_url}\n"
-                f"截圖：{screenshot_url}\nNotion：{submission_page.get('url', '')}"
-            ),
-        )
-        resubmit_note = f"\n（已取代先前 {replaced} 筆提交，這筆為最新版）" if replaced else ""
-        return True, (
-            f"✅ 已用截圖建立提交紀錄：**{pending.task.name}**\n"
-            f"Drive 資料夾：{pending.folder_url}\n"
-            f"任務狀態已轉「待審核」，審核結果會再通知你。{resubmit_note}"
-        )
 
     async def _handle_pending_review_feedback_proof_message(
         self,
