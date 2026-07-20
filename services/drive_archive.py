@@ -3,8 +3,8 @@
 歸檔結構（2026-07-10 與 Johnny 拍板，取代 Kickoff 的課程→日期→藝人）：
 
     總資料夾/
-      <藝人>專區/                ← Artists.Google Drive 資料夾 存專區連結
-        <任務類型夾>/<YYYY-MM>/  ← bot 依對應表自動找到或建立
+    <藝人>專區/                ← Artists.Google Drive 資料夾 存專區連結
+        <任務類型夾>/<YYYY-MM>/<Task ID>_<任務名稱>/
 
 優先序：Tasks.Google Drive Folder 有值 → 直接歸該資料夾；
 否則 → 藝人專區 / 類型夾 / 月份夾。
@@ -34,6 +34,8 @@ DEFAULT_TYPE_FOLDERS = {
 }
 FALLBACK_TYPE_FOLDER = "其他"
 REVIEW_FEEDBACK_FOLDER = "老師回饋"
+SUBMISSION_FOLDER = "提交作業"
+REVIEW_FOLDER = "老師回饋"
 
 _FOLDER_URL_PATTERNS = [
     re.compile(r"drive\.google\.com/drive/(?:u/\d+/)?folders/([\w-]+)"),
@@ -60,21 +62,40 @@ def type_folder_for_task(
     return mapping.get(task_type or "", FALLBACK_TYPE_FOLDER)
 
 
+def task_folder_name(task: "repositories.TaskItem") -> str:
+    """Return a stable, readable folder name for one task."""
+    task_id = str(task.task_id or task.page_id.replace("-", "")[:8])
+    name = re.sub(r"[\\/:*?\"<>|\r\n\t]+", "_", task.name or "未命名任務")
+    name = re.sub(r"\s+", " ", name).strip(" ._") or "未命名任務"
+    return f"{task_id}_{name[:70].rstrip(' ._')}"
+
+
 def archive_path_for_submission(
     task: "repositories.TaskItem",
     now: datetime,
     type_folders: dict[str, str] | None = None,
 ) -> list[str]:
-    """回傳專區底下的相對路徑段，例如 ["課程作業", "2026-07"]。
+    """回傳專區底下的任務資料夾路徑，例如 ["課程作業", "2026-07", "12_編曲作業"]。
 
     呼叫端負責：任務有 Google Drive Folder 時不呼叫這裡（直接用任務指定夾）。
     """
-    return [type_folder_for_task(task.task_type, type_folders), now.strftime("%Y-%m")]
+    return [
+        type_folder_for_task(task.task_type, type_folders),
+        now.strftime("%Y-%m"),
+        task_folder_name(task),
+    ]
 
 
-def archive_path_for_review_feedback(now: datetime) -> list[str]:
-    """老師批改檔固定進藝人專區 / 老師回饋 / YYYY-MM。"""
-    return [REVIEW_FEEDBACK_FOLDER, now.strftime("%Y-%m")]
+def archive_path_for_review_feedback(
+    task: "repositories.TaskItem", now: datetime,
+) -> list[str]:
+    """老師回饋放在同一藝人專區下的任務資料夾。"""
+    return [
+        type_folder_for_task(task.task_type),
+        now.strftime("%Y-%m"),
+        task_folder_name(task),
+        REVIEW_FOLDER,
+    ]
 
 
 def resolve_archive_target(
@@ -98,9 +119,15 @@ def resolve_archive_target(
     return None
 
 
-def resolve_review_feedback_target(artist_zone_url: str, now: datetime) -> tuple[str, list[str]] | None:
-    """決定老師批改檔歸檔目標：(藝人專區 ID, ["老師回饋", YYYY-MM])。"""
+def resolve_review_feedback_target(
+    artist_zone_url: str,
+    now: datetime,
+    task: "repositories.TaskItem | None" = None,
+) -> tuple[str, list[str]] | None:
+    """決定老師批改檔歸檔目標；未傳任務時保留舊路徑相容。"""
     zone_id = extract_drive_folder_id(artist_zone_url)
     if not zone_id:
         return None
-    return zone_id, archive_path_for_review_feedback(now)
+    if task is None:
+        return zone_id, [REVIEW_FEEDBACK_FOLDER, now.strftime("%Y-%m")]
+    return zone_id, archive_path_for_review_feedback(task, now)

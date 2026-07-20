@@ -15,6 +15,7 @@ def task(task_type: str | None = "課程作業", drive_folder_url: str = ""):
         status="待提交",
         task_type=task_type,
         drive_folder_url=drive_folder_url,
+        task_id=12,
     )
 
 
@@ -54,10 +55,19 @@ class TestTypeFolderMapping:
 
 class TestArchivePath:
     def test_path_is_type_folder_then_month(self):
-        assert drive_archive.archive_path_for_submission(task(), NOW) == ["課程作業", "2026-07"]
+        assert drive_archive.archive_path_for_submission(task(), NOW) == [
+            "課程作業", "2026-07", "12_編曲作業",
+        ]
 
     def test_review_feedback_path_is_fixed_folder_then_month(self):
-        assert drive_archive.archive_path_for_review_feedback(NOW) == ["老師回饋", "2026-07"]
+        assert drive_archive.archive_path_for_review_feedback(task(), NOW) == [
+            "課程作業", "2026-07", "12_編曲作業", "老師回饋",
+        ]
+
+    def test_task_name_is_sanitized_and_task_id_makes_folder_stable(self):
+        current = task()
+        current.name = '表演/藝術：第一版'
+        assert drive_archive.task_folder_name(current) == "12_表演_藝術：第一版"
 
 
 class TestResolveArchiveTarget:
@@ -70,7 +80,7 @@ class TestResolveArchiveTarget:
 
     def test_zone_with_type_and_month_path(self):
         assert drive_archive.resolve_archive_target(task(), self.ZONE, NOW) == (
-            "ZoneId123", ["課程作業", "2026-07"],
+            "ZoneId123", ["課程作業", "2026-07", "12_編曲作業"],
         )
 
     def test_no_usable_folder_returns_none(self):
