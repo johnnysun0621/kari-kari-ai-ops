@@ -948,7 +948,7 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
         target: tuple[str, list[str]] | None = None,
         owner_id: int | None = None,
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=FILE_UPLOAD_WAIT_MINUTES * 60)
         self.cog = cog
         self.task = task
         self.folder_url = folder_url
@@ -996,7 +996,7 @@ class ReviewFeedbackLargeFileChoiceView(discord.ui.View):
         targets: list[ReviewFeedbackDriveTarget],
         owner_id: int | None = None,
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=FILE_UPLOAD_WAIT_MINUTES * 60)
         self.cog = cog
         self.submission = submission
         self.result = result
