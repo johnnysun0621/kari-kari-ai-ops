@@ -7,7 +7,7 @@
         <任務類型夾>/<YYYY-MM>/<Task ID>_<任務名稱>/
 
 優先序：Tasks.Google Drive Folder 有值 → 直接歸該資料夾；
-否則 → 藝人專區 / 類型夾 / 月份夾。
+否則 → 藝人專區 / 類型夾 / 月份夾 / 任務資料夾。
 
 這個模組只算「該放哪」；實際的 Drive API 上傳（find-or-create 資料夾、
 上傳檔案、回寫 File ID）等 OAuth 憑證到位後在 drive_api 模組實作。
@@ -98,6 +98,10 @@ def archive_path_for_review_feedback(
     ]
 
 
+def review_feedback_folder_name(created_at: datetime) -> str:
+    return f"回饋_{created_at.strftime('%Y%m%d_%H%M')}"
+
+
 def resolve_archive_target(
     task: "repositories.TaskItem",
     artist_zone_url: str,
@@ -107,7 +111,7 @@ def resolve_archive_target(
     """決定歸檔目標：(基底資料夾 ID, 底下要 find-or-create 的相對路徑段)。
 
     - 任務有指定 Google Drive Folder → (該夾 ID, []) 直接歸檔
-    - 否則 → (藝人專區 ID, [類型夾, YYYY-MM])
+    - 否則 → (藝人專區 ID, [類型夾, YYYY-MM, Task ID_任務名稱])
     - 兩者都拿不到 folder ID → None（呼叫端 fallback 成「請貼連結」）
     """
     task_folder_id = extract_drive_folder_id(getattr(task, "drive_folder_url", "") or "")

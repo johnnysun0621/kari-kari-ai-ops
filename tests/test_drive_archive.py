@@ -69,6 +69,9 @@ class TestArchivePath:
         current.name = '表演/藝術：第一版'
         assert drive_archive.task_folder_name(current) == "12_表演_藝術：第一版"
 
+    def test_review_feedback_folder_name_is_timestamped(self):
+        assert drive_archive.review_feedback_folder_name(NOW) == "回饋_20260710_1500"
+
 
 class TestResolveArchiveTarget:
     ZONE = "https://drive.google.com/drive/folders/ZoneId123"

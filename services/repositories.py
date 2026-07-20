@@ -698,6 +698,14 @@ async def get_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
     ]
 
 
+async def get_task(task_page_id: str) -> TaskItem | None:
+    """Retrieve one task for submission-linked Drive archive paths."""
+    if not task_page_id:
+        return None
+    page = await notion_api.retrieve_page(task_page_id)
+    return _to_task(page) if page else None
+
+
 # ---------- P0-2 任務查詢（Discord 顯示） ----------
 
 TASK_DUE_SOON_DAYS = 3
