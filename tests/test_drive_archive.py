@@ -74,6 +74,11 @@ class TestArchivePath:
         current.end = datetime(2026, 7, 25, tzinfo=config.TZ)
         assert drive_archive.task_folder_name(current, NOW) == "編曲作業｜截止2026-07-25"
 
+    def test_task_folder_uses_notion_created_at_without_deadline(self):
+        current = task()
+        current.created_at = datetime(2026, 7, 9, 23, 30, tzinfo=config.TZ)
+        assert drive_archive.task_folder_name(current, NOW) == "編曲作業｜建立2026-07-09"
+
     def test_review_feedback_folder_name_is_timestamped(self):
         assert drive_archive.review_feedback_folder_name(NOW) == "回饋_20260710_1500"
 

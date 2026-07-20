@@ -360,6 +360,8 @@ class TaskItem:
     reminder_rules: list[str] = field(default_factory=list)
     # P0-3 歸檔用：任務指定資料夾（優先於藝人專區）
     drive_folder_url: str = ""
+    # Notion page 建立時間，用於沒有截止日的 Drive 資料夾命名
+    created_at: datetime | None = None
 
 
 @dataclass
@@ -431,6 +433,13 @@ def _to_project(page: dict) -> ProjectItem:
 def _to_task(page: dict) -> TaskItem:
     start = _read_date_value(page, "開始日")
     end = _read_date_value(page, "截止日")
+    created_at_raw = page.get("created_time")
+    created_at = None
+    if created_at_raw:
+        try:
+            created_at = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00")).astimezone(config.TZ)
+        except ValueError:
+            created_at = None
     return TaskItem(
         page_id=page["id"],
         name=_read_title(page, "任務名稱"),
@@ -451,6 +460,7 @@ def _to_task(page: dict) -> TaskItem:
         discord_visible=_task_discord_visible(page),
         reminder_rules=_read_multi_select(page, "提醒規則"),
         drive_folder_url=_read_url(page, "Google Drive Folder"),
+        created_at=created_at,
     )
 
 

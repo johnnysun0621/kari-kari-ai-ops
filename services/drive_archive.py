@@ -72,7 +72,7 @@ def task_folder_name(
     if task.end:
         date_label = f"截止{task.end.strftime('%Y-%m-%d')}"
     else:
-        date_value = fallback_date or datetime.now()
+        date_value = task.created_at or fallback_date or datetime.now()
         date_label = f"建立{date_value.strftime('%Y-%m-%d')}"
     return f"{name[:70].rstrip(' ._')}｜{date_label}"
 
@@ -82,7 +82,7 @@ def archive_path_for_submission(
     now: datetime,
     type_folders: dict[str, str] | None = None,
 ) -> list[str]:
-    """回傳專區底下的任務資料夾路徑，例如 ["課程作業", "2026-07", "12_編曲作業"]。
+    """回傳專區底下的任務資料夾路徑，例如 ["課程作業", "2026-07", "編曲作業｜建立2026-07-09"]。
 
     呼叫端負責：任務有 Google Drive Folder 時不呼叫這裡（直接用任務指定夾）。
     """
