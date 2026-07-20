@@ -56,18 +56,23 @@ class TestTypeFolderMapping:
 class TestArchivePath:
     def test_path_is_type_folder_then_month(self):
         assert drive_archive.archive_path_for_submission(task(), NOW) == [
-            "課程作業", "2026-07", "12_編曲作業",
+            "課程作業", "2026-07", "編曲作業｜建立2026-07-10",
         ]
 
     def test_review_feedback_path_is_fixed_folder_then_month(self):
         assert drive_archive.archive_path_for_review_feedback(task(), NOW) == [
-            "課程作業", "2026-07", "12_編曲作業", "老師回饋",
+            "課程作業", "2026-07", "編曲作業｜建立2026-07-10", "老師回饋",
         ]
 
     def test_task_name_is_sanitized_and_task_id_makes_folder_stable(self):
         current = task()
         current.name = '表演/藝術：第一版'
-        assert drive_archive.task_folder_name(current) == "12_表演_藝術：第一版"
+        assert drive_archive.task_folder_name(current, NOW) == "表演_藝術：第一版｜建立2026-07-10"
+
+    def test_task_folder_uses_deadline_when_available(self):
+        current = task()
+        current.end = datetime(2026, 7, 25, tzinfo=config.TZ)
+        assert drive_archive.task_folder_name(current, NOW) == "編曲作業｜截止2026-07-25"
 
     def test_review_feedback_folder_name_is_timestamped(self):
         assert drive_archive.review_feedback_folder_name(NOW) == "回饋_20260710_1500"
@@ -83,7 +88,7 @@ class TestResolveArchiveTarget:
 
     def test_zone_with_type_and_month_path(self):
         assert drive_archive.resolve_archive_target(task(), self.ZONE, NOW) == (
-            "ZoneId123", ["課程作業", "2026-07", "12_編曲作業"],
+            "ZoneId123", ["課程作業", "2026-07", "編曲作業｜建立2026-07-10"],
         )
 
     def test_no_usable_folder_returns_none(self):

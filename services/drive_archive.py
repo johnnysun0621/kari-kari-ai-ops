@@ -62,12 +62,19 @@ def type_folder_for_task(
     return mapping.get(task_type or "", FALLBACK_TYPE_FOLDER)
 
 
-def task_folder_name(task: "repositories.TaskItem") -> str:
-    """Return a stable, readable folder name for one task."""
-    task_id = str(task.task_id or task.page_id.replace("-", "")[:8])
+def task_folder_name(
+    task: "repositories.TaskItem",
+    fallback_date: datetime | None = None,
+) -> str:
+    """Return a readable task folder name without exposing an internal ID."""
     name = re.sub(r"[\\/:*?\"<>|\r\n\t]+", "_", task.name or "未命名任務")
     name = re.sub(r"\s+", " ", name).strip(" ._") or "未命名任務"
-    return f"{task_id}_{name[:70].rstrip(' ._')}"
+    if task.end:
+        date_label = f"截止{task.end.strftime('%Y-%m-%d')}"
+    else:
+        date_value = fallback_date or datetime.now()
+        date_label = f"建立{date_value.strftime('%Y-%m-%d')}"
+    return f"{name[:70].rstrip(' ._')}｜{date_label}"
 
 
 def archive_path_for_submission(
@@ -82,7 +89,7 @@ def archive_path_for_submission(
     return [
         type_folder_for_task(task.task_type, type_folders),
         now.strftime("%Y-%m"),
-        task_folder_name(task),
+        task_folder_name(task, now),
     ]
 
 
@@ -93,7 +100,7 @@ def archive_path_for_review_feedback(
     return [
         type_folder_for_task(task.task_type),
         now.strftime("%Y-%m"),
-        task_folder_name(task),
+        task_folder_name(task, now),
         REVIEW_FOLDER,
     ]
 
@@ -111,7 +118,7 @@ def resolve_archive_target(
     """決定歸檔目標：(基底資料夾 ID, 底下要 find-or-create 的相對路徑段)。
 
     - 任務有指定 Google Drive Folder → (該夾 ID, []) 直接歸檔
-    - 否則 → (藝人專區 ID, [類型夾, YYYY-MM, Task ID_任務名稱])
+    - 否則 → (藝人專區 ID, [類型夾, YYYY-MM, 任務名稱｜截止日期])
     - 兩者都拿不到 folder ID → None（呼叫端 fallback 成「請貼連結」）
     """
     task_folder_id = extract_drive_folder_id(getattr(task, "drive_folder_url", "") or "")
