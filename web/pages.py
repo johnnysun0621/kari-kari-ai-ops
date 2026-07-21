@@ -15,6 +15,8 @@ button.slot:active{background:#eef2ff}
 button.slot input{margin-right:8px;transform:scale(1.25)}
 button.none{display:block;width:100%;padding:14px;margin-top:22px;font-size:.95rem;
       border:1px solid #d1d5db;border-radius:12px;background:#fff;color:#6b7280;cursor:pointer}
+button.confirm{display:block;width:100%;padding:15px;margin-top:18px;font-size:1rem;
+      border:0;border-radius:12px;background:#4f46e5;color:#fff;cursor:pointer}
 .big{font-size:2.2rem;text-align:center;margin:8px 0 16px}
 .msg{text-align:center;line-height:1.7}
 """
@@ -50,7 +52,9 @@ def confirm_page_html(
         f"確認對象：{_html.escape(teacher or '老師')}</div>"
         "<div class='meta'>請勾選一個或多個您可以配合的時段。最後由營運決定正式時間，老師回覆不會立即發布通告：</div>"
         f"<form method='post' action='{_html.escape(action_url)}'>{buttons}"
-        "<button class='none' type='submit' name='choice' value='none'>"
+        "<button class='confirm' type='submit' name='action' value='confirm'>"
+        "確認送出已勾選時段</button>"
+        "<button class='none' type='submit' name='action' value='none'>"
         "以下時段我都無法配合</button></form>"
     )
     return _page(f"確認上課時段｜{request_name}", body)

@@ -198,6 +198,16 @@ async def find_artist_by_discord_id(discord_user_id: int | str) -> Artist | None
     return _to_artist(pages[0]) if pages else None
 
 
+async def get_teachers() -> list[str]:
+    """讀 People 中身份類型為「老師」的人名，供 Discord 選單使用。"""
+    pages = await notion_api.query_data_source(
+        config.DS_PEOPLE,
+        filter_={"property": "身份類型", "select": {"equals": "老師"}},
+    )
+    names = [_read_title(page, "姓名 / 名稱").strip() for page in pages]
+    return sorted({name for name in names if name})
+
+
 # ---------- Schedule Requests ----------
 
 @dataclass

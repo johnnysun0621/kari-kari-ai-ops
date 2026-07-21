@@ -65,14 +65,15 @@ async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
     client = request.app["client"]
     tenant = config.get_tenant()
     form = await request.post()
+    action = str(form.get("action", ""))
     choices = list(dict.fromkeys(str(value) for value in form.getall("choice")))
-    if not choices or ("none" in choices and len(choices) > 1):
+    if action not in {"confirm", "none"} or (action == "confirm" and not choices):
         return _html_response(pages.result_html("invalid"), status=400)
 
     # 先燒掉 token（防連點/重送）；流程失敗再還原讓老師重試
     teacher_confirm.mark_token_used(token, check.expires_at_ts)
 
-    if "none" in choices:
+    if action == "none":
         internal = client.get_channel(tenant.admin_notify_channel_id) if client else None
         if internal is not None:
             try:

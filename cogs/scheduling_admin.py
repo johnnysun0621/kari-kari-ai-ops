@@ -533,12 +533,9 @@ class MonthlyPoolArrangementView(discord.ui.View):
             await interaction.response.send_message(
                 content="請選擇具體課程類型：",
                 view=CourseTypeView(
-                    self.month,
-                    self.duration_minutes,
-                    self.chosen_artists,
-                    self.windows,
-                    interaction.user,
-                ),
+                    self.month, self.duration_minutes, self.chosen_artists,
+                    self.windows, interaction.user,
+                ), ephemeral=True,
             )
         else:
             names = "、".join(a.name for a in self.chosen_artists)
@@ -579,13 +576,55 @@ class CourseTypeView(discord.ui.View):
         return False
 
     async def on_select(self, interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            teachers = await repositories.get_teachers()
+        except Exception:
+            logger.exception("讀取老師清單失敗")
+            await interaction.followup.send("❌ 讀取 Notion 老師清單失敗，請確認 People 資料庫已分享給 Bot。", ephemeral=True)
+            return
+        if not teachers:
+            await interaction.followup.send("❌ People 裡沒有身份類型為「老師」的人員。", ephemeral=True)
+            return
+        await interaction.followup.send(
+            "請選擇老師／確認對象：",
+            view=TeacherSelectView(
+                self.month, self.duration_minutes, self.artists,
+                self.windows, interaction.user, self.select.values[0], teachers,
+            ), ephemeral=True,
+        )
+        self.stop()
+
+
+class TeacherSelectView(discord.ui.View):
+    """從 People.身份類型＝老師的清單選擇確認對象。"""
+
+    def __init__(self, month, duration_minutes, artists, windows, operator, course_type, teachers):
+        super().__init__(timeout=600)
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.artists = artists
+        self.windows = windows
+        self.operator_id = operator.id
+        self.course_type = course_type
+        self.select = discord.ui.Select(
+            placeholder="選擇老師／確認對象…",
+            options=[discord.SelectOption(label=name[:100], value=name) for name in teachers[:25]],
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個選單只能由原本執行比對的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction):
         await interaction.response.send_modal(
             CourseArrangementModal(
-                self.month,
-                self.duration_minutes,
-                self.artists,
-                self.windows,
-                self.select.values[0],
+                self.month, self.duration_minutes, self.artists,
+                self.windows, self.course_type, self.select.values[0],
             )
         )
         self.stop()
@@ -594,17 +633,16 @@ class CourseTypeView(discord.ui.View):
 class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
     """課程分流：補老師資料後建立確認單與老師連結。"""
 
-    def __init__(self, month, duration_minutes, artists, windows, course_type):
+    def __init__(self, month, duration_minutes, artists, windows, course_type, teacher):
         super().__init__()
         self.month = month
         self.duration_minutes = duration_minutes
         self.artists = artists
         self.windows = windows
         self.course_type = course_type
+        self.teacher = teacher
         self.name_input = discord.ui.TextInput(label="課程名稱", placeholder="例：八月歌唱課｜Johnny Chenhua", max_length=80)
-        self.teacher_input = discord.ui.TextInput(label="老師／確認對象", max_length=100)
         self.add_item(self.name_input)
-        self.add_item(self.teacher_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -622,7 +660,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
                 duration_minutes=self.duration_minutes,
                 artist_page_ids=[a.page_id for a in self.artists],
                 fill_deadline=datetime.now(tenant.tz),
-                teacher=self.teacher_input.value,
+                teacher=self.teacher,
                 month_week=self.month,
                 note="由 /時間池比對 建立｜安排類型：課程",
             )
