@@ -530,7 +530,7 @@ class MonthlyPoolArrangementView(discord.ui.View):
     async def on_select(self, interaction: discord.Interaction):
         arrangement_type = self.select.values[0]
         if arrangement_type == "課程":
-            await interaction.response.edit_message(
+            await interaction.response.send_message(
                 content="請選擇具體課程類型：",
                 view=CourseTypeView(
                     self.month,
@@ -543,7 +543,7 @@ class MonthlyPoolArrangementView(discord.ui.View):
         else:
             names = "、".join(a.name for a in self.chosen_artists)
             candidates = "\n".join(timeparse.format_candidate(s, e) for s, e in self.windows)
-            await interaction.response.edit_message(
+            await interaction.response.send_message(
                 content=(
                     f"✅ 已保留 **{arrangement_type}** 的候選時段，未建立 Notion Task／Project，也未發布通告。\n\n"
                     f"參與藝人：{names}\n候選時段：\n{candidates}\n\n"
