@@ -826,6 +826,34 @@ async def update_task_status(page_id: str, status: str) -> None:
     await notion_api.update_page(page_id, {"任務狀態": _select(status)})
 
 
+async def create_formal_arrangement_task(
+    name: str,
+    task_type: str,
+    artist_page_ids: list[str],
+    description: str,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> TaskItem:
+    """建立由時間池確認出的正式／待確認安排 Task。
+
+    task_type 使用 Tasks 既有 select 選項；安排顯示名稱與候選說明放在任務說明，
+    因此不需要為「通告／其他」改 Notion schema。
+    """
+    props = {
+        "任務名稱": _title(name),
+        "任務狀態": _select("尚未開始"),
+        "任務類型": _select(task_type),
+        "關聯藝人": _relation(artist_page_ids),
+        "任務說明": _rich_text(description),
+        "是否開放提交": _checkbox(False),
+        "Discord 顯示": _checkbox(True),
+    }
+    if start:
+        props["開始日"] = _date(start, end)
+    page = await notion_api.create_page(config.DS_TASKS, props)
+    return _to_task(page)
+
+
 # ---------- P0-3 作業提交（Submissions & File Index） ----------
 
 # Submissions.檔案類型 的 select 選項對應任務類型；對不上的一律「其他」

@@ -10,7 +10,7 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, ui_text
 from cogs.scheduling_artist import make_announcement_view, make_pool_availability_view
-from services import audit, overlap, repositories, scheduling_flow, teacher_confirm, time_collection, timeparse
+from services import arrangement, audit, overlap, repositories, scheduling_flow, teacher_confirm, time_collection, timeparse
 from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
@@ -355,8 +355,6 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
         month: str,
         duration_minutes: int,
         operator: discord.abc.User,
-        course_type: str | None = None,
-        teacher: str = "",
     ):
         super().__init__(timeout=600)
         self.artists = {artist.page_id: artist for artist in artists}
@@ -364,8 +362,6 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
         self.duration_minutes = duration_minutes
         self.operator = operator
         self.operator_id = operator.id
-        self.course_type = course_type
-        self.teacher = teacher
         options = [
             discord.SelectOption(
                 label=artist.name[:100],
@@ -425,11 +421,10 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
         result_text = _monthly_pool_result_text(self.month, self.duration_minutes, chosen, result)
         if result.windows:
             await interaction.followup.send(
-                result_text + "\n\n⬇️ 勾選候選時段即可產生老師確認連結（自動建確認單）：",
-                view=MonthlyPoolTeacherConfirmView(
+                result_text + "\n\n⬇️ 先勾選要安排的候選時段，再選擇安排類型：",
+                view=MonthlyPoolCandidateSelectView(
                     self.month, self.duration_minutes, chosen,
                     result.windows[:25], self.operator,
-                    course_type=self.course_type, teacher=self.teacher,
                 ),
                 ephemeral=True,
             )
@@ -438,11 +433,8 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
         self.stop()
 
 
-class MonthlyPoolTeacherConfirmView(discord.ui.View):
-    """/時間池比對 找到共同空檔後：勾選候選 → 幕後自動建排課需求 → 產老師確認連結。
-
-    7/11 會議決議：取消手動「排課建立」，正確流程＝先收集比對時段，再建立課程。
-    """
+class MonthlyPoolCandidateSelectView(discord.ui.View):
+    """時間池比對結果：先勾選候選，再決定正式安排類型。"""
 
     def __init__(
         self,
@@ -451,8 +443,6 @@ class MonthlyPoolTeacherConfirmView(discord.ui.View):
         artists: list[repositories.Artist],
         windows: list[overlap.Interval],
         operator: discord.abc.User,
-        course_type: str | None = None,
-        teacher: str = "",
     ):
         super().__init__(timeout=600)
         self.month = month
@@ -460,8 +450,6 @@ class MonthlyPoolTeacherConfirmView(discord.ui.View):
         self.chosen_artists = artists
         self.windows = windows
         self.operator_id = operator.id
-        self.course_type = course_type
-        self.teacher = teacher
         options = [
             discord.SelectOption(
                 label=timeparse.humanize(s, e)[:100],
@@ -486,45 +474,311 @@ class MonthlyPoolTeacherConfirmView(discord.ui.View):
     async def on_select(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         chosen = [self.windows[int(v)] for v in sorted(self.select.values, key=int)]
+        lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in chosen)
+        await interaction.followup.send(
+            f"已選候選時段：\n{lines}\n\n⬇️ 請選擇這次要安排的類型：",
+            view=MonthlyPoolArrangementView(
+                self.month,
+                self.duration_minutes,
+                self.chosen_artists,
+                chosen,
+                interaction.user,
+                teacher="",
+            ),
+            ephemeral=True,
+        )
+        self.stop()
+
+
+class MonthlyPoolArrangementView(discord.ui.View):
+    """候選時段選定後的控方安排類型分流。"""
+
+    def __init__(
+        self,
+        month: str,
+        duration_minutes: int,
+        artists: list[repositories.Artist],
+        windows: list[overlap.Interval],
+        operator: discord.abc.User,
+        teacher: str = "",
+    ):
+        super().__init__(timeout=600)
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.chosen_artists = artists
+        self.windows = windows
+        self.operator_id = operator.id
+        self.teacher = teacher
+        self.select = discord.ui.Select(
+            placeholder="選擇安排類型…",
+            options=[
+                discord.SelectOption(label="課程", value="課程", description="建立確認單，請老師選時段"),
+                discord.SelectOption(label="錄音", value="錄音", description="控方定案後直接發布正式通告"),
+                discord.SelectOption(label="通告", value="通告", description="控方定案後直接發布正式通告"),
+                discord.SelectOption(label="其他", value="其他", description="先建立待確認 Task，不自動發布"),
+            ],
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個選單只能由原本執行比對的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction: discord.Interaction):
+        arrangement_type = self.select.values[0]
+        if arrangement_type == "課程":
+            await interaction.response.edit_message(
+                content="請選擇具體課程類型：",
+                view=CourseTypeView(
+                    self.month,
+                    self.duration_minutes,
+                    self.chosen_artists,
+                    self.windows,
+                    interaction.user,
+                ),
+            )
+        elif arrangement.publishes_immediately(arrangement_type):
+            await interaction.response.edit_message(
+                content="請選一個要定案的候選時段：",
+                view=DirectArrangementCandidateView(
+                    arrangement_type,
+                    self.month,
+                    self.duration_minutes,
+                    self.chosen_artists,
+                    self.windows,
+                    interaction.user,
+                ),
+            )
+        else:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            names = "、".join(a.name for a in self.chosen_artists)
+            candidates = "\n".join(timeparse.format_candidate(s, e) for s, e in self.windows)
+            task_name = f"{self.month}｜{names}｜其他安排"
+            try:
+                task = await repositories.create_formal_arrangement_task(
+                    name=task_name,
+                    task_type=arrangement.task_type_for_arrangement(arrangement_type) or "行政",
+                    artist_page_ids=[a.page_id for a in self.chosen_artists],
+                    description=(
+                        "安排類型：其他\n"
+                        "狀態：待控方確認，尚未發布正式通告。\n"
+                        f"時間池候選：\n{candidates}"
+                    ),
+                )
+                await audit.log_event(
+                    event_name=f"建立待確認安排｜{task_name}",
+                    action_type="建立", operator=str(interaction.user),
+                    discord_user_id=str(interaction.user.id), target_db="Tasks",
+                    target_url=task.url, after=f"其他｜{len(self.windows)} 個候選",
+                )
+            except Exception:
+                logger.exception("建立待確認安排 Task 失敗")
+                await interaction.followup.send("❌ 建立待確認 Task 失敗，請稍後再試。", ephemeral=True)
+                return
+            await interaction.followup.send(
+                f"✅ 已建立待確認 Task：**{task.name}**\n"
+                "尚未發布 Discord 正式通告，請控方到 Notion 補充／確認後再處理。",
+                ephemeral=True,
+            )
+        self.stop()
+
+
+class CourseTypeView(discord.ui.View):
+    """課程安排的第二層選擇，沿用租戶既有課程類型設定。"""
+
+    def __init__(self, month, duration_minutes, artists, windows, operator):
+        super().__init__(timeout=600)
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.artists = artists
+        self.windows = windows
+        self.operator_id = operator.id
+        course_types = config.get_tenant().course_types[:25]
+        self.select = discord.ui.Select(
+            placeholder="選擇課程類型…",
+            options=[discord.SelectOption(label=course_type, value=course_type) for course_type in course_types],
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個選單只能由原本執行比對的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction):
+        await interaction.response.send_modal(
+            CourseArrangementModal(
+                self.month,
+                self.duration_minutes,
+                self.artists,
+                self.windows,
+                self.select.values[0],
+            )
+        )
+        self.stop()
+
+
+class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
+    """課程分流：補老師資料後建立確認單與老師連結。"""
+
+    def __init__(self, month, duration_minutes, artists, windows, course_type):
+        super().__init__()
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.artists = artists
+        self.windows = windows
+        self.course_type = course_type
+        self.teacher_input = discord.ui.TextInput(label="老師／確認對象", max_length=100)
+        self.add_item(self.teacher_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         tenant = config.get_tenant()
-        course_type = self.course_type or tenant.course_types[0]
-        names = "、".join(a.name for a in self.chosen_artists)
+        names = "、".join(a.name for a in self.artists)
         request_name = (
             f"{self.month}｜{names}｜{repositories.format_duration_hours(self.duration_minutes)}"
         )[:80]
-        candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in chosen)
+        candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in self.windows)
         try:
-            # 幕後自動建排課需求（填寫截止設為現在＝時間已收集完成，不再催填）
             request = await repositories.create_schedule_request(
                 name=request_name,
-                course_type=course_type,
+                course_type=self.course_type,
                 duration_minutes=self.duration_minutes,
-                artist_page_ids=[a.page_id for a in self.chosen_artists],
+                artist_page_ids=[a.page_id for a in self.artists],
                 fill_deadline=datetime.now(tenant.tz),
-                teacher=self.teacher,
+                teacher=self.teacher_input.value,
                 month_week=self.month,
-                note="由 /時間池比對 自動建立（7/11 決議流程）",
+                note="由 /時間池比對 建立｜安排類型：課程",
             )
             await repositories.set_request_candidates(request.page_id, candidates_text)
         except Exception:
             logger.exception("時間池候選建立排課需求失敗")
-            await interaction.followup.send("❌ 建立確認單失敗，請稍後再試或查看 bot log。", ephemeral=True)
+            await interaction.followup.send("❌ 建立課程確認單失敗，請稍後再試或查看 bot log。", ephemeral=True)
             return
         await audit.log_event(
             event_name=f"時間池候選送老師確認｜{request_name}",
             action_type="建立", operator=str(interaction.user),
             discord_user_id=str(interaction.user.id),
             target_db="Schedule Requests", target_url=request.url,
-            after=f"{course_type}｜{len(chosen)} 個候選｜{names}",
+            after=f"課程｜{len(self.windows)} 個候選｜{names}",
         )
-        lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in chosen)
-        teacher_note = await _teacher_link_note(request, interaction, len(chosen))
+        lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in self.windows)
+        teacher_note = await _teacher_link_note(request, interaction, len(self.windows))
         await interaction.followup.send(
-            f"✅ 已建立確認單「**{request_name}**」（{course_type}），{len(chosen)} 個候選：\n"
+            f"✅ 已建立課程確認單「**{request_name}**」，{len(self.windows)} 個候選：\n"
             f"{lines}\n\n{teacher_note}",
             ephemeral=True,
         )
+
+
+class DirectArrangementCandidateView(discord.ui.View):
+    """錄音／通告分流：由控方選一個候選窗後輸入精確開始時間。"""
+
+    def __init__(self, arrangement_type, month, duration_minutes, artists, windows, operator):
+        super().__init__(timeout=600)
+        self.arrangement_type = arrangement_type
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.artists = artists
+        self.windows = windows
+        self.operator_id = operator.id
+        self.select = discord.ui.Select(
+            placeholder="選擇要定案的候選時段…",
+            options=[
+                discord.SelectOption(label=timeparse.humanize(s, e)[:100], value=str(i))
+                for i, (s, e) in enumerate(windows[:25])
+            ],
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個選單只能由原本執行比對的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction):
+        window = self.windows[int(self.select.values[0])]
+        await interaction.response.send_modal(
+            DirectArrangementModal(
+                self.arrangement_type,
+                self.month,
+                self.duration_minutes,
+                self.artists,
+                window,
+            )
+        )
         self.stop()
+
+
+class DirectArrangementModal(discord.ui.Modal, title="發布正式安排"):
+    def __init__(self, arrangement_type, month, duration_minutes, artists, window):
+        super().__init__()
+        self.arrangement_type = arrangement_type
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.artists = artists
+        self.window = window
+        self.start_input = discord.ui.TextInput(label="開始時間", default=window[0].strftime("%H:%M"), max_length=8)
+        self.location_input = discord.ui.TextInput(label="地點／連結（選填）", required=False, max_length=200)
+        self.add_item(self.start_input)
+        self.add_item(self.location_input)
+
+    async def on_submit(self, interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        win_start, win_end = self.window
+        try:
+            h, m = timeparse.parse_time(self.start_input.value)
+        except timeparse.ParseError as e:
+            await interaction.followup.send(f"❌ {e}", ephemeral=True)
+            return
+        start = win_start.replace(hour=h, minute=m)
+        if start < win_start:
+            start += timedelta(days=1)
+        end = start + timedelta(minutes=self.duration_minutes)
+        if not (win_start <= start and end <= win_end):
+            await interaction.followup.send(
+                f"❌ 此時間超出候選窗 {timeparse.humanize(win_start, win_end)}，請重新選候選。",
+                ephemeral=True,
+            )
+            return
+        names = "、".join(a.name for a in self.artists)
+        task_name = f"{self.month}｜{names}｜{self.arrangement_type}｜{start:%m/%d %H:%M}"
+        try:
+            task = await repositories.create_formal_arrangement_task(
+                name=task_name,
+                task_type=arrangement.task_type_for_arrangement(self.arrangement_type) or "行政",
+                artist_page_ids=[a.page_id for a in self.artists],
+                description=f"安排類型：{self.arrangement_type}\n由 /時間池比對確認並直接發布正式通告。",
+                start=start,
+                end=end,
+            )
+            result = await scheduling_flow.publish_direct_arrangement(
+                interaction.client,
+                arrangement_type=self.arrangement_type,
+                task=task,
+                artists=self.artists,
+                start=start,
+                end=end,
+                location=self.location_input.value or "",
+                operator=str(interaction.user),
+                discord_user_id=str(interaction.user.id),
+            )
+        except Exception:
+            logger.exception("直接發布正式安排失敗")
+            await interaction.followup.send("❌ 正式安排建立或通告發布失敗，請查看 bot log。", ephemeral=True)
+            return
+        await interaction.followup.send(
+            f"✅ {self.arrangement_type} 已建立正式 Task 並發布通告！\n"
+            f"**{result.task_name}**\n{result.time_text}\n{result.notify_summary}",
+            ephemeral=True,
+        )
 
 
 class CandidateSelectView(discord.ui.View):
@@ -807,15 +1061,11 @@ class SchedulingAdminCog(commands.Cog):
         時長分鐘="需要連續可安排的時長，例：60、90、240",
     )
     @is_admin()
-    @app_commands.choices(課程類型=COURSE_TYPE_CHOICES)
-    @app_commands.describe(課程類型="確認單的課程類型（選填，預設第一種；Notion 可再改）", 老師="老師／確認對象名稱（選填）")
     async def match_availability_pool(
         self,
         interaction: discord.Interaction,
         月份: str,
         時長分鐘: app_commands.Range[int, 15, 600],
-        課程類型: app_commands.Choice[str] | None = None,
-        老師: str = "",
     ):
         if not await channel_guard.ensure_schedule_channel(interaction):
             return
@@ -850,8 +1100,6 @@ class SchedulingAdminCog(commands.Cog):
             ),
             view=MonthlyPoolArtistSelectView(
                 artists[:25], month, 時長分鐘, interaction.user,
-                course_type=課程類型.value if 課程類型 else None,
-                teacher=老師,
             ),
             ephemeral=True,
         )
