@@ -12,6 +12,7 @@ button.slot{display:block;width:100%;padding:16px;margin:10px 0;font-size:1.05re
       border:2px solid #4f46e5;border-radius:12px;background:#fff;color:#4f46e5;
       cursor:pointer;text-align:center}
 button.slot:active{background:#eef2ff}
+button.slot input{margin-right:8px;transform:scale(1.25)}
 button.none{display:block;width:100%;padding:14px;margin-top:22px;font-size:.95rem;
       border:1px solid #d1d5db;border-radius:12px;background:#fff;color:#6b7280;cursor:pointer}
 .big{font-size:2.2rem;text-align:center;margin:8px 0 16px}
@@ -37,17 +38,17 @@ def confirm_page_html(
     windows: list[tuple[int, str]],
     action_url: str,
 ) -> str:
-    """候選時段選擇頁：每個時段一顆大按鈕＋「時段都不行」。"""
+    """候選時段複選頁：老師先勾可行時段，再交由控方最後定案。"""
     buttons = "".join(
-        f"<button class='slot' type='submit' name='choice' value='{index}'>"
-        f"{_html.escape(label)}</button>"
+        f"<label class='slot'><input type='checkbox' name='choice' value='{index}'>"
+        f"{_html.escape(label)}</label>"
         for index, label in windows
     )
     body = (
         f"<h1>{_html.escape(request_name)}</h1>"
         f"<div class='meta'>課程類型：{_html.escape(course_type)}｜需要 {_html.escape(duration_text)}<br>"
         f"確認對象：{_html.escape(teacher or '老師')}</div>"
-        "<div class='meta'>請點選一個您方便的時段（點選後立即生效並發布通告）：</div>"
+        "<div class='meta'>請勾選一個或多個您可以配合的時段。最後由營運決定正式時間，老師回覆不會立即發布通告：</div>"
         f"<form method='post' action='{_html.escape(action_url)}'>{buttons}"
         "<button class='none' type='submit' name='choice' value='none'>"
         "以下時段我都無法配合</button></form>"
@@ -56,7 +57,8 @@ def confirm_page_html(
 
 
 RESULT_PAGES = {
-    "confirmed": ("✅", "已確認！", "通告已自動發布給所有參與者。<br>感謝您的協助，此連結已失效。"),
+    "confirmed": ("✅", "已確認！", "正式課程已建立並發布通告。<br>感謝您的協助，此連結已失效。"),
+    "teacher_selected": ("📩", "已收到您的時段！", "營運已收到您勾選的時段，會由營運最後確認正式時間。<br>感謝您的協助，此連結已失效。"),
     "none_ok": ("📮", "已收到回覆", "我們已通知營運重新安排時段，會再與您聯繫。"),
     "expired": ("⌛", "連結已過期", "此確認連結已超過有效時間，請聯絡營運重新取得。"),
     "used": ("🔒", "連結已使用過", "這個確認先前已完成；如需變更請直接聯絡營運。"),

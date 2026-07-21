@@ -342,7 +342,7 @@ async def _teacher_link_note(
     )
     return (
         f"🔗 **老師確認連結**（{teacher_confirm.TOKEN_TTL_HOURS} 小時有效、確認一次即失效）：\n{link}\n"
-        f"直接複製傳給老師（LINE 等）；老師點選時段後會**自動發布正式通告**。"
+        f"直接複製傳給老師（LINE 等）；老師可複選時段，回覆後由控方執行 `/排課確認` 最後定案。"
     )
 
 
@@ -459,7 +459,7 @@ class MonthlyPoolCandidateSelectView(discord.ui.View):
             for i, (s, e) in enumerate(windows[:25])
         ]
         self.select = discord.ui.Select(
-            placeholder="勾選要給老師確認的候選時段（最多 5 個）…",
+            placeholder="勾選要送老師參考的候選時段（最多 5 個）…",
             options=options, min_values=1, max_values=min(5, len(options)),
         )
         self.select.callback = self.on_select
@@ -540,48 +540,16 @@ class MonthlyPoolArrangementView(discord.ui.View):
                     interaction.user,
                 ),
             )
-        elif arrangement.publishes_immediately(arrangement_type):
-            await interaction.response.edit_message(
-                content="請選一個要定案的候選時段：",
-                view=DirectArrangementCandidateView(
-                    arrangement_type,
-                    self.month,
-                    self.duration_minutes,
-                    self.chosen_artists,
-                    self.windows,
-                    interaction.user,
-                ),
-            )
         else:
-            await interaction.response.defer(ephemeral=True, thinking=True)
             names = "、".join(a.name for a in self.chosen_artists)
             candidates = "\n".join(timeparse.format_candidate(s, e) for s, e in self.windows)
-            task_name = f"{self.month}｜{names}｜其他安排"
-            try:
-                task = await repositories.create_formal_arrangement_task(
-                    name=task_name,
-                    task_type=arrangement.task_type_for_arrangement(arrangement_type) or "行政",
-                    artist_page_ids=[a.page_id for a in self.chosen_artists],
-                    description=(
-                        "安排類型：其他\n"
-                        "狀態：待控方確認，尚未發布正式通告。\n"
-                        f"時間池候選：\n{candidates}"
-                    ),
-                )
-                await audit.log_event(
-                    event_name=f"建立待確認安排｜{task_name}",
-                    action_type="建立", operator=str(interaction.user),
-                    discord_user_id=str(interaction.user.id), target_db="Tasks",
-                    target_url=task.url, after=f"其他｜{len(self.windows)} 個候選",
-                )
-            except Exception:
-                logger.exception("建立待確認安排 Task 失敗")
-                await interaction.followup.send("❌ 建立待確認 Task 失敗，請稍後再試。", ephemeral=True)
-                return
-            await interaction.followup.send(
-                f"✅ 已建立待確認 Task：**{task.name}**\n"
-                "尚未發布 Discord 正式通告，請控方到 Notion 補充／確認後再處理。",
-                ephemeral=True,
+            await interaction.response.edit_message(
+                content=(
+                    f"✅ 已保留 **{arrangement_type}** 的候選時段，未建立 Notion Task／Project，也未發布通告。\n\n"
+                    f"參與藝人：{names}\n候選時段：\n{candidates}\n\n"
+                    "請控方自行到 Notion 建立正式 Project／Task。"
+                ),
+                view=None,
             )
         self.stop()
 
@@ -633,16 +601,19 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
         self.artists = artists
         self.windows = windows
         self.course_type = course_type
+        self.name_input = discord.ui.TextInput(label="課程名稱", placeholder="例：八月歌唱課｜Johnny Chenhua", max_length=80)
         self.teacher_input = discord.ui.TextInput(label="老師／確認對象", max_length=100)
+        self.add_item(self.name_input)
         self.add_item(self.teacher_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         tenant = config.get_tenant()
+        request_name = self.name_input.value.strip()
+        if not request_name:
+            await interaction.followup.send("❌ 請填寫課程名稱。", ephemeral=True)
+            return
         names = "、".join(a.name for a in self.artists)
-        request_name = (
-            f"{self.month}｜{names}｜{repositories.format_duration_hours(self.duration_minutes)}"
-        )[:80]
         candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in self.windows)
         try:
             request = await repositories.create_schedule_request(

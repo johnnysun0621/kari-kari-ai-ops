@@ -1,17 +1,16 @@
 """老師確認 web 服務（aiohttp，與 bot 同 process 同 event loop）。
 
 只暴露 /confirm/{token} 兩個路由；token 由 services/teacher_confirm 簽名驗證，
-確認動作經 services/scheduling_flow 落地。TenantConfig.teacher_link_secret
+確認動作先回寫老師可行時段；最後由控方經 services/scheduling_flow 落地。TenantConfig.teacher_link_secret
 未設定時整個服務不啟動（優雅停用）。
 """
 import logging
 import time
-from datetime import timedelta
 
 from aiohttp import web as aioweb
 
 import config
-from services import repositories, scheduling_flow, teacher_confirm, timeparse
+from services import repositories, teacher_confirm, timeparse
 
 from web import pages
 
@@ -66,12 +65,14 @@ async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
     client = request.app["client"]
     tenant = config.get_tenant()
     form = await request.post()
-    choice = str(form.get("choice", ""))
+    choices = list(dict.fromkeys(str(value) for value in form.getall("choice")))
+    if not choices or ("none" in choices and len(choices) > 1):
+        return _html_response(pages.result_html("invalid"), status=400)
 
     # 先燒掉 token（防連點/重送）；流程失敗再還原讓老師重試
     teacher_confirm.mark_token_used(token, check.expires_at_ts)
 
-    if choice == "none":
+    if "none" in choices:
         internal = client.get_channel(tenant.admin_notify_channel_id) if client else None
         if internal is not None:
             try:
@@ -85,20 +86,21 @@ async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
         return _html_response(pages.result_html("none_ok"))
 
     candidates = timeparse.parse_candidates_text(sched_request.candidates_text)
+    selected_candidates = []
     try:
-        start, _win_end = candidates[int(choice)]
+        selected_candidates = [candidates[int(choice)] for choice in choices]
     except (ValueError, IndexError):
         teacher_confirm.unmark_token(token)
         return _html_response(pages.result_html("invalid"), status=400)
-
-    end = start + timedelta(minutes=sched_request.duration_minutes)
     try:
-        result = await scheduling_flow.publish_confirmed_schedule(
-            client, sched_request, start, end,
-            operator=f"老師確認連結（{sched_request.teacher or '外部'}）",
+        selected_text = "\n".join(
+            timeparse.format_candidate(start, end) for start, end in selected_candidates
+        )
+        await repositories.set_request_candidates(
+            sched_request.page_id, selected_text, status="已確認"
         )
     except Exception:
-        logger.exception("老師確認後發布通告失敗")
+        logger.exception("老師複選時段寫入失敗")
         teacher_confirm.unmark_token(token)  # 還原，讓老師稍後重試
         return _html_response(pages.result_html("error"), status=500)
 
@@ -106,12 +108,14 @@ async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
     if internal is not None:
         try:
             await internal.send(
-                f"✅ **老師已確認時段，通告已自動發布**\n"
-                f"{result.session_name}｜{result.time_text}\n{result.session_url}"
+                f"📩 **老師已回覆可行時段，請控方最後定案**\n"
+                f"排課：{sched_request.name}\n"
+                f"老師可行：{'、'.join(timeparse.humanize(start, end) for start, end in selected_candidates)}\n"
+                f"請執行 `/排課確認` 選定正式時間。"
             )
         except Exception:
             logger.exception("老師確認通知發送失敗")
-    return _html_response(pages.result_html("confirmed", detail=result.time_text))
+    return _html_response(pages.result_html("teacher_selected"))
 
 
 def build_app(client) -> aioweb.Application:

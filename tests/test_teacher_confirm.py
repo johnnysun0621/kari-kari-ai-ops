@@ -62,3 +62,4 @@ def test_confirm_page_escapes_user_controlled_text():
     assert "<script>" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert "&lt;b&gt;老師&lt;/b&gt;" in html
+    assert 'type=\'checkbox\'' in html
