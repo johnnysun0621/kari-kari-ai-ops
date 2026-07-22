@@ -206,13 +206,36 @@ def _block_plain_text(block: dict) -> str:
     return "".join(item.get("plain_text", "") for item in rich_text).strip()
 
 
-async def _page_content(page_id: str) -> str:
-    blocks = await notion_api.retrieve_block_children(page_id)
+async def _page_content(page_id: str, *, _visited: set[str] | None = None) -> str:
+    """讀取頁面正文，包含巢狀區塊與 Synced Block 來源。"""
+    visited = _visited or set()
+    if page_id in visited:
+        return ""
+    visited.add(page_id)
+    try:
+        blocks = await notion_api.retrieve_block_children(page_id)
+    except notion_api.NotionAPIError as exc:
+        # 同步來源頁未 share 給 integration 時，主紀錄仍可用摘要回答。
+        logger.warning("無法讀取課程正文（page=%s, status=%s）", page_id, exc.status_code)
+        return ""
     lines: list[str] = []
     for block in blocks:
         text = _block_plain_text(block)
         if text:
             lines.append(text)
+        block_type = block.get("type")
+        data = block.get(block_type, {}) if block_type else {}
+        if block_type == "synced_block":
+            source = data.get("synced_from") if isinstance(data, dict) else None
+            child_id = source.get("block_id") if isinstance(source, dict) else None
+            if child_id:
+                nested = await _page_content(child_id, _visited=visited)
+                if nested:
+                    lines.append(nested)
+        elif block.get("has_children"):
+            nested = await _page_content(block["id"], _visited=visited)
+            if nested:
+                lines.append(nested)
     return "\n".join(lines)
 
 
