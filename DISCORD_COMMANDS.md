@@ -287,6 +287,8 @@ Notion 互動：
 
 在 `AI_CHANNEL_ID` 指定的課程助教頻道查詢自己的課程紀錄。
 
+日常不需要使用此指令。直接在 `課程助教` 頻道輸入問題即可；Bot 會自動建立本人專用的私人 Thread，後續在 Thread 內持續回答。
+
 - 回覆使用 ephemeral，只有提問的藝人看得到。
 - Bot 用 Discord User ID 對應 Notion Artists。
 - 只讀取 `課程`／`課程會議` 且 `藝人可見` 已勾選的紀錄。

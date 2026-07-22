@@ -69,7 +69,9 @@ KariKari 是第一個測試站；未來平轉到其他公司時，頻道用途�
 
 ### `課程助教`
 
-預計使用 `/課程問答`。回覆會使用 ephemeral，只有提問的藝人看得到；Bot 會用 Discord User ID 對應 Notion Artists，再限制到該藝人的課程紀錄。
+進入頻道後直接輸入問題即可，不需要 `/` 指令，也不需要 `@Bot`。Bot 會把第一句問題移到只對該藝人開放的私人 Thread，後續在同一個 Thread 直接對話。
+
+`/課程問答` 仍保留作為備援入口。Bot 會用 Discord User ID 對應 Notion Artists；只有 Notion 勾選「藝人可見」的課程紀錄會被拿來回答。
 
 ## 頻道限制規則
 
@@ -77,7 +79,7 @@ KariKari 是第一個測試站；未來平轉到其他公司時，頻道用途�
 |---|---|
 | `SCHEDULE_CHANNEL_ID` 有值 | 時間池 / 排課指令只能在 `時間資訊彙整` 使用 |
 | `TASK_CHANNEL_ID` 有值 | 任務指令只能在 `任務查詢入口` 使用 |
-| `AI_CHANNEL_ID` 有值 | 課程問答只能在 `課程助教` 使用 |
+| `AI_CHANNEL_ID` 有值 | 課程助教自然對話與 `/課程問答` 只能在 `課程助教` 使用；私人 Thread 會繼承這個頻道 |
 | `ANNOUNCE_CHANNEL_ID` 有值 | 三種公告（正式通告／收集公告／排課公告）發到 `公告區` |
 | 對應 ID 留空 | 指令不限制頻道；公告 fallback 發到 `時間資訊彙整` ——方便新租戶初期測試 |
 
@@ -92,6 +94,8 @@ KariKari 是第一個測試站；未來平轉到其他公司時，頻道用途�
 3. 複製新頻道 ID，填入 `.env` 的 `ANNOUNCE_CHANNEL_ID` / `SCHEDULE_CHANNEL_ID` / `TASK_CHANNEL_ID` / `ADMIN_NOTIFY_CHANNEL_ID`。
 4. 複製新控方 role ID，填入 `.env` 的 `ADMIN_ROLE_ID`。
 5. 重啟 bot，讓新設定生效。
+
+課程助教頻道另需給 Bot：檢視頻道、讀取歷史訊息、發送訊息、建立私人 Thread、管理訊息、在 Thread 中發言。沒有「管理訊息」時，Bot 仍可能建立私人 Thread，但無法刪除公開頻道中的原始問題。
 
 ## Discord 端隱藏指令
 
