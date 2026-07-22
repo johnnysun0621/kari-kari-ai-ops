@@ -100,6 +100,7 @@ class TestLinkValidation:
 
 class TestSubmissionFileType:
     def test_maps_known_task_types(self):
+        assert repositories.submission_file_type_for_task("課程與作業") == "課程作業"
         assert repositories.submission_file_type_for_task("課程作業") == "課程作業"
         assert repositories.submission_file_type_for_task("創作交付") == "Demo"
         assert repositories.submission_file_type_for_task("企劃提案") == "企劃書"

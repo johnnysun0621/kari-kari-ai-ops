@@ -129,6 +129,7 @@ def task(
     *,
     page_id: str = "task-1",
     task_type: str | None = "錄音",
+    course_item_nature: str | None = None,
     status: str | None = "進行中",
     artist_page_ids: list[str] | None = None,
     project_page_ids: list[str] | None = None,
@@ -142,6 +143,7 @@ def task(
         name="辰葳錄音",
         status=status,
         task_type=task_type,
+        course_item_nature=course_item_nature,
         artist_page_ids=artist_page_ids if artist_page_ids is not None else ["artist-1"],
         project_page_ids=project_page_ids if project_page_ids is not None else [],
         start=start,
@@ -189,9 +191,22 @@ class TestTaskScheduleImpact:
 
         assert repositories.classify_task_time_impact(item) == "busy"
 
+    def test_course_and_homework_session_with_explicit_time_is_busy(self):
+        item = task(
+            task_type="課程與作業",
+            course_item_nature="課程場次",
+            start=datetime(2026, 8, 1, 14, 0, tzinfo=config.TZ),
+            end=datetime(2026, 8, 1, 17, 0, tzinfo=config.TZ),
+            start_has_time=True,
+            end_has_time=True,
+        )
+
+        assert repositories.classify_task_time_impact(item) == "busy"
+
     def test_homework_date_range_is_warning_only(self):
         item = task(
-            task_type="課程作業",
+            task_type="課程與作業",
+            course_item_nature="課程作業",
             start=datetime(2026, 8, 1, 0, 0, tzinfo=config.TZ),
             end=datetime(2026, 8, 3, 0, 0, tzinfo=config.TZ),
             start_has_time=False,

@@ -352,6 +352,9 @@ class TaskItem:
     name: str
     status: str | None
     task_type: str | None
+    course_category: str | None = None
+    course_item_nature: str | None = None
+    teacher_page_ids: list[str] = field(default_factory=list)
     artist_page_ids: list[str] = field(default_factory=list)
     project_page_ids: list[str] = field(default_factory=list)
     start: datetime | None = None
@@ -455,6 +458,9 @@ def _to_task(page: dict) -> TaskItem:
         name=_read_title(page, "任務名稱"),
         status=_read_select(page, "任務狀態"),
         task_type=_read_select(page, "任務類型"),
+        course_category=_read_select(page, "課程類別"),
+        course_item_nature=_read_select(page, "課程項目性質"),
+        teacher_page_ids=_read_relation_ids(page, "負責老師"),
         artist_page_ids=_read_relation_ids(page, "關聯藝人"),
         project_page_ids=_read_relation_ids(page, "關聯專案"),
         start=start.value,
@@ -532,7 +538,13 @@ def classify_task_time_impact(task: TaskItem) -> str | None:
         return None
     has_any_date = bool(task.start or task.end)
     if (
-        task.task_type in HARD_BLOCK_TASK_TYPES
+        (
+            task.task_type in HARD_BLOCK_TASK_TYPES
+            or (
+                task.task_type == "課程與作業"
+                and task.course_item_nature == "課程場次"
+            )
+        )
         and task.start
         and task.end
         and task.start_has_time
@@ -843,6 +855,9 @@ async def create_formal_arrangement_task(
     description: str,
     start: datetime | None = None,
     end: datetime | None = None,
+    course_category: str | None = None,
+    course_item_nature: str | None = None,
+    teacher_page_ids: list[str] | None = None,
 ) -> TaskItem:
     """建立由時間池確認出的正式／待確認安排 Task。
 
@@ -858,6 +873,12 @@ async def create_formal_arrangement_task(
         "是否開放提交": _checkbox(False),
         "Discord 顯示": _checkbox(True),
     }
+    if course_category:
+        props["課程類別"] = _select(course_category)
+    if course_item_nature:
+        props["課程項目性質"] = _select(course_item_nature)
+    if teacher_page_ids:
+        props["負責老師"] = _relation(teacher_page_ids)
     if start:
         props["開始日"] = _date(start, end)
     page = await notion_api.create_page(config.DS_TASKS, props)
@@ -868,6 +889,9 @@ async def create_formal_arrangement_task(
 
 # Submissions.檔案類型 的 select 選項對應任務類型；對不上的一律「其他」
 SUBMISSION_FILE_TYPE_BY_TASK_TYPE = {
+    # Tasks 已統一為「課程與作業」；Submissions 的檔案類型先維持舊選項，
+    # 避免為了改名而批次改動歷史提交紀錄。
+    "課程與作業": "課程作業",
     "課程作業": "課程作業",
     "創作交付": "Demo",
     "企劃提案": "企劃書",

@@ -39,6 +39,7 @@ class TestExtractDriveFolderId:
 
 class TestTypeFolderMapping:
     def test_each_type_gets_own_folder(self):
+        assert drive_archive.type_folder_for_task("課程與作業") == "課程與作業"
         assert drive_archive.type_folder_for_task("課程作業") == "課程作業"
         assert drive_archive.type_folder_for_task("創作交付") == "創作交付"
         assert drive_archive.type_folder_for_task("業配內容") == "業配內容"
