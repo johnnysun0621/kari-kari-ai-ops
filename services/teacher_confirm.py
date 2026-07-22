@@ -70,6 +70,7 @@ class TokenCheck:
     request_page_id: str = ""
     expires_at_ts: int = 0
     error: str = ""  # "invalid" | "expired" | "used"
+    payload: dict = None
 
 
 def verify_token(token: str, now_ts: int) -> TokenCheck:
@@ -89,7 +90,39 @@ def verify_token(token: str, now_ts: int) -> TokenCheck:
     _load_state()
     if _fingerprint(token) in _used_tokens:
         return TokenCheck(ok=False, error="used")
-    return TokenCheck(ok=True, request_page_id=rid, expires_at_ts=exp)
+    return TokenCheck(ok=True, request_page_id=rid, expires_at_ts=exp, payload=data)
+
+
+def sign_task_token(
+    task_page_id: str,
+    expires_at_ts: int,
+    *,
+    task_name: str,
+    course_type: str,
+    duration_text: str,
+    teacher: str,
+    windows: list[str],
+) -> str:
+    """簽發只供老師回填候選的 Task 表單 token。
+
+    候選時段放在簽名 payload 中，表單不需要讀取已刪除的舊排課資料庫。
+    """
+    payload = json.dumps(
+        {
+            "rid": task_page_id,
+            "kind": "task",
+            "exp": int(expires_at_ts),
+            "task_name": task_name,
+            "course_type": course_type,
+            "duration_text": duration_text,
+            "teacher": teacher,
+            "windows": windows,
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    sig = hmac.new(_secret_bytes(), payload, hashlib.sha256).digest()
+    return f"{_b64e(payload)}.{_b64e(sig)}"
 
 
 def mark_token_used(token: str, expires_at_ts: int) -> None:

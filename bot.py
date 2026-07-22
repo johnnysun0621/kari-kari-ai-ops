@@ -7,6 +7,7 @@ from discord.ext import commands
 import config
 from cogs.scheduling_artist import FillAvailabilityButton, PoolAvailabilityButton
 from services import audit, notion_api, repositories
+from web import server as teacher_web
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,10 +33,12 @@ class KariKariBot(commands.Bot):
         # Discord strips guild message attachments without Message Content Intent.
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
+        self.teacher_web_runner = None
 
     async def setup_hook(self):
         for ext in EXTENSIONS:
             await self.load_extension(ext)
+        self.teacher_web_runner = await teacher_web.start(self)
         # persistent 按鈕：bot 重啟後公告上的「填寫可用時間」仍可用
         self.add_dynamic_items(FillAvailabilityButton)
         self.add_dynamic_items(PoolAvailabilityButton)
@@ -66,6 +69,8 @@ class KariKariBot(commands.Bot):
             )
 
     async def close(self):
+        if self.teacher_web_runner is not None:
+            await self.teacher_web_runner.cleanup()
         await notion_api.close_client()
         await super().close()
 

@@ -24,10 +24,12 @@ def _html_response(body: str, status: int = 200) -> aioweb.Response:
 
 
 async def _load_confirmable_request(token: str):
-    """共用前置：驗 token → 讀排課需求 → 狀態防護。回傳 (check, request, error_page)。"""
+    """共用前置：驗 token；Task 表單不再讀已刪除的舊排課資料庫。"""
     check = teacher_confirm.verify_token(token, int(time.time()))
     if not check.ok:
         return check, None, pages.result_html(check.error)
+    if check.payload and check.payload.get("kind") == "task":
+        return check, None, None
     request = await repositories.get_request(check.request_page_id)
     if request is None:
         return check, None, pages.result_html("invalid")
@@ -41,6 +43,22 @@ async def _load_confirmable_request(token: str):
 async def handle_confirm_get(request: aioweb.Request) -> aioweb.Response:
     token = request.match_info["token"]
     check, sched_request, error_page = await _load_confirmable_request(token)
+    if check.ok and check.payload and check.payload.get("kind") == "task":
+        payload = check.payload
+        windows = [
+            (index, str(label))
+            for index, label in enumerate(payload.get("windows", []))
+        ]
+        if not windows:
+            return _html_response(pages.result_html("no_candidates"))
+        return _html_response(pages.confirm_page_html(
+            request_name=str(payload.get("task_name", "課程安排")),
+            course_type=str(payload.get("course_type", "課程")),
+            duration_text=str(payload.get("duration_text", "")),
+            teacher=str(payload.get("teacher", "老師")),
+            windows=windows,
+            action_url=f"/confirm/{token}",
+        ))
     if error_page:
         return _html_response(error_page)
     candidates = timeparse.parse_candidates_text(sched_request.candidates_text)
@@ -60,6 +78,43 @@ async def handle_confirm_get(request: aioweb.Request) -> aioweb.Response:
 async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
     token = request.match_info["token"]
     check, sched_request, error_page = await _load_confirmable_request(token)
+    if check.ok and check.payload and check.payload.get("kind") == "task":
+        payload = check.payload
+        form = await request.post()
+        action = str(form.get("action", ""))
+        choices = list(dict.fromkeys(str(value) for value in form.getall("choice")))
+        windows = [str(label) for label in payload.get("windows", [])]
+        if action not in {"confirm", "none"} or (action == "confirm" and not choices):
+            return _html_response(pages.result_html("invalid"), status=400)
+        teacher_confirm.mark_token_used(token, check.expires_at_ts)
+        client = request.app["client"]
+        tenant = config.get_tenant()
+        internal = client.get_channel(tenant.admin_notify_channel_id) if client else None
+        if internal is not None:
+            if action == "none":
+                message = (
+                    f"🔴 **老師回覆：候選時段都無法配合**\n"
+                    f"課程 Task：{payload.get('task_name', '未命名')}\n"
+                    "請重新比對或重新蒐集時段。"
+                )
+            else:
+                try:
+                    selected = [windows[int(choice)] for choice in choices]
+                except (ValueError, IndexError):
+                    teacher_confirm.unmark_token(token)
+                    return _html_response(pages.result_html("invalid"), status=400)
+                message = (
+                    f"📩 **老師已回覆可行時段，請控方最後定案**\n"
+                    f"課程 Task：{payload.get('task_name', '未命名')}\n"
+                    f"老師：{payload.get('teacher', '老師')}\n"
+                    f"老師可行：{'、'.join(selected)}\n"
+                    f"Task：https://www.notion.so/{str(check.request_page_id).replace('-', '')}"
+                )
+            try:
+                await internal.send(message)
+            except Exception:
+                logger.exception("老師 Task 表單通知發送失敗")
+        return _html_response(pages.result_html("none_ok" if action == "none" else "teacher_selected"))
     if error_page:
         return _html_response(error_page)
     client = request.app["client"]

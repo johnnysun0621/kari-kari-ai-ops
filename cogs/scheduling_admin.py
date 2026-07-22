@@ -746,11 +746,29 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
             after=f"課程與作業｜{self.course_type}｜老師 {self.teacher_name}｜{len(self.windows)} 個候選｜{names}",
         )
         lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in self.windows)
+        teacher_link = ""
+        if teacher_confirm.can_generate_links():
+            expires_at = int(time.time()) + teacher_confirm.TOKEN_TTL_HOURS * 3600
+            token = teacher_confirm.sign_task_token(
+                task.page_id,
+                expires_at,
+                task_name=request_name,
+                course_type=self.course_type,
+                duration_text=repositories.format_duration_hours(self.duration_minutes),
+                teacher=self.teacher_name,
+                windows=[timeparse.humanize(start, end) for start, end in self.windows],
+            )
+            teacher_link = (
+                f"\n\n🔗 老師填寫表單（{teacher_confirm.TOKEN_TTL_HOURS} 小時有效）：\n"
+                f"{teacher_confirm.confirm_url(token)}\n"
+                "請把這個連結傳給老師；老師可多選，最後由控方在 Task 決定正式時間。"
+            )
         await interaction.followup.send(
             f"✅ 已建立課程 Task「**{request_name}**」。\n"
             f"課程類別：{self.course_type}｜老師：{self.teacher_name}\n"
             f"候選時段：\n{lines}\n\n"
-            "請到 Notion 的 Task 頁面最後確認正式開始／結束時間；課程作業也在同一筆 Task 管理。",
+            "請到 Notion 的 Task 頁面最後確認正式開始／結束時間；課程作業也在同一筆 Task 管理。"
+            f"{teacher_link}",
             ephemeral=True,
         )
 

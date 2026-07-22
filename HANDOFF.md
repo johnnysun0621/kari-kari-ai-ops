@@ -176,7 +176,7 @@ pgrep -fl "python.*bot.py"
 - 尚未完整多租戶；目前一次跑一個 `TenantConfig`。
 - Notion property names 仍偏 KariKari schema，未抽成 mapping。
 - Discord command 在錯頻道「不出現」需要 Discord App / Integration 權限設定，不是程式可完全控制。
-- 老師外部確認連結已有開發版；仍需 Cloudflare Tunnel 真機驗收與固定網域決策。
+- 課程老師確認表單已接回 Task 流程；老師可多選候選時段，表單只通知控方，正式時間由控方填回 Tasks。
 
 ## 接手時的安全提醒
 
