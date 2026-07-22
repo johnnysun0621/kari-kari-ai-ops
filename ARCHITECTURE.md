@@ -13,11 +13,11 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 舊 MVP 流程仍保留：
 
-`/排課建立` → `/排課比對` → `/排課確認` → `/排課狀態`
+`/時間收集建立` → `/時間池比對` → `Tasks`
 
 老師外部確認連結是舊 MVP 流程的加速器：
 
-`/排課比對` 選候選 → 產生外部連結 → 老師免 Discord 確認 → 共用正式發布流程
+`/時間池比對` 選候選 → 課程直接建立 `Tasks`，其他安排由控方手動建立 `Tasks`
 
 ## 核心資料邊界
 
@@ -26,8 +26,6 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 | `Availability Slots` | 藝人回填的可配合時間；不是正式行程 |
 | `Tasks` | 正式任務與正式安排的主要來源 |
 | `Projects` | 上層歸屬與提醒來源 |
-| `Course Sessions` | 課程場次細節與舊排課流程相容 |
-| `Schedule Requests` | 舊 MVP 指定需求流程 |
 | `Audit Log` | 操作紀錄與排查線索 |
 
 ## 入口檔
@@ -38,7 +36,6 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 - 建立 `discord.py` bot。
 - 載入 cogs。
-- 啟動老師確認 web 服務（`TEACHER_LINK_SECRET` 未設定時不啟動）。
 - 註冊 persistent buttons。
 - 同步 slash commands。
 - 啟動時做 Notion smoke test：讀 `Artists`，寫 `Audit Log`。
@@ -95,17 +92,13 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - `/時間收集建立`
 - `/時間池比對`
 - `/時間池整理`
-- `/排課建立`
-- `/排課比對`
-- `/排課確認`
-- `/排課狀態`
 
 主要責任：
 
 - 建立月度時間收集公告。
 - 讓控方選藝人比對共同空檔。
 - 預覽與套用時間池整理。
-- 保留舊 Schedule Request 流程。
+- 舊 Schedule Request / Course Session 流程已停用；程式只保留相容碼，主流程使用 Tasks。
 - 月度時間池候選依課程／錄音／通告／其他分流；非課程不自動寫入正式資料。
 
 ### `cogs/scheduling_artist.py`
@@ -278,20 +271,18 @@ Audit Log 寫入。
 
 ### `services/scheduling_flow.py`
 
-排課確認後的共用落地流程。
+時間池確認後的共用落地流程。
 
 責任：
 
-- 建立 `Course Sessions`。
-- 更新 `Schedule Requests`。
+- 建立或更新 `Tasks`。
 - 發正式通告到公告區。
 - DM 參與藝人。
 - 回寫通知紀錄與 `Audit Log`。
 
 呼叫來源：
 
-- Discord `/排課確認`。
-- web 老師確認連結。
+- 舊 web 老師確認連結模組保留於程式庫，但目前 Bot 不啟動。
 
 ## Web
 
@@ -307,7 +298,6 @@ Audit Log 寫入。
 
 安全邊界：
 
-- 未設定 `TEACHER_LINK_SECRET` 時不啟動。
 - 本機只綁 `127.0.0.1`；對外由 Cloudflare Tunnel 或正式反向代理處理。
 - token 只存排課需求 ID 與過期時間，不包含 Notion token 或 Discord token。
 

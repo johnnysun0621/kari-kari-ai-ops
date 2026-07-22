@@ -9,7 +9,7 @@
 
 7/11 會議客戶對原型整體買單，提出補強清單；本計劃做完即正式交付 KariKari。
 
-1. **排課流程**（會議決議取消「排課建立」）：改為 `/時間池比對` 勾選候選 → **幕後自動建 Schedule Request** → 產老師確認連結 → 老師手機點選 → 自動發通告。`/排課建立 /排課比對 /排課確認 /排課狀態` 從指令選單隱藏（程式與測試保留）
+1. **安排流程**：`/時間池比對` 只產生共同空檔候選；課程由 Bot 依控方選擇建立一筆 `Tasks` 的「課程與作業」，錄音／通告／其他則由控方手動在 Notion 建立 Project / Task。正式時間、老師與作業資訊集中在 Tasks。
 2. **洽談中藝人權限**：與已簽約相同；**未簽／暫停／封存無權限**（注意：現行程式「未簽」也放行，要收緊）
 3. **AI 問答進交付**：OpenAI 相容 adapter——DeepSeek（`https://api.deepseek.com`）／Ollama 本地（`http://localhost:11434/v1`）／其他便宜模型**同一介面**，TenantConfig 設定切換
 4. 分工：社群頁／性別年齡欄位＝Johnny 在 Notion 做；錄音→逐字稿自動化、Notion AI 授權＝寫進 DELIVERY.md「後續藍圖」，不實作
@@ -21,9 +21,7 @@
 | pending-attachment 等附件模式 | [cogs/submissions.py](cogs/submissions.py) `PendingFileSubmission`＋`on_message` listener | D1 批改檔回傳、D2 上傳驗證都復用此模式（Cog 實例 dict＋過期，非全域） |
 | Drive 歸檔路徑 | [services/drive_archive.py](services/drive_archive.py) 對應表＋`resolve_archive_target` | D1 加「老師回饋」資料夾、D2 資料夾連結 |
 | Drive API | [services/drive_api.py](services/drive_api.py) `upload_submission_file`／`_find_or_create_folder_sync` | D2 需另加「列出資料夾檔案」查詢（驗證上傳用） |
-| 老師連結 token | [services/teacher_confirm.py](services/teacher_confirm.py) | D4 直接重用（簽名/一次性/持久化都已完成） |
-| 確認→發通告核心 | [services/scheduling_flow.py](services/scheduling_flow.py) `publish_confirmed_schedule` | D4 重用 |
-| 建排課需求 | [services/repositories.py](services/repositories.py) `create_schedule_request`／`set_request_candidates` | D4 幕後建單 |
+| 任務建立 | [services/repositories.py](services/repositories.py) `create_formal_arrangement_task` | 課程比對後建立 Tasks；其他類型由控方手動建立 |
 | 時段去重/合併 | repositories `create_availability_slot_if_absent`（exact 已擋）＋`compact_availability_slots` | D3 重疊偵測沿用其語意（較寬窗勝出、性質無關——刻意設計勿改） |
 | 安全發送 | [cogs/channel_guard.py](cogs/channel_guard.py) `try_send` | 所有附帶通知 |
 | 權限 | [services/permissions.py](services/permissions.py) | D5／D6 身分判斷 |
@@ -49,10 +47,12 @@
 - [ ] 送出前**重疊**偵測：與既有時段重疊 → 自動合併寫入並回報「已與既有時段合併為 X」（語意＝較寬窗勝出）
 - [ ] 確認「完成」批次自動整理正常；若已被移除則接回
 
-### D4｜排課流程調整（會議 #12，~1 天）——**先做（不確定性最大）**
-- [x] `/時間池比對` 直通老師確認：新增 `MonthlyPoolTeacherConfirmView`（幕後建確認單＋候選寫入＋連結）；連結邏輯抽成共用 `_teacher_link_note`；指令加選填 課程類型/老師 參數
-- [x] 舊四指令移出選單（`LEGACY_SCHEDULING_COMMANDS_VISIBLE` 開關）＋守護測試＋DISCORD_COMMANDS 標記
-- [x] Tunnel 上線：cloudflared 已裝、tunnel 執行中、TEACHER_LINK_SECRET/BASE_URL 已設、web 服務啟動、經 Tunnel 端到端驗證（無效 token→錯誤頁）✅；**剩 Johnny 手機實測一輪**（時間池比對→勾候選→點連結→自動通告）
+### D4｜安排流程調整（會議 #12，已完成）
+- [x] `/時間池比對` 產生共同空檔候選；不直接發布正式通告
+- [x] 課程選擇課程類別、課程培訓 Project、老師後，直接建立 Tasks 的「課程與作業」
+- [x] 錄音／通告／其他維持控方手動建立 Project / Task
+- [x] `Schedule Requests`、`Course Sessions` 已移至 Notion 垃圾桶；殘留關聯欄位已移除
+- [x] 舊 `/排課*` 從指令選單隱藏，保留程式相容碼以避免歷史資料造成啟動問題
 
 ### D5｜洽談中權限（會議 #3，~0.25 天）
 - [ ] `INACTIVE_ARTIST_STATUSES` 加「未簽」；文件明確「已簽約＋洽談中＝藝人指令全開」

@@ -49,9 +49,9 @@ Notion 頁：「藝人管理公司營運系統與 Discord 工作流」（Meeting
 | 資料庫 | 關鍵欄位（為功能預留） | 對應功能 | 程式碼接入 |
 |---|---|---|---|
 | Artists | Discord User ID、合約狀態（未簽/洽談中/已簽約/暫停/封存）、AI 可查詢範圍 | 身分／權限 | ✅ P0-1 |
-| Schedule Requests | 需求狀態 8 態、候選時段、Schedule ID、SLA checkbox | 排課 | ✅ P0-1 |
-| Availability Slots | 身份/來源/是否逾期提交/優先度、關聯排課需求（可空＝自由時段） | 時間池 | ✅ P0-1 |
-| Course Sessions | 課程狀態 6 態、通告發布時間、Discord 通知紀錄 | 正式課程 | ✅ P0-1 |
+| Schedule Requests | 歷史排課需求 schema；已移至 Notion 垃圾桶 | 歷史資料 | 已停用 |
+| Availability Slots | 身份/來源/是否逾期提交/優先度；目前只代表月度可配合時間 | 時間池 | ✅ P0-1 |
+| Course Sessions | 歷史課程場次 schema；已移至 Notion 垃圾桶 | 歷史資料 | 已停用 |
 | Audit Log | 操作類型 9 種、來源系統、結果、前值/後值 | 回溯 | ✅ P0-1 |
 | **Tasks** | **Discord 顯示、是否開放提交、提交方式、最新提交 URL、Drive Folder、提醒規則(3天/1天/當天/逾期)、9 態** | P0-2 查詢＋P0-4 提醒 | ✅ 2026-07-08 |
 | **Submissions & File Index** | **審核狀態(待審核/通過/需修改/退回/已封存)、權限等級(藝人本人/老師可見/管理層/公開 SOP)、Drive File ID/URL、是否最新版** | P0-3 提交＋審核 | 🔜 1b/1c |

@@ -578,28 +578,36 @@ class CourseTypeView(discord.ui.View):
     async def on_select(self, interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            teachers = await repositories.get_teachers()
+            teachers = await repositories.get_teacher_options()
+            projects = await repositories.get_course_training_projects()
         except Exception:
-            logger.exception("讀取老師清單失敗")
-            await interaction.followup.send("❌ 讀取 Notion 老師清單失敗，請確認 People 資料庫已分享給 Bot。", ephemeral=True)
+            logger.exception("讀取課程 Project / 老師清單失敗")
+            await interaction.followup.send("❌ 讀取課程 Project 或老師清單失敗，請確認 Notion 資料庫已分享給 Bot。", ephemeral=True)
             return
         if not teachers:
             await interaction.followup.send("❌ People 裡沒有身份類型為「老師」的人員。", ephemeral=True)
             return
+        if not projects:
+            await interaction.followup.send(
+                "❌ 找不到進行中的「課程培訓」Project，請先在 Notion 建立 Project。",
+                ephemeral=True,
+            )
+            return
         await interaction.followup.send(
-            "請選擇老師／確認對象：",
-            view=TeacherSelectView(
-                self.month, self.duration_minutes, self.artists,
-                self.windows, interaction.user, self.select.values[0], teachers,
-            ), ephemeral=True,
+            "請選擇要歸屬的課程培訓 Project：",
+            view=CourseProjectSelectView(
+                self.month, self.duration_minutes, self.artists, self.windows,
+                interaction.user, self.select.values[0], teachers, projects,
+            ),
+            ephemeral=True,
         )
         self.stop()
 
 
-class TeacherSelectView(discord.ui.View):
-    """從 People.身份類型＝老師的清單選擇確認對象。"""
+class CourseProjectSelectView(discord.ui.View):
+    """課程安排選擇上層 Project，Task 建立後可由營運集中管理。"""
 
-    def __init__(self, month, duration_minutes, artists, windows, operator, course_type, teachers):
+    def __init__(self, month, duration_minutes, artists, windows, operator, course_type, teachers, projects):
         super().__init__(timeout=600)
         self.month = month
         self.duration_minutes = duration_minutes
@@ -607,9 +615,14 @@ class TeacherSelectView(discord.ui.View):
         self.windows = windows
         self.operator_id = operator.id
         self.course_type = course_type
+        self.teachers = teachers
+        self.projects = {project.page_id: project for project in projects}
         self.select = discord.ui.Select(
-            placeholder="選擇老師／確認對象…",
-            options=[discord.SelectOption(label=name[:100], value=name) for name in teachers[:25]],
+            placeholder="選擇課程培訓 Project…",
+            options=[
+                discord.SelectOption(label=project.name[:100], value=project.page_id)
+                for project in projects[:25]
+            ],
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
@@ -621,10 +634,57 @@ class TeacherSelectView(discord.ui.View):
         return False
 
     async def on_select(self, interaction):
+        project_id = self.select.values[0]
+        await interaction.response.send_message(
+            "請選擇負責老師：",
+            view=TeacherSelectView(
+                self.month, self.duration_minutes, self.artists, self.windows,
+                interaction.user, self.course_type, self.teachers, project_id,
+            ),
+            ephemeral=True,
+        )
+        self.stop()
+
+
+class TeacherSelectView(discord.ui.View):
+    """從 People.身份類型＝老師的清單選擇確認對象。"""
+
+    def __init__(self, month, duration_minutes, artists, windows, operator, course_type, teachers, project_page_id):
+        super().__init__(timeout=600)
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.artists = artists
+        self.windows = windows
+        self.operator_id = operator.id
+        self.course_type = course_type
+        self.teachers = teachers
+        self.project_page_id = project_page_id
+        self.select = discord.ui.Select(
+            placeholder="選擇老師／確認對象…",
+            options=[
+                discord.SelectOption(label=name[:100], value=page_id)
+                for page_id, name in teachers[:25]
+            ],
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個選單只能由原本執行比對的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction):
+        teacher_page_id = self.select.values[0]
+        teacher_name = next(
+            name for page_id, name in self.teachers if page_id == teacher_page_id
+        )
         await interaction.response.send_modal(
             CourseArrangementModal(
                 self.month, self.duration_minutes, self.artists,
-                self.windows, self.course_type, self.select.values[0],
+                self.windows, self.course_type, teacher_page_id, teacher_name,
+                self.project_page_id,
             )
         )
         self.stop()
@@ -633,54 +693,64 @@ class TeacherSelectView(discord.ui.View):
 class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
     """課程分流：補老師資料後建立確認單與老師連結。"""
 
-    def __init__(self, month, duration_minutes, artists, windows, course_type, teacher):
+    def __init__(self, month, duration_minutes, artists, windows, course_type, teacher_page_id, teacher_name, project_page_id):
         super().__init__()
         self.month = month
         self.duration_minutes = duration_minutes
         self.artists = artists
         self.windows = windows
         self.course_type = course_type
-        self.teacher = teacher
+        self.teacher_page_id = teacher_page_id
+        self.teacher_name = teacher_name
+        self.project_page_id = project_page_id
         self.name_input = discord.ui.TextInput(label="課程名稱", placeholder="例：八月歌唱課｜Johnny Chenhua", max_length=80)
         self.add_item(self.name_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        tenant = config.get_tenant()
         request_name = self.name_input.value.strip()
         if not request_name:
             await interaction.followup.send("❌ 請填寫課程名稱。", ephemeral=True)
             return
         names = "、".join(a.name for a in self.artists)
         candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in self.windows)
+        description = (
+            f"安排來源：/時間池比對\n"
+            f"課程類別：{self.course_type}\n"
+            f"負責老師：{self.teacher_name}\n"
+            f"需要時長：{repositories.format_duration_hours(self.duration_minutes)}\n"
+            "候選時段（由營運最後確認）：\n"
+            f"{candidates_text}\n\n"
+            "此 Task 同時管理課程場次與課後作業；正式時間請由營運直接填寫開始日。"
+        )
         try:
-            request = await repositories.create_schedule_request(
+            task = await repositories.create_formal_arrangement_task(
                 name=request_name,
-                course_type=self.course_type,
-                duration_minutes=self.duration_minutes,
+                task_type="課程與作業",
                 artist_page_ids=[a.page_id for a in self.artists],
-                fill_deadline=datetime.now(tenant.tz),
-                teacher=self.teacher,
-                month_week=self.month,
-                note="由 /時間池比對 建立｜安排類型：課程",
+                description=description,
+                course_category=self.course_type,
+                course_item_nature="課程場次",
+                teacher_page_ids=[self.teacher_page_id],
+                project_page_ids=[self.project_page_id],
             )
-            await repositories.set_request_candidates(request.page_id, candidates_text)
         except Exception:
-            logger.exception("時間池候選建立排課需求失敗")
-            await interaction.followup.send("❌ 建立課程確認單失敗，請稍後再試或查看 bot log。", ephemeral=True)
+            logger.exception("建立課程 Task 失敗")
+            await interaction.followup.send("❌ 建立課程 Task 失敗，請確認 Tasks 欄位與 Notion 權限。", ephemeral=True)
             return
         await audit.log_event(
-            event_name=f"時間池候選送老師確認｜{request_name}",
+            event_name=f"建立課程 Task｜{request_name}",
             action_type="建立", operator=str(interaction.user),
             discord_user_id=str(interaction.user.id),
-            target_db="Schedule Requests", target_url=request.url,
-            after=f"課程｜{len(self.windows)} 個候選｜{names}",
+            target_db="Tasks", target_url=task.url,
+            after=f"課程與作業｜{self.course_type}｜老師 {self.teacher_name}｜{len(self.windows)} 個候選｜{names}",
         )
         lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in self.windows)
-        teacher_note = await _teacher_link_note(request, interaction, len(self.windows))
         await interaction.followup.send(
-            f"✅ 已建立課程確認單「**{request_name}**」，{len(self.windows)} 個候選：\n"
-            f"{lines}\n\n{teacher_note}",
+            f"✅ 已建立課程 Task「**{request_name}**」。\n"
+            f"課程類別：{self.course_type}｜老師：{self.teacher_name}\n"
+            f"候選時段：\n{lines}\n\n"
+            "請到 Notion 的 Task 頁面最後確認正式開始／結束時間；課程作業也在同一筆 Task 管理。",
             ephemeral=True,
         )
 

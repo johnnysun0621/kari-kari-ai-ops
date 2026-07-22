@@ -80,4 +80,4 @@ python bot.py                      # 需 .env（見 README）
 
 月度時間池主流程、任務查詢、任務提醒、雙頻道分流、Drive 檔案歸檔、`/提交任務`、`/審核提交` 已落地。  
 檔案提交標準以免費 Discord 使用者為準：10MB 以下走同頻道附件，入口 3 小時有效；10MB 以上走 Drive 連結。
-老師外部確認連結已有開發版：設定 `TEACHER_LINK_SECRET` 與 `TEACHER_LINK_BASE_URL` 後，`/排課比對` 可產生免登入確認頁；目前待 Cloudflare Tunnel 真機驗收。細節見 ROADMAP。
+老師外部確認連結屬歷史相容功能，目前不啟動；主流程是 `/時間池比對` 後由控方在 Tasks 完成正式安排。

@@ -7,11 +7,9 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 
 目前主流程是：
 
-`/時間收集建立` → 藝人填月度可配合時段 → `/時間池比對` → 控方建立正式 Project / Task
+`/時間收集建立` → 藝人填月度可配合時段 → `/時間池比對` → 直接建立課程 Task 或由控方建立其他 Project / Task
 
-舊 MVP 指定需求流程仍保留：
-
-`/排課建立` → `/排課比對` → `/排課確認` → `/排課狀態`
+課程與作業、錄音、通告與其他正式事項都以 `Tasks` 為唯一安排來源。
 
 ## 常用文件
 
@@ -63,9 +61,6 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 | 變數 | 說明 |
 |---|---|
 | `GOOGLE_DRIVE_ROOT_FOLDER_ID` | 啟用 Discord 小檔自動歸檔到公司 Google Drive |
-| `TEACHER_LINK_SECRET` | 啟用老師外部確認連結的簽名 secret；留空則維持人工 `/排課確認` |
-| `TEACHER_LINK_BASE_URL` | 對外網址，例如 Cloudflare Tunnel URL |
-| `WEB_PORT` | 本機 web server port，預設 `8787` |
 
 ## Discord / Notion 前置設定
 
@@ -73,7 +68,7 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 - Bot 權限：View Channels、Send Messages、Embed Links、Mention Everyone（點名用）
 - 控方成員需具備 Discord Administrator 權限，才會看到管理端 slash commands
 - 建議分兩個頻道：時間資訊彙整放時間池公告與比對；任務查詢入口放 `/我的任務`、`/任務總覽` 與任務提醒
-- Notion integration 要能讀寫：Artists、Availability Slots、Tasks、Projects、Course Sessions、Schedule Requests、Audit Log
+- Notion integration 要能讀寫：Artists、Availability Slots、Tasks、Projects、People、Submissions、Audit Log
 - Artists 的可排課藝人要填 `Discord User ID`，且 `合約狀態` 不要是 `暫停` / `封存`
 
 ## 測試
@@ -94,15 +89,11 @@ services/
   overlap.py              # 共同時段交集演算法（純函式）
   timeparse.py            # Modal 輸入解析、候選時段文字格式
   audit.py                # Audit Log 寫入（失敗不阻斷主流程）
-  teacher_confirm.py      # 老師確認連結 token 簽名、驗證、一次性使用
-  scheduling_flow.py      # 排課確認後建 Course Session、發通告的共用流程
 cogs/
-  scheduling_admin.py     # /時間收集建立 /時間池比對 /時間池整理 /排課*
+  scheduling_admin.py     # /時間收集建立 /時間池比對 /時間池整理
   scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段 /補填時間
   tasks_artist.py         # /我的任務 /任務總覽
   submissions.py          # /提交任務 /審核提交
-  reminders.py            # 催收與 SLA 背景任務（每 30 分鐘）
-web/
-  server.py               # 老師外部確認頁（TEACHER_LINK_SECRET 未設定則不啟動）
+  reminders.py            # 月度時間池催收與任務提醒（每 30 分鐘）
 tests/                    # 純函式、互動邏輯、資料層測試
 ```

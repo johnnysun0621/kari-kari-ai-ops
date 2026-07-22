@@ -200,12 +200,20 @@ async def find_artist_by_discord_id(discord_user_id: int | str) -> Artist | None
 
 async def get_teachers() -> list[str]:
     """讀 People 中身份類型為「老師」的人名，供 Discord 選單使用。"""
+    return [name for _, name in await get_teacher_options()]
+
+
+async def get_teacher_options() -> list[tuple[str, str]]:
+    """回傳 People 老師的 (page_id, name)，供 Task Relation 選擇使用。"""
     pages = await notion_api.query_data_source(
         config.DS_PEOPLE,
         filter_={"property": "身份類型", "select": {"equals": "老師"}},
     )
-    names = [_read_title(page, "姓名 / 名稱").strip() for page in pages]
-    return sorted({name for name in names if name})
+    options = [
+        (page["id"], _read_title(page, "姓名 / 名稱").strip())
+        for page in pages
+    ]
+    return sorted({option for option in options if option[1]}, key=lambda option: option[1])
 
 
 # ---------- Schedule Requests ----------
@@ -339,6 +347,7 @@ class ProjectItem:
     page_id: str
     name: str
     status: str | None
+    project_type: str | None = None
     artist_page_ids: list[str] = field(default_factory=list)
     start: datetime | None = None
     end: datetime | None = None
@@ -435,6 +444,7 @@ def _to_project(page: dict) -> ProjectItem:
         page_id=page["id"],
         name=_read_title(page, "專案名稱"),
         status=_read_select(page, "專案狀態"),
+        project_type=_read_select(page, "專案類型"),
         artist_page_ids=_read_relation_ids(page, "關聯藝人"),
         start=start.value,
         end=end.value,
@@ -720,6 +730,20 @@ async def get_project_map() -> dict[str, ProjectItem]:
     return {page["id"]: _to_project(page) for page in pages}
 
 
+async def get_course_training_projects() -> list[ProjectItem]:
+    """供時間池課程安排選擇的進行中「課程培訓」專案。"""
+    pages = await notion_api.query_data_source(config.DS_PROJECTS)
+    projects = [_to_project(page) for page in pages]
+    return sorted(
+        [
+            project for project in projects
+            if project.project_type == "課程培訓"
+            and project.status not in INACTIVE_PROJECT_STATUSES
+        ],
+        key=lambda project: project.name,
+    )
+
+
 async def get_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
     project_map = await get_project_map()
     pages = await notion_api.query_data_source(config.DS_TASKS)
@@ -858,6 +882,7 @@ async def create_formal_arrangement_task(
     course_category: str | None = None,
     course_item_nature: str | None = None,
     teacher_page_ids: list[str] | None = None,
+    project_page_ids: list[str] | None = None,
 ) -> TaskItem:
     """建立由時間池確認出的正式／待確認安排 Task。
 
@@ -879,6 +904,8 @@ async def create_formal_arrangement_task(
         props["課程項目性質"] = _select(course_item_nature)
     if teacher_page_ids:
         props["負責老師"] = _relation(teacher_page_ids)
+    if project_page_ids:
+        props["關聯專案"] = _relation(project_page_ids)
     if start:
         props["開始日"] = _date(start, end)
     page = await notion_api.create_page(config.DS_TASKS, props)

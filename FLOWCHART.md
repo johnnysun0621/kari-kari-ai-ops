@@ -43,22 +43,18 @@ flowchart TD
     Z --> C
 ```
 
-## 指定排課 / 老師確認流程
+## 課程／錄音／通告安排流程
 
 ```mermaid
 flowchart TD
-    A["控方用 /排課建立\n建立單一明確需求"] --> B["藝人針對該需求填可用時間"]
-    B --> C["控方用 /排課比對\n選候選時段"]
-    C --> D{"老師確認連結是否啟用？"}
-    D -->|已設定 secret + base URL| E["產生外部確認連結\n控方傳給老師"]
-    E --> F{"老師選擇結果"}
-    F -->|選定時段| G["Bot 建 Course Session\n更新 Schedule Request"]
-    F -->|都不行| H["通知控方重新協調"]
-    D -->|未設定| I["控方人工詢問老師"]
-    I --> J["控方用 /排課確認"]
-    J --> G
-    G --> K["發布正式通告\nDM 參與藝人"]
-    K --> L["寫 Audit Log"]
+    A["/時間池比對\n取得共同空檔"] --> B{"安排類型"}
+    B -->|課程| C["選課程類別、課程培訓 Project、老師、名稱"]
+    C --> D["Bot 建立 Tasks\n類型：課程與作業"]
+    B -->|錄音／通告／其他| E["控方手動在 Notion 建立 Project / Task"]
+    D --> F["控方在 Tasks 補正式時間、作業與提交規則"]
+    E --> F
+    F --> G["藝人用 /我的任務 查看"]
+    G --> H["/提交任務 → Submissions → 審核"]
 ```
 
 ## 資料庫責任分界
@@ -74,9 +70,8 @@ flowchart LR
     Tasks --> Submissions
     Submissions --> Tasks
 
-    CourseSessions["Course Sessions\n課程場次細節 / 舊排課相容"] --> Scheduling["排程衝突判斷"]
-    Tasks --> Scheduling
-    Availability --> Scheduling
+    Tasks --> ScheduleCheck["正式時間衝突判斷"]
+    Availability --> ScheduleCheck
 
     AuditLog["Audit Log\n重要操作紀錄"]
     Discord --> AuditLog
@@ -90,4 +85,4 @@ flowchart LR
 - `Tasks`：正式安排、任務查詢、提醒、提交狀態的主要來源。
 - `Projects`：上層歸屬與提醒來源，不直接封鎖整段時間。
 - `Submissions`：每一次作業 / 作品提交與審核結果。
-- `Course Sessions`：保留給課程場次細節與舊排課 MVP 相容。
+- 課程場次細節：集中記錄在 `Tasks` 的「課程與作業」任務，不再使用獨立資料庫。

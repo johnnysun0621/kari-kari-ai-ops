@@ -23,7 +23,7 @@
 - Discord command 權限與頻道限制。
 - 月度時間收集日期 / 週次邏輯。
 - Availability Slots 去重、合併、封存規則。
-- Tasks / Projects / Course Sessions 對排程的影響。
+- Tasks / Projects 對排程的影響。
 - 共同時段交集演算法。
 - 時間字串解析。
 - 老師確認 token 簽名、過期、一次性使用與 HTML escape。
@@ -139,8 +139,8 @@
 
 驗收重點：
 
-- 只讀月度時間池，也就是 `Availability Slots` 中 `關聯排課需求` 空白的資料。
-- 正式 Tasks / Course Sessions 精準時間會先扣除。
+- 只讀 `Availability Slots` 中符合月份的月度可配合時間。
+- 正式 Tasks 精準時間會先扣除。
 - 若有人未填，結果會列出未填藝人。
 - 時長顯示用小時，例如 `240 分鐘` 顯示為 `4 小時`。
 
@@ -215,40 +215,17 @@
 - 逾期提醒不看提醒規則，一律觸發。
 - 已逾期狀態持久化在 Notion，Bot 重啟後不應重複升級同一筆。
 
-### 舊排課 MVP 回歸
-
-這組不是目前主流程，但仍需保留可用。
+### 目前安排流程驗收
 
 驗收流程：
 
-1. 控方執行 `/排課建立`。
-2. 藝人針對該 Schedule Request 填時間。
-3. 控方執行 `/排課比對`。
-4. 控方勾候選。
-5. 控方執行 `/排課確認`。
-6. Bot 建立 `Course Sessions` 並更新 `Schedule Requests`。
+1. 控方執行 `/時間收集建立`，藝人填寫月度可配合時間。
+2. 控方執行 `/時間池比對`，選月份、時長與多位藝人，確認共同空檔。
+3. 選「課程」後選課程類別、課程培訓 Project、老師與名稱，確認 Bot 建立一筆 Tasks。
+4. 在 Notion Tasks 補正式開始／截止時間，確認課程場次可作為正式佔用判斷。
+5. 選「錄音／通告／其他」時，確認 Bot 只顯示候選，控方手動建立 Project / Task。
 
-### 老師外部確認連結
-
-這是舊排課 MVP 的加速器；未設定環境變數時不啟用。
-
-驗收流程：
-
-1. `.env` 設定 `TEACHER_LINK_SECRET`。
-2. 執行 `bash scripts/start_tunnel.sh`，取得 `https://xxxx.trycloudflare.com`。
-3. `.env` 設定 `TEACHER_LINK_BASE_URL` 為該網址。
-4. 重啟 bot，確認 console 顯示老師確認 web 服務啟動。
-5. 走 `/排課建立` → 藝人填時間 → `/排課比對`。
-6. 控方勾候選後，確認 Discord 回覆有老師確認連結。
-7. 用瀏覽器開連結，選一個時段。
-8. 確認 Bot 建立 `Course Sessions`、更新 `Schedule Requests`、發布正式通告並通知控方。
-
-驗收重點：
-
-- 連結 24 小時有效。
-- 同一連結確認一次後，再開應顯示已使用或不可重複確認。
-- 選「都不行」時，只通知控方重新協調，不建立 Course Session。
-- 沒有 `TEACHER_LINK_BASE_URL` 時，`/排課比對` 應維持人工 `/排課確認` 文案。
+舊老師確認連結與 `/排課*` 不屬於目前主流程；相關程式僅保留相容碼，未由 Bot 啟動。
 
 ## Notion 驗收
 
@@ -263,7 +240,7 @@
 
 驗收：
 
-- 月度時間池 slot 的 `關聯排課需求` 應為空白。
+- 月度時間池 slot 不再使用 `關聯排課需求` 欄位。
 - 備註包含 `收集月份：YYYY-MM`。
 - 刪除時 page 應 archive。
 - 重複或冗餘資料整理後不應留在可見清單。
@@ -308,7 +285,7 @@
 
 - 月份是否正確。
 - 藝人是否有填該月份。
-- availability 是否被正式 Tasks / Course Sessions 扣掉。
+- availability 是否被有明確時間的正式 Tasks 扣掉。
 - `時長分鐘` 是否太長。
 
 ### Notion 互動慢或 Discord 顯示互動失敗
