@@ -114,7 +114,7 @@ def _load_karikari_from_env() -> TenantConfig:
         # 課程類型（與 Notion Schedule Requests / Course Sessions 的 select 選項一致）
         course_types=(
             "歌唱課", "編曲課", "樂理課", "表演藝術課",
-            "舞蹈課", "音樂製作課", "企劃會議", "錄音 / 拍攝",
+            "舞蹈課", "音樂製作課",
         ),
         sla_hours=48,
         sla_hard_limit_hours=72,
