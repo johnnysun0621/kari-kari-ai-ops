@@ -15,6 +15,51 @@ from services import course_qa, repositories
 logger = logging.getLogger(__name__)
 _COOLDOWN_SECONDS = 30
 _THREAD_STATE_PATH = Path(".state/course_qa_threads.json")
+_SELECTION_STATE_PATH = Path(".state/course_qa_selections.json")
+
+
+class CourseSelectionView(discord.ui.View):
+    """讓藝人在私人 Thread 先選定一堂課。"""
+
+    def __init__(self, cog: "CourseQACog", user_id: int, records: list[repositories.CourseMeetingRecord]):
+        super().__init__(timeout=900)
+        self.cog = cog
+        self.user_id = user_id
+        options = []
+        for record in records[:25]:
+            date_text = record.date.strftime("%m/%d") if record.date else "未填日期"
+            description = (record.summary or "可針對這堂課自由提問").replace("\n", " ")[:100]
+            options.append(
+                discord.SelectOption(
+                    label=f"{date_text}｜{record.title}"[:100],
+                    description=description,
+                    value=record.page_id,
+                )
+            )
+        select = discord.ui.Select(
+            placeholder="先選擇一堂課…",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+        select.callback = self._select_callback
+        self.add_item(select)
+
+    async def _select_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("這不是你的課程選單。", ephemeral=True)
+            return
+        select = self.children[0]
+        record_id = select.values[0]
+        self.cog._selected_record_by_user[str(self.user_id)] = record_id
+        self.cog._save_selection_state()
+        await interaction.response.edit_message(
+            content=(
+                f"✅ 已選擇 **{self.cog._record_label(record_id)}**。\n"
+                "現在可以直接在這個 Thread 問這堂課的內容；輸入「換課程」可重新選擇。"
+            ),
+            view=None,
+        )
 
 
 class CourseQACog(commands.Cog):
@@ -22,6 +67,8 @@ class CourseQACog(commands.Cog):
         self.bot = bot
         self._last_question_at: dict[int, float] = {}
         self._thread_by_user = self._load_thread_state()
+        self._selected_record_by_user = self._load_selection_state()
+        self._record_labels: dict[str, str] = {}
 
     @staticmethod
     def _load_thread_state() -> dict[str, int]:
@@ -39,6 +86,24 @@ class CourseQACog(commands.Cog):
         )
 
     @staticmethod
+    def _load_selection_state() -> dict[str, str]:
+        try:
+            raw = json.loads(_SELECTION_STATE_PATH.read_text(encoding="utf-8"))
+            return {str(user_id): str(page_id) for user_id, page_id in raw.items()}
+        except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+            return {}
+
+    def _save_selection_state(self) -> None:
+        _SELECTION_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SELECTION_STATE_PATH.write_text(
+            json.dumps(self._selected_record_by_user, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _record_label(self, record_id: str) -> str:
+        return self._record_labels.get(record_id, "這堂課")
+
+    @staticmethod
     def _is_ai_context(channel: discord.abc.GuildChannel | discord.Thread) -> bool:
         if channel_guard.is_ai_channel(getattr(channel, "id", None)):
             return True
@@ -47,24 +112,51 @@ class CourseQACog(commands.Cog):
     def _cooldown_remaining(self, user_id: int) -> float:
         return _COOLDOWN_SECONDS - (time.monotonic() - self._last_question_at.get(user_id, 0))
 
+    async def _load_records_for_user(
+        self, user: discord.abc.User
+    ) -> tuple[repositories.Artist | None, list[repositories.CourseMeetingRecord] | None, str | None]:
+        artist = await repositories.find_artist_by_discord_id(user.id)
+        if artist is None:
+            return None, None, "❌ 找不到你的藝人資料，請聯絡控方。"
+        try:
+            records = await repositories.get_course_meetings_for_artist(artist.page_id)
+        except Exception as exc:
+            logger.exception("讀取藝人課程紀錄失敗")
+            return artist, None, f"❌ 讀取課程紀錄失敗，請稍後再試。({type(exc).__name__})"
+        if not records:
+            return artist, [], "目前沒有可供你查詢的課程紀錄。請確認控方已勾選 Notion 的「藝人可見」。"
+        self._record_labels = {record.page_id: record.title for record in records}
+        return artist, records, None
+
+    async def _send_course_picker(self, thread: discord.Thread, user: discord.abc.User) -> bool:
+        artist, records, error = await self._load_records_for_user(user)
+        if error:
+            await thread.send(error)
+            return False
+        if not records:
+            return False
+        await thread.send(
+            f"📚 {artist.name}，請先選擇你要查詢的課程：\n"
+            "選定後，你可以針對該堂課自由提問。",
+            view=CourseSelectionView(self, user.id, records),
+        )
+        return True
+
     async def _answer_for_user(self, user: discord.abc.User, question: str) -> str:
         remaining = self._cooldown_remaining(user.id)
         if remaining > 0:
             return f"請 {remaining:.0f} 秒後再提問。"
         self._last_question_at[user.id] = time.monotonic()
 
-        artist = await repositories.find_artist_by_discord_id(user.id)
-        if artist is None:
-            return "❌ 找不到你的藝人資料，請聯絡控方。"
+        artist, records, error = await self._load_records_for_user(user)
+        if error:
+            return error
+        selected_id = self._selected_record_by_user.get(str(user.id))
+        selected = next((record for record in records if record.page_id == selected_id), None)
+        if selected is None:
+            return "請先在上方選單選擇一堂課，再開始提問。"
         try:
-            records = await repositories.get_course_meetings_for_artist(artist.page_id)
-        except Exception as exc:
-            logger.exception("讀取藝人課程紀錄失敗")
-            return f"❌ 讀取課程紀錄失敗，請稍後再試。({type(exc).__name__})"
-        if not records:
-            return "目前沒有可供你查詢的課程紀錄。請確認控方已勾選 Notion 的「藝人可見」。"
-        try:
-            answer = await course_qa.answer_course_question(artist.name, question, records)
+            answer = await course_qa.answer_course_question(artist.name, question, [selected])
         except course_qa.CourseQAError as exc:
             logger.warning("課程助教未能回答：%s", exc)
             return "⚠️ 課程助教目前尚未完成 API 設定，請聯絡控方。"
@@ -125,6 +217,11 @@ class CourseQACog(commands.Cog):
             if owner_id != str(message.author.id):
                 return
             thread = message.channel
+            if question in {"換課程", "換課", "重新選課"}:
+                self._selected_record_by_user.pop(str(message.author.id), None)
+                self._save_selection_state()
+                await self._send_course_picker(thread, message.author)
+                return
         else:
             thread = await self._get_or_create_thread(message)
             if thread is None:
@@ -138,6 +235,10 @@ class CourseQACog(commands.Cog):
             except discord.Forbidden:
                 logger.warning("課程助教無法刪除公開問題，請補上管理訊息權限")
                 await thread.send("⚠️ 請補上 Bot 的「管理訊息」權限，避免問題留在公開頻道。")
+
+            # 第一層先選課，不把第一句話直接送給跨課程問答。
+            await self._send_course_picker(thread, message.author)
+            return
 
         waiting = await thread.send("⏳ 我正在整理你的課程紀錄，請稍候……")
         answer = await self._answer_for_user(message.author, question)
