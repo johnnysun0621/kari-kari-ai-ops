@@ -21,6 +21,7 @@ EXTENSIONS = [
     "cogs.tasks_artist",
     "cogs.submissions",
     "cogs.bulletin",
+    "cogs.course_qa",
     "cogs.reminders",
 ]
 

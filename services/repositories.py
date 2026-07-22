@@ -187,6 +187,81 @@ async def get_bulletin_items() -> list[BulletinItem]:
     return [_to_bulletin(page) for page in pages if not page.get("archived")]
 
 
+@dataclass(frozen=True)
+class CourseMeetingRecord:
+    page_id: str
+    url: str
+    title: str
+    date: datetime | None
+    summary: str
+    content: str
+    artist_page_ids: tuple[str, ...]
+    task_page_ids: tuple[str, ...]
+    project_page_ids: tuple[str, ...]
+
+
+def _block_plain_text(block: dict) -> str:
+    data = block.get(block.get("type", ""), {})
+    rich_text = data.get("rich_text", []) if isinstance(data, dict) else []
+    return "".join(item.get("plain_text", "") for item in rich_text).strip()
+
+
+async def _page_content(page_id: str) -> str:
+    blocks = await notion_api.retrieve_block_children(page_id)
+    lines: list[str] = []
+    for block in blocks:
+        text = _block_plain_text(block)
+        if text:
+            lines.append(text)
+    return "\n".join(lines)
+
+
+async def get_course_meetings_for_artist(artist_page_id: str) -> list[CourseMeetingRecord]:
+    """只回傳已勾選藝人可見，且與該藝人有直接或間接關聯的課程紀錄。"""
+    pages = await notion_api.query_data_source(
+        config.DS_COURSE_MEETINGS,
+        filter_={"and": [
+            {"property": "藝人可見", "checkbox": {"equals": True}},
+            {"or": [
+                {"property": "會議類型", "select": {"equals": "課程"}},
+                {"property": "會議類型", "select": {"equals": "課程會議"}},
+            ]},
+        ]},
+        sorts=[{"property": "Date", "direction": "descending"}],
+    )
+    project_map = await get_project_map()
+    task_pages = await notion_api.query_data_source(config.DS_TASKS)
+    task_map = {page["id"]: _to_task(page) for page in task_pages}
+    records: list[CourseMeetingRecord] = []
+    for page in pages:
+        artists = tuple(_read_relation_ids(page, "參與藝人"))
+        task_ids = tuple(_read_relation_ids(page, "關聯任務"))
+        project_ids = tuple(_read_relation_ids(page, "關聯專案"))
+        related = artist_page_id in artists
+        related = related or any(
+            task_id in task_map and task_applies_to_artist(task_map[task_id], artist_page_id, project_map)
+            for task_id in task_ids
+        )
+        related = related or any(
+            project_id in project_map and artist_page_id in project_map[project_id].artist_page_ids
+            for project_id in project_ids
+        )
+        if not related:
+            continue
+        records.append(CourseMeetingRecord(
+            page_id=page["id"],
+            url=page.get("url", ""),
+            title=_read_title(page, "Name"),
+            date=_read_date_start(page, "Date"),
+            summary=_read_rich_text(page, "會議摘要"),
+            content=await _page_content(page["id"]),
+            artist_page_ids=artists,
+            task_page_ids=task_ids,
+            project_page_ids=project_ids,
+        ))
+    return records
+
+
 async def create_bulletin_feedback(
     source: BulletinItem,
     discord_user: str,

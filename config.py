@@ -58,6 +58,7 @@ class TenantConfig:
     ds_people: str
     ds_submissions: str
     ds_bulletin: str
+    ds_course_meetings: str
 
     # === 業務常數 ===
     tz: ZoneInfo
@@ -77,6 +78,11 @@ class TenantConfig:
     # === Google Drive（作業歸檔）===
     # 總資料夾 ID（底下放各藝人專區）；空字串＝Drive 歸檔未啟用
     drive_root_folder_id: str = ""
+
+    # === 課程 AI 助教（可選，未設定＝功能停用）===
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = "gpt-4o-mini"
 
     # === 老師外部確認連結（Phase 2）===
     # secret 未設定＝功能停用；base_url＝Tunnel 對外網址（開發期用 trycloudflare）
@@ -120,6 +126,7 @@ def _load_karikari_from_env() -> TenantConfig:
         ds_people=os.getenv("NOTION_DS_PEOPLE", "52413671-535d-40de-90fc-2df3c2c61f93"),
         ds_submissions=os.getenv("NOTION_DS_SUBMISSIONS", "370b01ba-64a7-4a1e-96de-e7cb83695d58"),
         ds_bulletin=os.getenv("NOTION_DS_BULLETIN", "d605806f-097b-823e-ac69-07fa536ba05f"),
+        ds_course_meetings=os.getenv("NOTION_DS_COURSE_MEETINGS", "0a95806f-097b-8368-bb02-8705bdfa744b"),
         tz=ZoneInfo("Asia/Taipei"),
         # 課程類型（與 Notion Schedule Requests / Course Sessions 的 select 選項一致）
         course_types=(
@@ -133,6 +140,9 @@ def _load_karikari_from_env() -> TenantConfig:
         default_fill_deadline_hours=24,
         bulletin_sync_interval_minutes=_env_int("BULLETIN_SYNC_INTERVAL_MINUTES", 5),
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
+        llm_api_key=os.getenv("LLM_API_KEY", ""),
+        llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
+        llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
         teacher_link_secret=os.getenv("TEACHER_LINK_SECRET", ""),
         teacher_link_base_url=os.getenv("TEACHER_LINK_BASE_URL", ""),
         web_port=_env_int("WEB_PORT", 8787),
@@ -175,6 +185,7 @@ DS_PROJECTS = TENANT.ds_projects
 DS_PEOPLE = TENANT.ds_people
 DS_SUBMISSIONS = TENANT.ds_submissions
 DS_BULLETIN = TENANT.ds_bulletin
+DS_COURSE_MEETINGS = TENANT.ds_course_meetings
 
 # === 業務常數 ===
 TZ = TENANT.tz
