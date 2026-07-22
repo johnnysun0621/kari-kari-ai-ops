@@ -58,12 +58,21 @@ def is_task_channel(channel_id: int | None) -> bool:
     return _is_allowed_channel(config.TASK_CHANNEL_ID, channel_id)
 
 
+def is_ai_channel(channel_id: int | None) -> bool:
+    """課程 AI 助教：有設定 AI_CHANNEL_ID 時只允許在該頻道使用。"""
+    return _is_allowed_channel(config.AI_CHANNEL_ID, channel_id)
+
+
 def schedule_channel_message() -> str:
     return _channel_message(config.SCHEDULE_CHANNEL_ID, "時間 / 排課")
 
 
 def task_channel_message() -> str:
     return _channel_message(config.TASK_CHANNEL_ID, "任務")
+
+
+def ai_channel_message() -> str:
+    return _channel_message(config.AI_CHANNEL_ID, "課程問答")
 
 
 async def ensure_schedule_channel(interaction: discord.Interaction) -> bool:
@@ -77,4 +86,11 @@ async def ensure_task_channel(interaction: discord.Interaction) -> bool:
     if is_task_channel(interaction.channel_id):
         return True
     await interaction.response.send_message(task_channel_message(), ephemeral=True)
+    return False
+
+
+async def ensure_ai_channel(interaction: discord.Interaction) -> bool:
+    if is_ai_channel(interaction.channel_id):
+        return True
+    await interaction.response.send_message(ai_channel_message(), ephemeral=True)
     return False

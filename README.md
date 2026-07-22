@@ -49,6 +49,7 @@ python bot.py
 | `SCHEDULE_CHANNEL_ID` | 時間資訊彙整頻道 ID（公告與時間池互動處） |
 | `ADMIN_ROLE_ID` | 控方 / 管理者身分組 ID（管理指令權限） |
 | `TASK_CHANNEL_ID` | 任務查詢入口頻道 ID（留空則不限制任務指令頻道） |
+| `AI_CHANNEL_ID` | 課程 AI 助教頻道 ID（設定後 `/課程問答` 只允許在此頻道使用） |
 | `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（留空則用排課頻道） |
 | `ANNOUNCE_CHANNEL_ID` | 公告區頻道 ID（留空則公告發到時間資訊彙整；建議設唯讀頻道） |
 | `BULLETIN_CHANNEL_ID` | Notion 布告欄同步到的 Discord 頻道 ID（留空則使用公告區） |

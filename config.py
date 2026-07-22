@@ -41,6 +41,8 @@ class TenantConfig:
     announce_channel_id: int
     # Notion 營運布告欄同步到 Discord 的頻道；未設定時使用公告區
     bulletin_channel_id: int
+    # 課程 AI 助教頻道；未設定時不啟用頻道限制
+    ai_channel_id: int
 
     # === Notion ===
     notion_token: str
@@ -105,6 +107,7 @@ def _load_karikari_from_env() -> TenantConfig:
         task_channel_id=_env_int("TASK_CHANNEL_ID"),
         announce_channel_id=_env_int("ANNOUNCE_CHANNEL_ID"),
         bulletin_channel_id=_env_int("BULLETIN_CHANNEL_ID"),
+        ai_channel_id=_env_int("AI_CHANNEL_ID"),
         notion_token=os.getenv("NOTION_TOKEN", ""),
         notion_version="2025-09-03",
         ds_artists=os.getenv("NOTION_DS_ARTISTS", "c0253aec-d18c-47de-a92f-e4a6f9eda641"),
@@ -157,6 +160,7 @@ ADMIN_NOTIFY_CHANNEL_ID = TENANT.admin_notify_channel_id
 TASK_CHANNEL_ID = TENANT.task_channel_id
 ANNOUNCE_CHANNEL_ID = TENANT.announce_channel_id
 BULLETIN_CHANNEL_ID = TENANT.bulletin_channel_id
+AI_CHANNEL_ID = TENANT.ai_channel_id
 
 # === Notion ===
 NOTION_TOKEN = TENANT.notion_token
