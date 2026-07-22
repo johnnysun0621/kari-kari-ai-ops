@@ -1128,7 +1128,7 @@ async def mark_submission_review_notified(
     )
 
 
-# 「撞課」情境（Tasks/Projects/Sessions）每次填時段都要算，且含兩次全表掃描。
+# 「撞課」情境（Tasks/Projects）每次填時段都要算，且含兩次全表掃描。
 # 以 artist page id 為 key 做短 TTL 快取（Notion page id 全域唯一，跨租戶不會撞），
 # 讓同一藝人連續填多筆、或一次批次多筆時只查一次 Notion。
 _IMPACT_CONTEXT_TTL = 30.0  # 秒
@@ -1153,9 +1153,8 @@ async def get_schedule_impact_context_for_artist(
             return cached[1]
     tasks = await get_tasks_for_artist(artist_page_id)
     projects = await get_projects_for_artist(artist_page_id)
-    sessions = await get_course_sessions_for_artist(artist_page_id)
     context = ScheduleImpactContext(
-        busy_intervals=busy_intervals_for_tasks(tasks) + busy_intervals_for_course_sessions(sessions),
+        busy_intervals=busy_intervals_for_tasks(tasks),
         warnings=warnings_for_tasks(tasks) + warnings_for_projects(projects),
     )
     _impact_context_cache[artist_page_id] = (now, context)

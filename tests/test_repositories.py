@@ -711,6 +711,28 @@ class TestCompactAvailabilitySlots:
 
 
 class TestScheduleImpactContextCache:
+    def test_context_does_not_query_deleted_course_sessions_data_source(self, monkeypatch):
+        import asyncio
+
+        async def fake_query(data_source_id, filter_=None, sorts=None):
+            return []
+
+        async def deleted_course_sessions_query(*args, **kwargs):
+            raise AssertionError("deleted Course Sessions data source must not be queried")
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+        monkeypatch.setattr(repositories, "get_course_sessions_for_artist", deleted_course_sessions_query)
+        repositories._invalidate_impact_context_cache()
+
+        context = asyncio.run(
+            repositories.get_schedule_impact_context_for_artist(
+                "artist-without-course-sessions", use_cache=False
+            )
+        )
+
+        assert context.busy_intervals == []
+        assert context.warnings == []
+
     def test_caches_within_ttl_and_refetches_after_invalidate(self, monkeypatch):
         import asyncio
 
