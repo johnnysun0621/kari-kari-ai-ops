@@ -2,6 +2,7 @@
 
 Notion 欄位名稱是中文（與正式資料庫完全一致），若 Notion 端改名，只需改這裡。
 """
+import logging
 import time
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
@@ -9,6 +10,8 @@ from datetime import date, datetime, timedelta
 import config
 from services import notion_api, overlap, time_collection
 from services.notion_api import NotionAPIError
+
+logger = logging.getLogger(__name__)
 
 # ---------- property payload builders ----------
 
