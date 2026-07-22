@@ -399,6 +399,16 @@ class TestMonthlyPoolMatching:
             "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00",
         ]
 
+    def test_split_windows_by_duration_uses_contiguous_course_blocks(self):
+        windows = repositories.split_windows_by_duration(
+            [(datetime(2026, 8, 5, 12, 0, tzinfo=config.TZ),
+              datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ))],
+            duration_minutes=60,
+        )
+
+        assert [(start.strftime("%H:%M"), end.strftime("%H:%M"))
+                for start, end in windows] == [("12:00", "13:00"), ("13:00", "14:00")]
+
     def test_duration_display_uses_hours(self):
         assert repositories.format_duration_hours(240) == "4 小時"
         assert repositories.format_duration_hours(90) == "1.5 小時"

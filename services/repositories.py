@@ -872,6 +872,22 @@ def split_availability_by_busy_intervals(
     return windows
 
 
+def split_windows_by_duration(
+    windows: list[tuple[datetime, datetime]], duration_minutes: int
+) -> list[tuple[datetime, datetime]]:
+    """把可用長窗切成不重疊、連續的固定時長候選。"""
+    if duration_minutes <= 0:
+        return windows
+    duration = timedelta(minutes=duration_minutes)
+    result: list[tuple[datetime, datetime]] = []
+    for start, end in windows:
+        cursor = start
+        while cursor + duration <= end:
+            result.append((cursor, cursor + duration))
+            cursor += duration
+    return result
+
+
 def conflicts_for_window(
     start: datetime,
     end: datetime,

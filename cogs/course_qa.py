@@ -1,7 +1,6 @@
 """Discord 課程 AI 助教。"""
 import logging
 import json
-import time
 from pathlib import Path
 
 import discord
@@ -13,7 +12,6 @@ from cogs import channel_guard
 from services import course_qa, repositories
 
 logger = logging.getLogger(__name__)
-_COOLDOWN_SECONDS = 30
 _THREAD_STATE_PATH = Path(".state/course_qa_threads.json")
 _SELECTION_STATE_PATH = Path(".state/course_qa_selections.json")
 
@@ -65,7 +63,6 @@ class CourseSelectionView(discord.ui.View):
 class CourseQACog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._last_question_at: dict[int, float] = {}
         self._thread_by_user = self._load_thread_state()
         self._selected_record_by_user = self._load_selection_state()
         self._record_labels: dict[str, str] = {}
@@ -109,9 +106,6 @@ class CourseQACog(commands.Cog):
             return True
         return isinstance(channel, discord.Thread) and channel.parent_id == config.AI_CHANNEL_ID
 
-    def _cooldown_remaining(self, user_id: int) -> float:
-        return _COOLDOWN_SECONDS - (time.monotonic() - self._last_question_at.get(user_id, 0))
-
     async def _load_records_for_user(
         self, user: discord.abc.User
     ) -> tuple[repositories.Artist | None, list[repositories.CourseMeetingRecord] | None, str | None]:
@@ -143,11 +137,6 @@ class CourseQACog(commands.Cog):
         return True
 
     async def _answer_for_user(self, user: discord.abc.User, question: str) -> str:
-        remaining = self._cooldown_remaining(user.id)
-        if remaining > 0:
-            return f"請 {remaining:.0f} 秒後再提問。"
-        self._last_question_at[user.id] = time.monotonic()
-
         artist, records, error = await self._load_records_for_user(user)
         if error:
             return error

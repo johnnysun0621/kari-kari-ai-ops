@@ -63,6 +63,9 @@ async def handle_confirm_get(request: aioweb.Request) -> aioweb.Response:
     if error_page:
         return _html_response(error_page)
     candidates = timeparse.parse_candidates_text(sched_request.candidates_text)
+    candidates = repositories.split_windows_by_duration(
+        candidates, sched_request.duration_minutes
+    )
     windows = [(i, timeparse.humanize(s, e)) for i, (s, e) in enumerate(candidates)]
     if not windows:
         return _html_response(pages.result_html("no_candidates"))
@@ -145,6 +148,9 @@ async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
         return _html_response(pages.result_html("none_ok"))
 
     candidates = timeparse.parse_candidates_text(sched_request.candidates_text)
+    candidates = repositories.split_windows_by_duration(
+        candidates, sched_request.duration_minutes
+    )
     selected_candidates = []
     try:
         selected_candidates = [candidates[int(choice)] for choice in choices]

@@ -712,8 +712,11 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
         if not request_name:
             await interaction.followup.send("❌ 請填寫課程名稱。", ephemeral=True)
             return
+        teacher_windows = repositories.split_windows_by_duration(
+            self.windows, self.duration_minutes
+        )
         names = "、".join(a.name for a in self.artists)
-        candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in self.windows)
+        candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in teacher_windows)
         description = (
             f"安排來源：/時間池比對\n"
             f"課程類別：{self.course_type}\n"
@@ -743,9 +746,9 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
             action_type="建立", operator=str(interaction.user),
             discord_user_id=str(interaction.user.id),
             target_db="Tasks", target_url=task.url,
-            after=f"課程與作業｜{self.course_type}｜老師 {self.teacher_name}｜{len(self.windows)} 個候選｜{names}",
+            after=f"課程與作業｜{self.course_type}｜老師 {self.teacher_name}｜{len(teacher_windows)} 個候選｜{names}",
         )
-        lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in self.windows)
+        lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in teacher_windows)
         teacher_link = ""
         if teacher_confirm.can_generate_links():
             expires_at = int(time.time()) + teacher_confirm.TOKEN_TTL_HOURS * 3600
@@ -757,7 +760,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
                 duration_text=repositories.format_duration_hours(self.duration_minutes),
                 teacher=self.teacher_name,
                 participants=[artist.name for artist in self.artists],
-                windows=[timeparse.humanize(start, end) for start, end in self.windows],
+                windows=[timeparse.humanize(start, end) for start, end in teacher_windows],
             )
             teacher_link = (
                 f"\n\n🔗 老師填寫表單（{teacher_confirm.TOKEN_TTL_HOURS} 小時有效）：\n"
