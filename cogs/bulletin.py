@@ -15,6 +15,7 @@ from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
 _STATE_PATH = Path(".state/bulletin_sync.json")
+_MESSAGE_FORMAT_VERSION = "bulletin-v2"
 
 
 def bulletin_channel_id() -> int:
@@ -23,6 +24,7 @@ def bulletin_channel_id() -> int:
 
 def bulletin_fingerprint(item: repositories.BulletinItem) -> str:
     raw = "|".join([
+        _MESSAGE_FORMAT_VERSION,
         item.title, item.category, item.status, item.date.isoformat() if item.date else "",
         ",".join(item.people), str(item.pinned), item.url,
     ])
@@ -169,10 +171,12 @@ class BulletinCog(commands.Cog):
                 except (discord.NotFound, discord.HTTPException, ValueError):
                     message = None
             embed = discord.Embed(
+                title="📌 營運布告欄",
                 description=format_bulletin(item),
-                color=discord.Color.blurple(),
+                color=discord.Color.green(),
                 timestamp=datetime.now(config.get_tenant().tz),
             )
+            embed.set_footer(text="Notion 營運布告欄｜可按下方按鈕回報／留言")
             if message is None:
                 message = await channel.send(
                     embed=embed,
