@@ -756,6 +756,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
                 course_type=self.course_type,
                 duration_text=repositories.format_duration_hours(self.duration_minutes),
                 teacher=self.teacher_name,
+                participants=[artist.name for artist in self.artists],
                 windows=[timeparse.humanize(start, end) for start, end in self.windows],
             )
             teacher_link = (

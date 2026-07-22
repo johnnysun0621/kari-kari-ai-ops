@@ -101,6 +101,7 @@ def sign_task_token(
     course_type: str,
     duration_text: str,
     teacher: str,
+    participants: list[str],
     windows: list[str],
 ) -> str:
     """簽發只供老師回填候選的 Task 表單 token。
@@ -116,6 +117,7 @@ def sign_task_token(
             "course_type": course_type,
             "duration_text": duration_text,
             "teacher": teacher,
+            "participants": participants,
             "windows": windows,
         },
         separators=(",", ":"),

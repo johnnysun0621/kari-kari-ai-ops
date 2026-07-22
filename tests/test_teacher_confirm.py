@@ -51,6 +51,7 @@ def test_task_form_token_keeps_task_payload_signed(monkeypatch):
         course_type="歌唱課",
         duration_text="1 小時",
         teacher="王老師",
+        participants=["Johnny", "Chenhua"],
         windows=["8/1 13:00-14:00", "8/2 15:00-16:00"],
     )
 
@@ -59,6 +60,7 @@ def test_task_form_token_keeps_task_payload_signed(monkeypatch):
     assert check.ok
     assert check.request_page_id == "task-1"
     assert check.payload["kind"] == "task"
+    assert check.payload["participants"] == ["Johnny", "Chenhua"]
     assert check.payload["windows"] == ["8/1 13:00-14:00", "8/2 15:00-16:00"]
 
 
@@ -82,6 +84,7 @@ def test_confirm_page_escapes_user_controlled_text():
         course_type="歌唱課",
         duration_text="1 小時",
         teacher="<b>老師</b>",
+        participants=["Johnny", "Chenhua"],
         windows=[(0, "8/1 10:00-11:00")],
         action_url="/confirm/token",
     )

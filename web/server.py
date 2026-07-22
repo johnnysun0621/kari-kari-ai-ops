@@ -56,6 +56,7 @@ async def handle_confirm_get(request: aioweb.Request) -> aioweb.Response:
             course_type=str(payload.get("course_type", "課程")),
             duration_text=str(payload.get("duration_text", "")),
             teacher=str(payload.get("teacher", "老師")),
+            participants=[str(name) for name in payload.get("participants", [])],
             windows=windows,
             action_url=f"/confirm/{token}",
         ))

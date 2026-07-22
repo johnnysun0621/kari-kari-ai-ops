@@ -12,6 +12,7 @@ button.slot{display:block;width:100%;padding:16px;margin:10px 0;font-size:1.05re
       border:2px solid #4f46e5;border-radius:12px;background:#fff;color:#4f46e5;
       cursor:pointer;text-align:center}
 button.slot:active{background:#eef2ff}
+label.slot{white-space:normal}
 button.slot input{margin-right:8px;transform:scale(1.25)}
 button.none{display:block;width:100%;padding:14px;margin-top:22px;font-size:.95rem;
       border:1px solid #d1d5db;border-radius:12px;background:#fff;color:#6b7280;cursor:pointer}
@@ -39,9 +40,10 @@ def confirm_page_html(
     teacher: str,
     windows: list[tuple[int, str]],
     action_url: str,
+    participants: list[str] | None = None,
 ) -> str:
     """候選時段複選頁：老師先勾可行時段，再交由控方最後定案。"""
-    buttons = "".join(
+    buttons = "<br>".join(
         f"<label class='slot'><input type='checkbox' name='choice' value='{index}'>"
         f"{_html.escape(label)}</label>"
         for index, label in windows
@@ -49,7 +51,8 @@ def confirm_page_html(
     body = (
         f"<h1>{_html.escape(request_name)}</h1>"
         f"<div class='meta'>課程類型：{_html.escape(course_type)}｜需要 {_html.escape(duration_text)}<br>"
-        f"確認對象：{_html.escape(teacher or '老師')}</div>"
+        f"確認老師：{_html.escape(teacher or '老師')}<br>"
+        f"參與藝人：{_html.escape('、'.join(participants or []) or '未指定')}</div>"
         "<div class='meta'>請勾選一個或多個您可以配合的時段。最後由營運決定正式時間，老師回覆不會立即發布通告：</div>"
         f"<form method='post' action='{_html.escape(action_url)}'>{buttons}"
         "<button class='confirm' type='submit' name='action' value='confirm'>"
