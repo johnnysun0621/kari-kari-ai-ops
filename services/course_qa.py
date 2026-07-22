@@ -19,6 +19,7 @@ async def answer_course_question(
     artist_name: str,
     question: str,
     records: list[CourseMeetingRecord],
+    intent_context: str = "",
 ) -> str:
     tenant = config.get_tenant()
     if not tenant.llm_api_key:
@@ -34,11 +35,12 @@ async def answer_course_question(
                     "你是課程助教，只能根據提供的 Notion 課程會議紀錄回答。"
                     "不可猜測或補充資料；找不到答案時明確說明紀錄不足。"
                     "回答使用繁體中文，簡潔、分點，並保留來源頁面名稱。"
+                    "若問題是總覽，請整理重點；若是逐字稿搜尋，請指出提到它的課程與段落。"
                 ),
             },
             {
                 "role": "user",
-                "content": f"藝人：{artist_name}\n問題：{question}\n\n可用課程紀錄：\n{context}",
+                "content": f"藝人：{artist_name}\n檢索意圖：{intent_context}\n問題：{question}\n\n可用課程紀錄：\n{context}",
             },
         ],
     }
