@@ -107,7 +107,9 @@ async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
                     f"📩 **老師已回覆可行時段，請控方最後定案**\n"
                     f"課程 Task：{payload.get('task_name', '未命名')}\n"
                     f"老師：{payload.get('teacher', '老師')}\n"
-                    f"老師可行：{'、'.join(selected)}\n"
+                    "老師可行時段：\n"
+                    + "\n".join(f"・{window}" for window in selected)
+                    + "\n"
                     f"Task：https://www.notion.so/{str(check.request_page_id).replace('-', '')}"
                 )
             try:

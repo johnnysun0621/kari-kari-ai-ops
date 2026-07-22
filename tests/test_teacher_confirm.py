@@ -62,6 +62,13 @@ def test_task_form_token_keeps_task_payload_signed(monkeypatch):
     assert check.payload["windows"] == ["8/1 13:00-14:00", "8/2 15:00-16:00"]
 
 
+def test_teacher_result_format_uses_one_window_per_line():
+    selected = ["8/1（週六）13:30–16:00", "8/12（週三）13:30–16:00"]
+    message = "老師可行時段：\n" + "\n".join(f"・{window}" for window in selected)
+
+    assert "・8/1（週六）13:30–16:00\n・8/12（週三）13:30–16:00" in message
+
+
 def test_confirm_url_uses_configured_base_url(monkeypatch):
     _set_teacher_config(monkeypatch, base_url="https://example.com/")
 
