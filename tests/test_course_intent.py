@@ -36,3 +36,17 @@ def test_follow_up_uses_previous_record_context_when_query_has_no_filter():
     )
 
     assert [item.page_id for item in selected] == ["august"]
+
+
+def test_other_follow_up_excludes_previous_course():
+    records = [record("july", "歌唱課", 7), record("august", "表演課", 8)]
+    assert course_intent._is_other_followup(
+        "你再看看其他的", {"record_ids": ["july"]}
+    )
+
+    intent = course_intent.QueryIntent(mode="compare")
+    selected = course_intent.select_records(
+        records, intent, memory={"record_ids": ["july"]}
+    )
+
+    assert [item.page_id for item in selected] == ["august"]

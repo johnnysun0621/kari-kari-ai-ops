@@ -10,6 +10,9 @@ import config
 from services.repositories import CourseMeetingRecord
 
 
+_OTHER_FOLLOWUP_RE = re.compile(r"其他|另外|別的|其餘|更多|換一堂|換一個|下一堂|再看看")
+
+
 @dataclass(frozen=True)
 class QueryIntent:
     mode: str = "course_question"
@@ -43,6 +46,11 @@ def _fallback_intent(question: str, records: list[CourseMeetingRecord]) -> Query
     return QueryIntent(record_ids=tuple(matches))
 
 
+def _is_other_followup(question: str, memory: dict | None) -> bool:
+    """辨識「再看看其他的」這類延續問題，避免路由器重選上一堂。"""
+    return bool(memory and memory.get("record_ids") and _OTHER_FOLLOWUP_RE.search(question))
+
+
 def _catalog(records: list[CourseMeetingRecord]) -> str:
     lines = []
     for record in records:
@@ -66,6 +74,8 @@ async def classify_query(
 ) -> QueryIntent:
     """用短上下文判斷意圖；失敗時退回本地月份／文字檢索。"""
     tenant = config.get_tenant()
+    if _is_other_followup(question, memory):
+        return QueryIntent(mode="compare")
     if not tenant.llm_api_key or not records:
         return _fallback_intent(question, records)
     previous = json.dumps(memory or {}, ensure_ascii=False)[:1200]
@@ -132,5 +142,9 @@ def select_records(
         if matched:
             return matched
     previous_ids = (memory or {}).get("record_ids", [])
+    if intent.mode == "compare" and previous_ids:
+        remaining = [record for record in records if record.page_id not in previous_ids]
+        if remaining:
+            return remaining[:8]
     previous = [by_id[page_id] for page_id in previous_ids if page_id in by_id]
     return previous or records[:8]
