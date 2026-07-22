@@ -187,6 +187,42 @@ async def get_bulletin_items() -> list[BulletinItem]:
     return [_to_bulletin(page) for page in pages if not page.get("archived")]
 
 
+async def create_bulletin_feedback(
+    source: BulletinItem,
+    discord_user: str,
+    discord_user_id: int,
+    feedback: str,
+    discord_message_url: str = "",
+) -> dict:
+    """將 Discord 公告回覆寫回同一個 Notion 布告欄資料庫。"""
+    now = datetime.now(config.TZ)
+    title = f"回饋｜{source.title}｜{discord_user}"[:2000]
+    body_text = (
+        f"回覆者：{discord_user}（Discord ID：{discord_user_id}）\n"
+        f"原公告：{source.title}\n"
+        f"原公告 Notion：{source.url}\n"
+        f"Discord 回覆：{discord_message_url or '未提供'}\n\n"
+        f"回饋內容：\n{feedback.strip()}"
+    )
+    children = [{
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": [{
+                "type": "text",
+                "text": {"content": body_text[:2000]},
+            }],
+        },
+    }]
+    props = {
+        "Name": _title(title),
+        "Date": _date(now),
+        "類別": _select("🙋 使用回饋"),
+        "狀態": _select("未處理"),
+    }
+    return await notion_api.create_page(config.DS_BULLETIN, props, children=children)
+
+
 # ---------- Artists ----------
 
 @dataclass

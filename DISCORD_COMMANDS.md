@@ -28,6 +28,8 @@ KariKari 是目前測試站；未來若套用到其他公司，指令用途應�
 - 新增的 Notion 項目會發成 Discord 公告。
 - Notion 的狀態、類別、日期、人員或置頂變更時，既有 Discord 公告會更新。
 - 沒有變更的項目不會重複發布。
+- 公告下方有「回報／留言」按鈕；使用者送出後會在 Notion 建立一筆 `🙋 使用回饋`。
+- 使用者也可以直接回覆 Bot 的公告訊息，Bot 會將回覆內容回寫 Notion。
 - Bot 也會每 5 分鐘自動檢查一次；手動指令適合需要立即更新時使用。
 
 同步目標依序使用 `BULLETIN_CHANNEL_ID`、`ANNOUNCE_CHANNEL_ID`、`SCHEDULE_CHANNEL_ID`。

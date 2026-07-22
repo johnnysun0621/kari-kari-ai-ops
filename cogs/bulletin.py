@@ -56,13 +56,89 @@ def _save_state(state: dict[str, dict[str, str]]) -> None:
     _STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+class BulletinFeedbackModal(discord.ui.Modal, title="回報這則公告"):
+    feedback = discord.ui.TextInput(
+        label="回饋內容",
+        placeholder="請輸入問題、補充或需要營運處理的事項",
+        style=discord.TextStyle.paragraph,
+        max_length=1800,
+        required=True,
+    )
+
+    def __init__(self, cog: "BulletinCog", source_page_id: str):
+        super().__init__()
+        self.cog = cog
+        self.source_page_id = source_page_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self.cog.save_feedback(
+                source_page_id=self.source_page_id,
+                user=interaction.user,
+                feedback=self.feedback.value,
+                message_url="",
+            )
+        except Exception:
+            logger.exception("Discord 布告欄回饋寫入 Notion 失敗")
+            await interaction.followup.send("❌ 回饋寫入失敗，請稍後再試。", ephemeral=True)
+            return
+        await interaction.followup.send("✅ 回饋已寫入 Notion 布告欄，控方可以在那裡處理。", ephemeral=True)
+
+
+class BulletinFeedbackView(discord.ui.View):
+    def __init__(self, cog: "BulletinCog", source_page_id: str):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.source_page_id = source_page_id
+        button = discord.ui.Button(
+            label="回報／留言",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"bulletin_feedback:{source_page_id}",
+        )
+        button.callback = self.open_modal
+        self.add_item(button)
+
+    async def open_modal(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(
+            BulletinFeedbackModal(self.cog, self.source_page_id)
+        )
+
+
 class BulletinCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._registered_message_ids: set[int] = set()
         self.sync_loop.start()
 
     def cog_unload(self):
         self.sync_loop.cancel()
+
+    async def save_feedback(
+        self,
+        source_page_id: str,
+        user: discord.abc.User,
+        feedback: str,
+        message_url: str,
+    ) -> None:
+        items = await repositories.get_bulletin_items()
+        source = next((item for item in items if item.page_id == source_page_id), None)
+        if source is None:
+            raise ValueError("找不到原始 Notion 布告")
+        await repositories.create_bulletin_feedback(
+            source=source,
+            discord_user=str(user),
+            discord_user_id=user.id,
+            feedback=feedback,
+            discord_message_url=message_url,
+        )
+
+    async def _register_feedback_view(self, message: discord.Message, page_id: str) -> None:
+        # 每次同步都註冊，讓 Bot 重啟後既有公告上的按鈕仍可使用。
+        if message.id in self._registered_message_ids:
+            return
+        self.bot.add_view(BulletinFeedbackView(self, page_id), message_id=message.id)
+        self._registered_message_ids.add(message.id)
 
     async def sync_bulletins(self) -> tuple[int, int, int]:
         channel = self.bot.get_channel(bulletin_channel_id())
@@ -75,6 +151,13 @@ class BulletinCog(commands.Cog):
             fingerprint = bulletin_fingerprint(item)
             record = state.get(item.page_id, {})
             if record.get("fingerprint") == fingerprint:
+                message_id = record.get("message_id")
+                if message_id:
+                    try:
+                        message = await channel.fetch_message(int(message_id))
+                        await self._register_feedback_view(message, item.page_id)
+                    except (discord.NotFound, discord.HTTPException, ValueError):
+                        pass
                 skipped += 1
                 continue
             message = None
@@ -90,11 +173,18 @@ class BulletinCog(commands.Cog):
                 timestamp=datetime.now(config.get_tenant().tz),
             )
             if message is None:
-                message = await channel.send(embed=embed)
+                message = await channel.send(
+                    embed=embed,
+                    view=BulletinFeedbackView(self, item.page_id),
+                )
                 created += 1
             else:
-                await message.edit(embed=embed)
+                await message.edit(
+                    embed=embed,
+                    view=BulletinFeedbackView(self, item.page_id),
+                )
                 updated += 1
+            await self._register_feedback_view(message, item.page_id)
             state[item.page_id] = {
                 "message_id": str(message.id),
                 "fingerprint": fingerprint,
@@ -132,6 +222,35 @@ class BulletinCog(commands.Cog):
             f"✅ 布告欄同步完成：新增 {created}、更新 {updated}、未變更 {skipped}。",
             ephemeral=True,
         )
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        """使用者直接回覆 Bot 公告時，也將回覆寫入 Notion。"""
+        if message.author.bot or message.reference is None:
+            return
+        reference_id = message.reference.message_id
+        if reference_id is None:
+            return
+        state = _load_state()
+        source_page_id = next(
+            (
+                page_id for page_id, record in state.items()
+                if record.get("message_id") == str(reference_id)
+            ),
+            None,
+        )
+        if source_page_id is None or not message.content.strip():
+            return
+        try:
+            await self.save_feedback(
+                source_page_id=source_page_id,
+                user=message.author,
+                feedback=message.content,
+                message_url=message.jump_url,
+            )
+            await message.reply("✅ 已將你的回覆寫入 Notion 布告欄。", mention_author=False, delete_after=10)
+        except Exception:
+            logger.exception("Discord 公告回覆寫入 Notion 失敗")
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error):
         logger.exception("布告欄指令執行錯誤", exc_info=error)

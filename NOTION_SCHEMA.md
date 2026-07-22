@@ -32,6 +32,8 @@
 - 新增 Notion 項目會發到 Discord；內容或狀態變更會更新原訊息。
 - 同一筆 Notion 項目不會重複發布；Bot 會將對應訊息 ID 保存在本機 `.state/bulletin_sync.json`。
 - Discord 公告包含 Notion 頁面連結，詳細內容以 Notion 為準。
+- 使用者按「回報／留言」或直接回覆 Discord 公告時，Bot 會在同一個布告欄資料庫建立 `🙋 使用回饋`，狀態預設為 `未處理`。
+- 回饋內容寫在新 Notion 頁面的內容區，並包含 Discord 使用者、原公告與 Discord 回覆連結。
 - 可使用 `/布告欄同步` 立即同步，背景同步預設每 5 分鐘執行。
 
 ## Artists｜藝人資料

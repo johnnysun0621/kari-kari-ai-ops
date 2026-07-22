@@ -141,11 +141,17 @@ async def retrieve_block_children(block_id: str) -> list[dict]:
         cursor = data.get("next_cursor")
 
 
-async def create_page(data_source_id: str, properties: dict) -> dict:
+async def create_page(
+    data_source_id: str,
+    properties: dict,
+    children: list[dict] | None = None,
+) -> dict:
     body = {
         "parent": {"type": "data_source_id", "data_source_id": data_source_id},
         "properties": properties,
     }
+    if children:
+        body["children"] = children
     return await _request("POST", "/pages", body)
 
 
