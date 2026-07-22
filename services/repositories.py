@@ -135,9 +135,56 @@ def _read_multi_select(page: dict, name: str) -> list[str]:
     return [i["name"] for i in items]
 
 
+def _read_people_names(page: dict, name: str) -> list[str]:
+    """讀取 Notion person 欄位的顯示名稱；未授權讀取時保留空值。"""
+    people = page.get("properties", {}).get(name, {}).get("people", [])
+    names: list[str] = []
+    for person in people:
+        name_text = person.get("name") or person.get("person", {}).get("email") or ""
+        if name_text:
+            names.append(name_text)
+    return names
+
+
 def _read_unique_id(page: dict, name: str) -> int | None:
     uid = page["properties"].get(name, {}).get("unique_id")
     return uid.get("number") if uid else None
+
+
+# ---------- Notion Bulletin ----------
+
+@dataclass(frozen=True)
+class BulletinItem:
+    page_id: str
+    url: str
+    title: str
+    category: str
+    status: str
+    date: datetime | None
+    people: tuple[str, ...] = ()
+    pinned: bool = False
+
+
+def _to_bulletin(page: dict) -> BulletinItem:
+    return BulletinItem(
+        page_id=page["id"],
+        url=page.get("url", ""),
+        title=_read_title(page, "Name") or "未命名事項",
+        category=_read_select(page, "類別") or "未分類",
+        status=_read_select(page, "狀態") or "未處理",
+        date=_read_date_start(page, "Date"),
+        people=tuple(_read_people_names(page, "人員")),
+        pinned=_read_first_checkbox(page, ["📌 置頂", "置頂"]),
+    )
+
+
+async def get_bulletin_items() -> list[BulletinItem]:
+    """讀取 KariKari Testing 布告欄；排序交給 Discord 顯示層處理。"""
+    pages = await notion_api.query_data_source(
+        config.DS_BULLETIN,
+        sorts=[{"property": "Date", "direction": "descending"}],
+    )
+    return [_to_bulletin(page) for page in pages if not page.get("archived")]
 
 
 # ---------- Artists ----------

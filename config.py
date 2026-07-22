@@ -39,6 +39,8 @@ class TenantConfig:
     task_channel_id: int
     # 公告區（唯讀建議）：正式通告與收集/排課公告；未設定時 fallback 排課頻道
     announce_channel_id: int
+    # Notion 營運布告欄同步到 Discord 的頻道；未設定時使用公告區
+    bulletin_channel_id: int
 
     # === Notion ===
     notion_token: str
@@ -53,6 +55,7 @@ class TenantConfig:
     ds_projects: str
     ds_people: str
     ds_submissions: str
+    ds_bulletin: str
 
     # === 業務常數 ===
     tz: ZoneInfo
@@ -66,6 +69,8 @@ class TenantConfig:
     reminder_interval_minutes: int
     # 預設填寫截止時間（小時，從建立起算）
     default_fill_deadline_hours: int
+    # Notion 布告欄背景同步間隔（分鐘）
+    bulletin_sync_interval_minutes: int = 5
 
     # === Google Drive（作業歸檔）===
     # 總資料夾 ID（底下放各藝人專區）；空字串＝Drive 歸檔未啟用
@@ -99,6 +104,7 @@ def _load_karikari_from_env() -> TenantConfig:
         admin_notify_channel_id=_env_int("ADMIN_NOTIFY_CHANNEL_ID", schedule_channel_id),
         task_channel_id=_env_int("TASK_CHANNEL_ID"),
         announce_channel_id=_env_int("ANNOUNCE_CHANNEL_ID"),
+        bulletin_channel_id=_env_int("BULLETIN_CHANNEL_ID"),
         notion_token=os.getenv("NOTION_TOKEN", ""),
         notion_version="2025-09-03",
         ds_artists=os.getenv("NOTION_DS_ARTISTS", "c0253aec-d18c-47de-a92f-e4a6f9eda641"),
@@ -110,6 +116,7 @@ def _load_karikari_from_env() -> TenantConfig:
         ds_projects=os.getenv("NOTION_DS_PROJECTS", "579092eb-68ae-4f1c-99c5-253d801ee07d"),
         ds_people=os.getenv("NOTION_DS_PEOPLE", "52413671-535d-40de-90fc-2df3c2c61f93"),
         ds_submissions=os.getenv("NOTION_DS_SUBMISSIONS", "370b01ba-64a7-4a1e-96de-e7cb83695d58"),
+        ds_bulletin=os.getenv("NOTION_DS_BULLETIN", "d605806f-097b-823e-ac69-07fa536ba05f"),
         tz=ZoneInfo("Asia/Taipei"),
         # 課程類型（與 Notion Schedule Requests / Course Sessions 的 select 選項一致）
         course_types=(
@@ -121,6 +128,7 @@ def _load_karikari_from_env() -> TenantConfig:
         remind_before_deadline_hours=6,
         reminder_interval_minutes=30,
         default_fill_deadline_hours=24,
+        bulletin_sync_interval_minutes=_env_int("BULLETIN_SYNC_INTERVAL_MINUTES", 5),
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
         teacher_link_secret=os.getenv("TEACHER_LINK_SECRET", ""),
         teacher_link_base_url=os.getenv("TEACHER_LINK_BASE_URL", ""),
@@ -148,6 +156,7 @@ ADMIN_ROLE_ID = TENANT.admin_role_id
 ADMIN_NOTIFY_CHANNEL_ID = TENANT.admin_notify_channel_id
 TASK_CHANNEL_ID = TENANT.task_channel_id
 ANNOUNCE_CHANNEL_ID = TENANT.announce_channel_id
+BULLETIN_CHANNEL_ID = TENANT.bulletin_channel_id
 
 # === Notion ===
 NOTION_TOKEN = TENANT.notion_token
@@ -161,6 +170,7 @@ DS_TASKS = TENANT.ds_tasks
 DS_PROJECTS = TENANT.ds_projects
 DS_PEOPLE = TENANT.ds_people
 DS_SUBMISSIONS = TENANT.ds_submissions
+DS_BULLETIN = TENANT.ds_bulletin
 
 # === 業務常數 ===
 TZ = TENANT.tz
@@ -171,6 +181,7 @@ REMIND_BEFORE_DEADLINE_HOURS = TENANT.remind_before_deadline_hours
 REMINDER_INTERVAL_MINUTES = TENANT.reminder_interval_minutes
 DEFAULT_FILL_DEADLINE_HOURS = TENANT.default_fill_deadline_hours
 DRIVE_ROOT_FOLDER_ID = TENANT.drive_root_folder_id
+BULLETIN_SYNC_INTERVAL_MINUTES = TENANT.bulletin_sync_interval_minutes
 
 # 候選時段在 Notion「候選時段」text 欄位中的格式：每行 "YYYY-MM-DD HH:MM~HH:MM"
 # （內部資料格式，跨租戶共用，不屬於 TenantConfig）

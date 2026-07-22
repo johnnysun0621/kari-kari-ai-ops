@@ -51,7 +51,9 @@ python bot.py
 | `TASK_CHANNEL_ID` | 任務查詢入口頻道 ID（留空則不限制任務指令頻道） |
 | `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（留空則用排課頻道） |
 | `ANNOUNCE_CHANNEL_ID` | 公告區頻道 ID（留空則公告發到時間資訊彙整；建議設唯讀頻道） |
+| `BULLETIN_CHANNEL_ID` | Notion 布告欄同步到的 Discord 頻道 ID（留空則使用公告區） |
 | `NOTION_TOKEN` | Notion → Settings → Integrations 建立的 internal integration secret |
+| `NOTION_DS_BULLETIN` | KariKari Testing「佈告欄／留言板／使用回饋」Data Source ID；預設已內建 |
 
 這些 ID 都是租戶設定：換到其他公司時，頻道名稱 / 用途可以維持一致，但實際 Discord ID、role ID、Notion Data Source ID 會改。  
 KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫或換租戶時，才需要在 `.env` 覆寫 `NOTION_DS_*`。

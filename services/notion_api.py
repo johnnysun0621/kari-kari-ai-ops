@@ -126,6 +126,21 @@ async def retrieve_page(page_id: str) -> dict:
     return await _request("GET", f"/pages/{page_id}")
 
 
+async def retrieve_block_children(block_id: str) -> list[dict]:
+    """讀取 Notion page/block 內容，供布告欄同步顯示摘要。"""
+    results: list[dict] = []
+    cursor: str | None = None
+    while True:
+        path = f"/blocks/{block_id}/children"
+        if cursor:
+            path += f"?start_cursor={cursor}"
+        data = await _request("GET", path)
+        results.extend(data.get("results", []))
+        if not data.get("has_more"):
+            return results
+        cursor = data.get("next_cursor")
+
+
 async def create_page(data_source_id: str, properties: dict) -> dict:
     body = {
         "parent": {"type": "data_source_id", "data_source_id": data_source_id},

@@ -20,6 +20,18 @@ KariKari 是目前測試站；未來若套用到其他公司，指令用途應�
 | `任務查詢入口` | 我的任務、提交任務、任務總覽、任務逾期升級 |
 | `營運內部` | SLA 升級、月度池催填／收齊（`ADMIN_NOTIFY_CHANNEL_ID`） |
 
+### `/布告欄同步`
+
+用途：管理端立即把 KariKari Testing Notion「佈告欄／留言板／使用回饋」同步到 Discord 公告區。
+
+- 只有管理者可使用。
+- 新增的 Notion 項目會發成 Discord 公告。
+- Notion 的狀態、類別、日期、人員或置頂變更時，既有 Discord 公告會更新。
+- 沒有變更的項目不會重複發布。
+- Bot 也會每 5 分鐘自動檢查一次；手動指令適合需要立即更新時使用。
+
+同步目標依序使用 `BULLETIN_CHANNEL_ID`、`ANNOUNCE_CHANNEL_ID`、`SCHEDULE_CHANNEL_ID`。
+
 `TASK_CHANNEL_ID` 有設定時，任務指令只能在 `任務查詢入口` 使用；在其他頻道執行會提示回到指定頻道。
 `SCHEDULE_CHANNEL_ID` 有設定時，時間池與排課指令只能在 `時間資訊彙整` 使用；在其他頻道執行會提示回到指定頻道。
 
