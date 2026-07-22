@@ -155,6 +155,7 @@ class BulletinCog(commands.Cog):
                 if message_id:
                     try:
                         message = await channel.fetch_message(int(message_id))
+                        await message.edit(view=BulletinFeedbackView(self, item.page_id))
                         await self._register_feedback_view(message, item.page_id)
                     except (discord.NotFound, discord.HTTPException, ValueError):
                         pass
