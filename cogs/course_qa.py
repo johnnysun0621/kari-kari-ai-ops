@@ -103,7 +103,11 @@ class CourseQACog(commands.Cog):
         if error:
             return error
         memory = self._memory_by_user.get(str(user.id), {})
-        intent = await course_intent.classify_query(question, records, memory)
+        try:
+            intent = await course_intent.classify_query(question, records, memory)
+        except Exception:
+            logger.exception("課程助教意圖判斷失敗，改用全部課程紀錄")
+            intent = course_intent.QueryIntent(mode="compare")
         selected = course_intent.select_records(records, intent, memory)
         intent_context = json.dumps(
             {"mode": intent.mode, "month": intent.month, "terms": intent.terms},
@@ -116,6 +120,9 @@ class CourseQACog(commands.Cog):
         except course_qa.CourseQAError as exc:
             logger.warning("課程助教未能回答：%s", exc)
             return "⚠️ 課程助教目前尚未完成 API 設定，請聯絡控方。"
+        except Exception:
+            logger.exception("課程助教回答階段發生未預期錯誤")
+            return "⚠️ 課程助教這次未能完成回答，請稍後重試。"
         self._memory_by_user[str(user.id)] = {
             "last_question": question[:500],
             "mode": intent.mode,
@@ -166,37 +173,44 @@ class CourseQACog(commands.Cog):
         """課程助教頻道的自然語言入口；每位藝人使用自己的私人 Thread。"""
         if message.author.bot or not self._is_ai_context(message.channel):
             return
-        question = message.content.strip()
-        if not question or question.startswith("/"):
-            return
-
-        # Thread 內只接受該 Thread 對應的藝人，避免讀到別人的課程資料。
-        if isinstance(message.channel, discord.Thread):
-            owner_id = next(
-                (user_id for user_id, thread_id in self._thread_by_user.items()
-                 if thread_id == message.channel.id),
-                None,
-            )
-            if owner_id != str(message.author.id):
+        try:
+            question = message.content.strip()
+            if not question or question.startswith("/"):
                 return
-            thread = message.channel
-        else:
-            thread = await self._get_or_create_thread(message)
-            if thread is None:
-                await message.reply(
-                    "❌ 無法建立私人課程助教對話，請確認 Bot 有「建立私人 Thread」與「管理訊息」權限。",
-                    mention_author=False,
+
+            # Thread 內只接受該 Thread 對應的藝人，避免讀到別人的課程資料。
+            if isinstance(message.channel, discord.Thread):
+                owner_id = next(
+                    (user_id for user_id, thread_id in self._thread_by_user.items()
+                     if thread_id == message.channel.id),
+                    None,
                 )
-                return
-            try:
-                await message.delete()
-            except discord.Forbidden:
-                logger.warning("課程助教無法刪除公開問題，請補上管理訊息權限")
-                await thread.send("⚠️ 請補上 Bot 的「管理訊息」權限，避免問題留在公開頻道。")
+                if owner_id != str(message.author.id):
+                    return
+                thread = message.channel
+            else:
+                thread = await self._get_or_create_thread(message)
+                if thread is None:
+                    await message.reply(
+                        "❌ 無法建立私人課程助教對話，請確認 Bot 有「建立私人 Thread」與「管理訊息」權限。",
+                        mention_author=False,
+                    )
+                    return
+                try:
+                    await message.delete()
+                except (discord.Forbidden, discord.HTTPException):
+                    logger.warning("課程助教無法刪除公開問題，請補上管理訊息權限")
+                    await thread.send("⚠️ 請補上 Bot 的「管理訊息」權限，避免問題留在公開頻道。")
 
-        waiting = await thread.send("⏳ 我正在整理你的課程紀錄，請稍候……")
-        answer = await self._answer_for_user(message.author, question)
-        await waiting.edit(content=answer)
+            waiting = await thread.send("⏳ 我正在整理你的課程紀錄，請稍候……")
+            answer = await self._answer_for_user(message.author, question)
+            await waiting.edit(content=answer)
+        except Exception:
+            logger.exception("課程助教訊息處理失敗")
+            try:
+                await message.channel.send("⚠️ 課程助教處理失敗，請稍後再試；Bot 仍在運作。")
+            except (discord.Forbidden, discord.HTTPException):
+                logger.exception("課程助教錯誤通知也發送失敗")
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error):
         logger.exception("課程問答指令失敗", exc_info=error)
