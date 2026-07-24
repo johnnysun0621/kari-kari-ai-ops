@@ -7,10 +7,14 @@ import time
 from io import BytesIO
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
+from urllib.parse import urlparse
 
 import httpx
+from docx import Document
+from openpyxl import load_workbook
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+from pptx import Presentation
 
 import config
 from services import notion_api, overlap, time_collection
@@ -18,8 +22,8 @@ from services.notion_api import NotionAPIError
 
 logger = logging.getLogger(__name__)
 
-_MAX_PDF_BYTES = 20 * 1024 * 1024
-_MAX_PDF_TEXT_CHARS = 12000
+_MAX_FILE_BYTES = 20 * 1024 * 1024
+_MAX_FILE_TEXT_CHARS = 12000
 
 # ---------- property payload builders ----------
 
@@ -233,8 +237,60 @@ def _file_block_url(block: dict) -> str:
     return ""
 
 
-async def _pdf_block_text(block: dict) -> str:
-    """下載 Notion PDF file block 並抽取文字；失敗時略過並保留其他內容。"""
+def _file_block_name(block: dict, url: str) -> str:
+    candidates = [block.get("file"), block.get("external")]
+    for data in candidates:
+        if isinstance(data, dict) and isinstance(data.get("name"), str) and data["name"]:
+            return data["name"]
+    return urlparse(url).path.rsplit("/", 1)[-1]
+
+
+def _file_extension(block: dict, url: str, content_type: str = "") -> str:
+    name = _file_block_name(block, url).lower().split("?", 1)[0]
+    if "." in name:
+        return "." + name.rsplit(".", 1)[-1]
+    return {
+        "application/pdf": ".pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    }.get(content_type.split(";", 1)[0].lower(), "")
+
+
+def _extract_file_text(data: bytes, extension: str) -> str:
+    if extension == ".pdf":
+        reader = PdfReader(BytesIO(data))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    if extension == ".docx":
+        document = Document(BytesIO(data))
+        paragraphs = [paragraph.text for paragraph in document.paragraphs]
+        paragraphs.extend(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+        return "\n".join(text for text in paragraphs if text.strip())
+    if extension == ".pptx":
+        presentation = Presentation(BytesIO(data))
+        return "\n".join(
+            shape.text
+            for slide in presentation.slides
+            for shape in slide.shapes
+            if hasattr(shape, "text") and shape.text.strip()
+        )
+    if extension == ".xlsx":
+        workbook = load_workbook(BytesIO(data), read_only=True, data_only=True)
+        lines = []
+        for sheet in workbook.worksheets:
+            lines.append(f"【工作表：{sheet.title}】")
+            for row in sheet.iter_rows(values_only=True):
+                values = [str(value) for value in row if value is not None]
+                if values:
+                    lines.append("｜".join(values))
+        return "\n".join(lines)
+    if extension in {".txt", ".md", ".csv", ".json", ".yaml", ".yml"}:
+        return data.decode("utf-8", errors="replace")
+    return ""
+
+
+async def _file_block_text(block: dict) -> str:
+    """下載 Notion file block 並抽取常見文件文字；失敗時略過其他內容。"""
     url = _file_block_url(block)
     if not url:
         return ""
@@ -242,14 +298,16 @@ async def _pdf_block_text(block: dict) -> str:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(url)
             response.raise_for_status()
-        if len(response.content) > _MAX_PDF_BYTES:
-            logger.warning("課程 PDF 超過可解析大小上限：%d bytes", len(response.content))
+        if len(response.content) > _MAX_FILE_BYTES:
+            logger.warning("課程檔案超過可解析大小上限：%d bytes", len(response.content))
             return ""
-        reader = PdfReader(BytesIO(response.content))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        return text.strip()[:_MAX_PDF_TEXT_CHARS]
-    except (httpx.HTTPError, OSError, PdfReadError, ValueError) as exc:
-        logger.warning("讀取課程 PDF 失敗：%s", type(exc).__name__)
+        extension = _file_extension(block, url, response.headers.get("content-type", ""))
+        text = _extract_file_text(response.content, extension)
+        if not text and extension not in {".pdf", ".docx", ".pptx", ".xlsx"}:
+            logger.info("略過不支援的課程檔案格式：%s", extension or "unknown")
+        return text.strip()[:_MAX_FILE_TEXT_CHARS]
+    except (httpx.HTTPError, OSError, PdfReadError, ValueError, TypeError, KeyError) as exc:
+        logger.warning("讀取課程檔案失敗：%s", type(exc).__name__)
         return ""
 
 
@@ -273,9 +331,9 @@ async def _page_content(page_id: str, *, _visited: set[str] | None = None) -> st
         block_type = block.get("type")
         data = block.get(block_type, {}) if block_type else {}
         if block_type == "file":
-            pdf_text = await _pdf_block_text(block)
-            if pdf_text:
-                lines.append(pdf_text)
+            file_text = await _file_block_text(block)
+            if file_text:
+                lines.append(file_text)
         elif block_type == "synced_block":
             source = data.get("synced_from") if isinstance(data, dict) else None
             child_id = source.get("block_id") if isinstance(source, dict) else None
