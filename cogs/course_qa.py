@@ -138,7 +138,7 @@ class CourseQACog(commands.Cog):
             )
         except course_qa.CourseQAError as exc:
             logger.warning("課程助教未能回答：%s", exc)
-            return "⚠️ 課程助教目前尚未完成 API 設定，請聯絡控方。"
+            return exc.user_message
         except Exception:
             logger.exception("課程助教回答階段發生未預期錯誤")
             return "⚠️ 課程助教這次未能完成回答，請稍後重試。"

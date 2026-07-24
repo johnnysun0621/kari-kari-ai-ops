@@ -6,13 +6,15 @@ from services.repositories import CourseMeetingRecord
 
 
 class CourseQAError(Exception):
-    pass
+    def __init__(self, message: str, user_message: str | None = None):
+        super().__init__(message)
+        self.user_message = user_message or "⚠️ 課程助教目前無法完成回答，請稍後再試。"
 
 
 def _record_text(record: CourseMeetingRecord) -> str:
     date_text = record.date.strftime("%Y-%m-%d") if record.date else "未填日期"
     body = record.content or record.summary or "（沒有可讀取的內容）"
-    return f"【{record.title}｜{date_text}】\n{body[:6000]}\n來源：{record.url}"
+    return f"【{record.title}｜{date_text}】\n{body[:3500]}\n來源：{record.url}"
 
 
 async def answer_course_question(
@@ -23,8 +25,11 @@ async def answer_course_question(
 ) -> str:
     tenant = config.get_tenant()
     if not tenant.llm_api_key:
-        raise CourseQAError("尚未設定 LLM_API_KEY")
-    context = "\n\n".join(_record_text(record) for record in records)[:24000]
+        raise CourseQAError(
+            "尚未設定 LLM_API_KEY",
+            "⚠️ 課程助教尚未設定 API，請聯絡控方。",
+        )
+    context = "\n\n".join(_record_text(record) for record in records)[:16000]
     payload = {
         "model": tenant.llm_model,
         "temperature": 0.2,
@@ -44,7 +49,7 @@ async def answer_course_question(
             },
         ],
     }
-    async with httpx.AsyncClient(timeout=45) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         try:
             response = await client.post(
                 f"{tenant.llm_base_url}/chat/completions",
@@ -52,8 +57,22 @@ async def answer_course_question(
                 json=payload,
             )
             response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise CourseQAError(
+                "LLM API 回應逾時",
+                "⚠️ 課程助教回應逾時，請稍後再試。",
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:300].replace("\n", " ")
+            raise CourseQAError(
+                f"LLM API HTTP {exc.response.status_code}: {body}",
+                "⚠️ 課程助教 API 暫時無法回應，請稍後再試。",
+            ) from exc
         except httpx.HTTPError as exc:
-            raise CourseQAError("LLM API 呼叫失敗") from exc
+            raise CourseQAError(
+                "LLM API 網路呼叫失敗",
+                "⚠️ 課程助教暫時連不上 API，請稍後再試。",
+            ) from exc
     data = response.json()
     try:
         answer = data["choices"][0]["message"]["content"].strip()
