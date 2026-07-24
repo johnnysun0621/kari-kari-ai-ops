@@ -19,6 +19,7 @@ class QueryIntent:
     month: str | None = None
     record_ids: tuple[str, ...] = ()
     terms: tuple[str, ...] = ()
+    attachment_names: tuple[str, ...] = ()
 
 
 def _month_from_text(text: str) -> str | None:
@@ -43,7 +44,13 @@ def _fallback_intent(question: str, records: list[CourseMeetingRecord]) -> Query
         matches = [record.page_id for record in records
                    if record.date and record.date.strftime("%Y-%m") == month]
         return QueryIntent(mode="month_overview", month=month, record_ids=tuple(matches))
-    return QueryIntent(record_ids=tuple(matches))
+    attachment_names = tuple(
+        attachment.name
+        for record in records
+        for attachment in record.attachments
+        if attachment.name.lower() in normalized
+    )
+    return QueryIntent(record_ids=tuple(matches), attachment_names=attachment_names)
 
 
 def _is_other_followup(question: str, memory: dict | None) -> bool:
@@ -57,7 +64,8 @@ def _catalog(records: list[CourseMeetingRecord]) -> str:
         date_text = record.date.strftime("%Y-%m-%d") if record.date else "未填日期"
         summary = (record.summary or "").replace("\n", " ")[:180]
         snippet = (record.content or "").replace("\n", " ")[:240]
-        lines.append(f"{record.page_id} | {date_text} | {record.title} | {summary} | {snippet}")
+        attachments = ", ".join(item.name for item in record.attachments) or "無附件"
+        lines.append(f"{record.page_id} | {date_text} | {record.title} | 附件：{attachments} | {summary} | {snippet}")
     return "\n".join(lines)
 
 
@@ -88,9 +96,9 @@ async def classify_query(
                 "role": "system",
                 "content": (
                     "你是課程資料檢索路由器。只依據課程目錄選出相關 page_id，"
-                    "不要回答問題。回傳 JSON：mode、month、record_ids、terms。"
+                    "不要回答問題。回傳 JSON：mode、month、record_ids、terms、attachment_names。"
                     "mode 可用 month_overview、course_question、transcript_search、"
-                    "task_lookup、compare。record_ids 必須來自目錄；找不到就空陣列。"
+                    "task_lookup、compare。record_ids 和 attachment_names 必須來自目錄；找不到就空陣列。"
                 ),
             },
             {
@@ -110,12 +118,20 @@ async def classify_query(
         raw = response.json()["choices"][0]["message"]["content"]
         data = _parse_json(raw)
         valid_ids = {record.page_id for record in records}
+        valid_attachment_names = {
+            attachment.name for record in records for attachment in record.attachments
+        }
         record_ids = tuple(str(value) for value in data.get("record_ids", []) if str(value) in valid_ids)
+        attachment_names = tuple(
+            str(value) for value in data.get("attachment_names", [])
+            if str(value) in valid_attachment_names
+        )
         return QueryIntent(
             mode=str(data.get("mode", "course_question")),
             month=data.get("month") or _month_from_text(question),
             record_ids=record_ids,
             terms=tuple(str(value) for value in data.get("terms", [])[:8]),
+            attachment_names=attachment_names,
         )
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
         return _fallback_intent(question, records)

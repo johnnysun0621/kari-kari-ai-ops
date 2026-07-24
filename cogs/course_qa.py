@@ -39,6 +39,7 @@ class CourseQACog(commands.Cog):
         self._thread_by_user = self._load_thread_state()
         self._memory_by_user = self._load_memory_state()
         self._records_cache: dict[int, list[repositories.CourseMeetingRecord]] = {}
+        self._catalog_sent_threads: set[int] = set()
         self._warm_task: asyncio.Task | None = None
 
     async def cog_load(self):
@@ -129,12 +130,21 @@ class CourseQACog(commands.Cog):
             intent = course_intent.QueryIntent(mode="compare")
         selected = course_intent.select_records(records, intent, memory)
         intent_context = json.dumps(
-            {"mode": intent.mode, "month": intent.month, "terms": intent.terms},
+            {
+                "mode": intent.mode,
+                "month": intent.month,
+                "terms": intent.terms,
+                "attachment_names": intent.attachment_names,
+            },
             ensure_ascii=False,
         )
         try:
             answer = await course_qa.answer_course_question(
-                artist.name, question, selected, intent_context=intent_context
+                artist.name,
+                question,
+                selected,
+                intent_context=intent_context,
+                attachment_names=intent.attachment_names,
             )
         except course_qa.CourseQAError as exc:
             logger.warning("課程助教未能回答：%s", exc)
@@ -147,9 +157,28 @@ class CourseQACog(commands.Cog):
             "mode": intent.mode,
             "month": intent.month,
             "record_ids": [record.page_id for record in selected[:8]],
+            "attachment_names": list(intent.attachment_names),
         }
         self._save_memory_state()
         return f"🤖 **課程助教**\n\n{answer}"
+
+    async def _attachment_catalog_for_user(self, user: discord.abc.User) -> str | None:
+        artist, records, error = await self._load_records_for_user(user)
+        if error:
+            return error
+        pages = []
+        for record in records or []:
+            if not record.attachments:
+                continue
+            files = "、".join(attachment.name for attachment in record.attachments)
+            pages.append(f"・[{record.title}]({record.url})\n  檔案：{files}")
+        if not pages:
+            return None
+        return (
+            f"📚 **{artist.name} 的課程檔案索引**\n\n"
+            + "\n".join(pages)
+            + "\n\n請直接說明你要查哪個課程頁或檔案，再自由提問。"
+        )
 
     async def _get_or_create_thread(self, message: discord.Message) -> discord.Thread | None:
         thread_id = self._thread_by_user.get(str(message.author.id))
@@ -221,6 +250,13 @@ class CourseQACog(commands.Cog):
                 except (discord.Forbidden, discord.HTTPException):
                     logger.warning("課程助教無法刪除公開問題，請補上管理訊息權限")
                     await thread.send("⚠️ 請補上 Bot 的「管理訊息」權限，避免問題留在公開頻道。")
+
+            if thread.id not in self._catalog_sent_threads:
+                self._catalog_sent_threads.add(thread.id)
+                catalog = await self._attachment_catalog_for_user(message.author)
+                if catalog:
+                    await thread.send(catalog)
+                    return
 
             waiting = await thread.send("⏳ 我正在整理你的課程紀錄，請稍候……")
             answer = await self._answer_for_user(message.author, question)

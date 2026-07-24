@@ -203,6 +203,13 @@ async def get_bulletin_items() -> list[BulletinItem]:
 
 
 @dataclass(frozen=True)
+class CourseAttachment:
+    name: str
+    extension: str
+    text: str
+
+
+@dataclass(frozen=True)
 class CourseMeetingRecord:
     page_id: str
     url: str
@@ -213,6 +220,7 @@ class CourseMeetingRecord:
     artist_page_ids: tuple[str, ...]
     task_page_ids: tuple[str, ...]
     project_page_ids: tuple[str, ...]
+    attachments: tuple[CourseAttachment, ...] = ()
 
 
 def _block_plain_text(block: dict) -> str:
@@ -314,7 +322,12 @@ async def _file_block_text(block: dict) -> str:
         return ""
 
 
-async def _page_content(page_id: str, *, _visited: set[str] | None = None) -> str:
+async def _page_content(
+    page_id: str,
+    *,
+    _visited: set[str] | None = None,
+    _attachments: list[CourseAttachment] | None = None,
+) -> str:
     """讀取頁面正文、巢狀區塊、Synced Block 與 PDF file block。"""
     visited = _visited or set()
     if page_id in visited:
@@ -334,18 +347,21 @@ async def _page_content(page_id: str, *, _visited: set[str] | None = None) -> st
         block_type = block.get("type")
         data = block.get(block_type, {}) if block_type else {}
         if block_type == "file":
+            file_url = _file_block_url(block)
+            file_name = _file_block_name(block, file_url) or "未命名附件"
+            extension = _file_extension(block, file_url)
             file_text = await _file_block_text(block)
-            if file_text:
-                lines.append(file_text)
+            if _attachments is not None:
+                _attachments.append(CourseAttachment(file_name, extension, file_text))
         elif block_type == "synced_block":
             source = data.get("synced_from") if isinstance(data, dict) else None
             child_id = source.get("block_id") if isinstance(source, dict) else None
             if child_id:
-                nested = await _page_content(child_id, _visited=visited)
+                nested = await _page_content(child_id, _visited=visited, _attachments=_attachments)
                 if nested:
                     lines.append(nested)
         elif block.get("has_children"):
-            nested = await _page_content(block["id"], _visited=visited)
+            nested = await _page_content(block["id"], _visited=visited, _attachments=_attachments)
             if nested:
                 lines.append(nested)
     return "\n".join(lines)
@@ -383,16 +399,19 @@ async def get_course_meetings_for_artist(artist_page_id: str) -> list[CourseMeet
         )
         if not related:
             continue
+        attachments: list[CourseAttachment] = []
+        content = await _page_content(page["id"], _attachments=attachments)
         records.append(CourseMeetingRecord(
             page_id=page["id"],
             url=page.get("url", ""),
             title=_read_title(page, "Name"),
             date=_read_date_start(page, "Date"),
             summary=_read_rich_text(page, "會議摘要"),
-            content=await _page_content(page["id"]),
+            content=content,
             artist_page_ids=artists,
             task_page_ids=task_ids,
             project_page_ids=project_ids,
+            attachments=tuple(attachments),
         ))
     return records
 

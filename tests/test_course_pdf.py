@@ -1,4 +1,5 @@
-from services.repositories import _extract_file_text, _file_block_url, _file_extension
+from services.course_qa import _record_text
+from services.repositories import CourseAttachment, CourseMeetingRecord, _extract_file_text, _file_block_url, _file_extension
 
 
 def test_file_block_url_supports_notion_hosted_file():
@@ -23,3 +24,21 @@ def test_file_extension_uses_name_or_content_type():
 
 def test_plain_text_file_extraction():
     assert _extract_file_text("課程重點".encode(), ".txt") == "課程重點"
+
+
+def test_attachment_text_is_not_sent_without_explicit_selection():
+    record = CourseMeetingRecord(
+        page_id="page",
+        url="https://notion.so/page",
+        title="課程",
+        date=None,
+        summary="頁面摘要",
+        content="頁面正文",
+        artist_page_ids=(),
+        task_page_ids=(),
+        project_page_ids=(),
+        attachments=(CourseAttachment("講義.pdf", ".pdf", "附件正文"),),
+    )
+
+    assert "附件正文" not in _record_text(record)
+    assert "附件正文" in _record_text(record, ("講義.pdf",))
