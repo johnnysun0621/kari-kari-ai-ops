@@ -248,8 +248,8 @@ class CourseQACog(commands.Cog):
                 try:
                     await message.delete()
                 except (discord.Forbidden, discord.HTTPException):
+                    # 沒有管理訊息權限時仍繼續私人回答，但不在公開頻道打擾使用者。
                     logger.warning("課程助教無法刪除公開問題，請補上管理訊息權限")
-                    await thread.send("⚠️ 請補上 Bot 的「管理訊息」權限，避免問題留在公開頻道。")
 
             if thread.id not in self._catalog_sent_threads:
                 self._catalog_sent_threads.add(thread.id)
