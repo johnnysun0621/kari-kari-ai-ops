@@ -86,14 +86,17 @@ class CourseQACog(commands.Cog):
         artist = await repositories.find_artist_by_discord_id(user.id)
         if artist is None:
             return None, None, "❌ 找不到你的藝人資料，請聯絡控方。"
-        records = self._records_cache.get(user.id)
-        if records is None:
-            try:
-                records = await repositories.get_course_meetings_for_artist(artist.page_id)
-            except Exception as exc:
-                logger.exception("讀取藝人課程紀錄失敗")
-                return artist, None, f"❌ 讀取課程紀錄失敗，請稍後再試。({type(exc).__name__})"
+        cached_records = self._records_cache.get(user.id)
+        try:
+            # Notion 是課程資料的來源；每次提問先同步，避免啟動預熱後看不到新紀錄。
+            records = await repositories.get_course_meetings_for_artist(artist.page_id)
             self._records_cache[user.id] = records
+        except Exception as exc:
+            logger.exception("讀取藝人課程紀錄失敗")
+            if cached_records is None:
+                return artist, None, f"❌ 讀取課程紀錄失敗，請稍後再試。({type(exc).__name__})"
+            logger.warning("改用上次成功快取的課程紀錄：%s", artist.name)
+            records = cached_records
         if not records:
             return artist, [], "目前沒有可供你查詢的課程紀錄。請確認控方已勾選 Notion 的「藝人可見」。"
         return artist, records, None
