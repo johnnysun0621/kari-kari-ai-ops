@@ -15,6 +15,8 @@
 8. [ARCHITECTURE.md](ARCHITECTURE.md)：工程架構與程式責任切分。
 9. [TESTING.md](TESTING.md)：測試與驗收方式。
 
+課程助教近期新增規則：先顯示藝人自己的課程檔案索引，再依使用者指定的課程頁／檔案檢索；不要把所有附件文字預先混入回答 context。詳見 `DISCORD_COMMANDS.md`、`NOTION_SCHEMA.md` 的課程助教段落。
+
 ## 目前產品方向
 
 KariKari 是第一個測試租戶，但此專案不是一次性客製。

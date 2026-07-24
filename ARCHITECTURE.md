@@ -42,6 +42,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - `cogs.scheduling_artist`
 - `cogs.tasks_artist`
 - `cogs.reminders`
+- `cogs.course_qa`
 
 ## 設定層
 
@@ -164,6 +165,17 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 提醒 loop 間隔由 `REMINDER_INTERVAL_MINUTES` 控制，目前預設 30 分鐘。
 
+### `cogs/course_qa.py`
+
+課程助教的 Discord 入口。
+
+- `AI_CHANNEL_ID` 頻道支援自然語言，不需要 slash command 或 mention Bot。
+- 每位藝人使用自己的私人 Thread，並以 Discord User ID 對應 Notion Artists。
+- 新 Thread 首次先顯示課程附件索引；使用者指定課程頁／檔案後才進行內容問答。
+- 每次提問重新讀取 Notion；Notion 暫時失敗時才退回上次成功快取。
+- 長回覆會切成 Discord 可接受的多則訊息。
+- 公開問題刪除失敗只寫 log，不把權限錯誤洗到頻道。
+
 ## Services
 
 ### `services/notion_api.py`
@@ -244,6 +256,12 @@ Google Drive API 操作。
 - find-or-create 資料夾。
 - 上傳 Discord attachment 到 Google Drive。
 - 回傳 Drive File ID / URL。
+
+### `services/course_intent.py` / `services/course_qa.py`
+
+- `course_intent` 將自然語言問題整理成月份、課程、主題、逐字稿搜尋或附件名稱等檢索條件。
+- `course_qa` 將頁面正文與使用者明確指定的附件分開組成 LLM context。
+- LLM 只能根據已授權的課程紀錄回答，找不到內容時必須說明資料不足。
 
 ### `services/audit.py`
 
