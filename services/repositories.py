@@ -225,7 +225,10 @@ def _file_block_url(block: dict) -> str:
     """取得 Notion file block 的 signed URL 或 external URL。"""
     if block.get("type") != "file":
         return ""
-    candidates = [block.get("file"), block.get("external")]
+    candidates = []
+    for root in (block.get("file"), block.get("external")):
+        if isinstance(root, dict):
+            candidates.extend([root, root.get("file"), root.get("external")])
     for data in candidates:
         if not isinstance(data, dict):
             continue

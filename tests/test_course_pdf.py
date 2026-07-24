@@ -10,6 +10,11 @@ def test_file_block_url_supports_external_file_shapes():
     assert _file_block_url({"type": "file", "file": {"external": {"url": "https://drive.example/b.pdf"}}}) == "https://drive.example/b.pdf"
 
 
+def test_file_block_url_supports_nested_notion_file_shape():
+    block = {"type": "file", "file": {"name": "講義.pdf", "file": {"url": "https://signed.example/c.pdf"}}}
+    assert _file_block_url(block) == "https://signed.example/c.pdf"
+
+
 def test_file_extension_uses_name_or_content_type():
     block = {"type": "file", "file": {"name": "課程講義.PPTX"}}
     assert _file_extension(block, "https://signed.example/file") == ".pptx"
