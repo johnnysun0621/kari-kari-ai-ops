@@ -15,6 +15,22 @@ from services import course_intent, course_qa, repositories
 logger = logging.getLogger(__name__)
 _THREAD_STATE_PATH = Path(".state/course_qa_threads.json")
 _MEMORY_STATE_PATH = Path(".state/course_qa_memory.json")
+_DISCORD_MESSAGE_LIMIT = 1900
+
+
+def _split_discord_message(content: str, limit: int = _DISCORD_MESSAGE_LIMIT) -> list[str]:
+    """切成低於 Discord 2,000 字限制的訊息，優先在換行處切斷。"""
+    chunks: list[str] = []
+    remaining = content.strip()
+    while len(remaining) > limit:
+        cut = remaining.rfind("\n", 0, limit + 1)
+        if cut < limit // 2:
+            cut = limit
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks or [""]
 
 
 class CourseQACog(commands.Cog):
@@ -167,9 +183,10 @@ class CourseQACog(commands.Cog):
         if not await channel_guard.ensure_ai_channel(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await interaction.followup.send(
-            await self._answer_for_user(interaction.user, 問題), ephemeral=True
-        )
+        chunks = _split_discord_message(await self._answer_for_user(interaction.user, 問題))
+        await interaction.followup.send(chunks[0], ephemeral=True)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, ephemeral=True)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -207,7 +224,10 @@ class CourseQACog(commands.Cog):
 
             waiting = await thread.send("⏳ 我正在整理你的課程紀錄，請稍候……")
             answer = await self._answer_for_user(message.author, question)
-            await waiting.edit(content=answer)
+            chunks = _split_discord_message(answer)
+            await waiting.edit(content=chunks[0])
+            for chunk in chunks[1:]:
+                await thread.send(chunk)
         except Exception:
             logger.exception("課程助教訊息處理失敗")
             try:
