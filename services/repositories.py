@@ -4,14 +4,22 @@ Notion 欄位名稱是中文（與正式資料庫完全一致），若 Notion �
 """
 import logging
 import time
+from io import BytesIO
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
+
+import httpx
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 import config
 from services import notion_api, overlap, time_collection
 from services.notion_api import NotionAPIError
 
 logger = logging.getLogger(__name__)
+
+_MAX_PDF_BYTES = 20 * 1024 * 1024
+_MAX_PDF_TEXT_CHARS = 12000
 
 # ---------- property payload builders ----------
 
@@ -209,8 +217,44 @@ def _block_plain_text(block: dict) -> str:
     return "".join(item.get("plain_text", "") for item in rich_text).strip()
 
 
+def _file_block_url(block: dict) -> str:
+    """取得 Notion file block 的 signed URL 或 external URL。"""
+    if block.get("type") != "file":
+        return ""
+    candidates = [block.get("file"), block.get("external")]
+    for data in candidates:
+        if not isinstance(data, dict):
+            continue
+        source = data.get("url")
+        if not source and isinstance(data.get("external"), dict):
+            source = data["external"].get("url")
+        if isinstance(source, str) and source:
+            return source
+    return ""
+
+
+async def _pdf_block_text(block: dict) -> str:
+    """下載 Notion PDF file block 並抽取文字；失敗時略過並保留其他內容。"""
+    url = _file_block_url(block)
+    if not url:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+        if len(response.content) > _MAX_PDF_BYTES:
+            logger.warning("課程 PDF 超過可解析大小上限：%d bytes", len(response.content))
+            return ""
+        reader = PdfReader(BytesIO(response.content))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        return text.strip()[:_MAX_PDF_TEXT_CHARS]
+    except (httpx.HTTPError, OSError, PdfReadError, ValueError) as exc:
+        logger.warning("讀取課程 PDF 失敗：%s", type(exc).__name__)
+        return ""
+
+
 async def _page_content(page_id: str, *, _visited: set[str] | None = None) -> str:
-    """讀取頁面正文，包含巢狀區塊與 Synced Block 來源。"""
+    """讀取頁面正文、巢狀區塊、Synced Block 與 PDF file block。"""
     visited = _visited or set()
     if page_id in visited:
         return ""
@@ -228,7 +272,11 @@ async def _page_content(page_id: str, *, _visited: set[str] | None = None) -> st
             lines.append(text)
         block_type = block.get("type")
         data = block.get(block_type, {}) if block_type else {}
-        if block_type == "synced_block":
+        if block_type == "file":
+            pdf_text = await _pdf_block_text(block)
+            if pdf_text:
+                lines.append(pdf_text)
+        elif block_type == "synced_block":
             source = data.get("synced_from") if isinstance(data, dict) else None
             child_id = source.get("block_id") if isinstance(source, dict) else None
             if child_id:
