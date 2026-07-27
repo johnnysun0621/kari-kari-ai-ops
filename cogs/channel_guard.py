@@ -44,6 +44,11 @@ def announce_channel_id() -> int:
 
     有設定 ANNOUNCE_CHANNEL_ID 就發公告區（唯讀頻道也能點按鈕）；
     未設定時 fallback 回時間資訊彙整（SCHEDULE_CHANNEL_ID），行為與舊版相同。
+
+    刻意讀模組別名而非 config.get_tenant()：TenantConfig 是 frozen dataclass，
+    測試無法 monkeypatch 它的欄位，可變的模組別名才是測試會換值的介面
+    （見 tests/test_command_permissions.py）。TenantConfig.resolved_announce_channel_id
+    這個 property 目前沒人呼叫，是同樣邏輯的備份實作，不是忘記接的死碼。
     """
     return config.ANNOUNCE_CHANNEL_ID or config.SCHEDULE_CHANNEL_ID
 

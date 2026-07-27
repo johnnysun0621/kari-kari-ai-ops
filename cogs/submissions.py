@@ -83,6 +83,15 @@ class PendingReviewFeedbackProofUpload:
         return now > self.expires_at
 
 
+def expired_pending_keys(pending_by_user: dict, now: datetime) -> list:
+    """回傳已過期的 pending 項目 key；純函式，供背景清理與測試共用。
+
+    使用者若中途放棄上傳（從沒再傳訊息），pending 項目原本只在
+    「使用者下次傳訊息」時才被動清掉，長期運行下會累積無主的 dead entry。
+    """
+    return [key for key, value in pending_by_user.items() if value.is_expired(now)]
+
+
 def submission_type_for_input(link_url: str, content: str) -> str | None:
     """依實際填寫內容決定 Submissions.提交類型；兩者皆空回 None（呼叫端擋下）。"""
     if link_url and content:
@@ -1367,8 +1376,19 @@ class SubmissionsCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
+        """所有 pending 附件流程的統一入口；例外全部攔在這裡，不讓使用者的檔案憑空消失。"""
         if message.author.bot:
             return
+        try:
+            await self._dispatch_pending_message(message)
+        except Exception:
+            logger.exception("提交/審核附件訊息處理失敗")
+            try:
+                await message.channel.send("⚠️ 處理你剛剛的訊息時發生錯誤，請重新執行指令再試一次。")
+            except (discord.Forbidden, discord.HTTPException):
+                logger.exception("提交/審核錯誤通知也發送失敗")
+
+    async def _dispatch_pending_message(self, message: discord.Message) -> None:
         pending_feedback = self.pending_review_feedback_files.get(message.author.id)
         if pending_feedback is not None:
             await self._handle_pending_review_feedback_message(message, pending_feedback)
@@ -1801,8 +1821,20 @@ class SubmissionsCog(commands.Cog):
             ephemeral=True,
         )
 
+    def _sweep_expired_pending(self) -> None:
+        """清掉逾時未完成的上傳/回饋入口，避免使用者中途放棄後 dict 一直長大。"""
+        now = datetime.now(config.get_tenant().tz)
+        for pending_by_user in (
+            self.pending_file_submissions,
+            self.pending_review_feedback_files,
+            self.pending_review_feedback_proofs,
+        ):
+            for key in expired_pending_keys(pending_by_user, now):
+                pending_by_user.pop(key, None)
+
     @tasks.loop(minutes=1)
     async def review_poll_loop(self):
+        self._sweep_expired_pending()
         try:
             submissions = await repositories.get_pending_review_notifications()
         except Exception:

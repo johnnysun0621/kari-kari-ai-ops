@@ -39,8 +39,16 @@ class KariKariBot(commands.Bot):
 
     async def setup_hook(self):
         for ext in EXTENSIONS:
-            await self.load_extension(ext)
-        self.teacher_web_runner = await teacher_web.start(self)
+            try:
+                await self.load_extension(ext)
+            except Exception:
+                # 單一擴充套件的問題（例如某個 cog 的狀態檔壞了）不該讓整個
+                # bot 開不起來——寧可少一個功能，也不要排課／提交全部一起掛。
+                logger.exception("擴充套件載入失敗，其餘功能仍會繼續啟動：%s", ext)
+        try:
+            self.teacher_web_runner = await teacher_web.start(self)
+        except Exception:
+            logger.exception("老師確認 web 服務啟動失敗，Discord 功能仍會繼續啟動")
         # persistent 按鈕：bot 重啟後公告上的「填寫可用時間」仍可用
         self.add_dynamic_items(FillAvailabilityButton)
         self.add_dynamic_items(PoolAvailabilityButton)
@@ -71,9 +79,16 @@ class KariKariBot(commands.Bot):
             )
 
     async def close(self):
+        # 逐步關閉、互不擋路：其中一步失敗也要繼續往下關，避免卡在半關閉狀態。
         if self.teacher_web_runner is not None:
-            await self.teacher_web_runner.cleanup()
-        await notion_api.close_client()
+            try:
+                await self.teacher_web_runner.cleanup()
+            except Exception:
+                logger.exception("老師確認 web 服務關閉失敗")
+        try:
+            await notion_api.close_client()
+        except Exception:
+            logger.exception("Notion 連線關閉失敗")
         await super().close()
 
 

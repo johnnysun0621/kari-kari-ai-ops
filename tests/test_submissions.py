@@ -12,6 +12,7 @@ from cogs.submissions import (
     PendingReviewFeedbackProofUpload,
     ReviewFeedbackDriveTarget,
     direct_upload_size_error,
+    expired_pending_keys,
     feedback_with_attachment_links,
     file_upload_wait_label,
     is_valid_link,
@@ -398,6 +399,27 @@ class TestPendingReviewFeedbackProofUpload:
 
         assert not pending.is_expired(now + timedelta(minutes=179, seconds=59))
         assert pending.is_expired(now + timedelta(minutes=180, seconds=1))
+
+
+class TestExpiredPendingKeys:
+    """穩定度加固：使用者中途放棄上傳時，pending dict 要能被背景清理掃到。"""
+
+    def test_returns_only_expired_keys(self):
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
+        fresh = PendingFileSubmission(
+            task=task(submit_method="檔案"), artist=artist(), channel_id=1,
+            created_at=now, expires_at=now + timedelta(minutes=10),
+        )
+        stale = PendingFileSubmission(
+            task=task(submit_method="檔案"), artist=artist(), channel_id=1,
+            created_at=now - timedelta(hours=4), expires_at=now - timedelta(minutes=1),
+        )
+        pending_by_user = {111: fresh, 222: stale}
+
+        assert expired_pending_keys(pending_by_user, now) == [222]
+
+    def test_empty_dict_returns_empty_list(self):
+        assert expired_pending_keys({}, datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)) == []
 
 
 class TestReviewDisplayHelpers:

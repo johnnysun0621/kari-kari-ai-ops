@@ -1,8 +1,9 @@
 """老師確認 web 服務（aiohttp，與 bot 同 process 同 event loop）。
 
-只暴露 /confirm/{token} 兩個路由；token 由 services/teacher_confirm 簽名驗證，
-確認動作先回寫老師可行時段；最後由控方經 services/scheduling_flow 落地。TenantConfig.teacher_link_secret
-未設定時整個服務不啟動（優雅停用）。
+只暴露 /confirm/{token} 兩個路由；token 由 services/teacher_confirm 簽名驗證。
+老師確認後只回寫可行時段並通知控方頻道，正式定案仍由控方在 Discord／Notion
+手動完成（不會自動發通告）。TenantConfig.teacher_link_secret 未設定時
+整個服務不啟動（優雅停用）。
 """
 import logging
 import time

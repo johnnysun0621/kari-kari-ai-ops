@@ -61,6 +61,20 @@
 
 ## 進度日誌
 
+### 2026-07-27（穩定度加固）
+
+- `bot.py`：cog 逐一載入＋逐步關閉都改成互相隔離（try/except 包每一步）——單一擴充套件
+  或 web 服務啟動失敗不再讓整個 bot 開不起來／關不乾淨。
+- `cogs/submissions.py`：`on_message` 補上頂層例外保護（比照 `course_qa.py` 既有模式），
+  避免處理附件時出錯卻讓使用者的檔案憑空消失、毫無回應；`review_poll_loop`（既有的每分鐘
+  背景 loop）順便清掉逾期未完成的上傳／回饋 pending 項目，避免長時間運行下記憶體累積。
+- `web/server.py`：修正過時 docstring（不再提已經沒被呼叫的 `scheduling_flow`）。
+- 測試 213 → 215（新增 `expired_pending_keys` 純函式測試）。
+- 踩雷記錄：一度把 `channel_guard.announce_channel_id()` 改成呼叫
+  `TenantConfig.resolved_announce_channel_id`，結果打壞兩個測試——`TenantConfig` 是
+  frozen dataclass，測試靠 monkeypatch 模組別名（`config.ANNOUNCE_CHANNEL_ID`）換值，
+  改用 property 會讀不到 monkeypatch 的值。已退回並在程式碼加註解，避免下次重踩。
+
 ### 2026-07-22（Tasks 單一安排來源）
 
 - 課程安排改由 `/時間池比對` 選課程類別、課程培訓 Project、老師與課程名稱後，直接建立 Tasks 的「課程與作業」。
