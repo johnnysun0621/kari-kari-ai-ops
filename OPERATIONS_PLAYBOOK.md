@@ -63,6 +63,13 @@ Discord 頻道與 slash command 對應總表請看 [DISCORD_CHANNELS.md](DISCORD
 4. Bot 會私訊關聯藝人，顯示任務名稱、截止日與提交方式。
 5. 藝人按「收到任務」後，Task 轉為 `進行中`，控方可在 Notion 或 Audit Log 確認收件時間。
 
+若沒有收到通知：
+
+1. 確認 Task 有勾選 `Discord 顯示`。
+2. 確認 `關聯藝人` 對應到 Artists 的 `Discord User ID`。
+3. 確認 `Discord 通知時間` 為空，或由控方在任務頻道使用 `/任務通知重送`。
+4. 若 Artist 沒有 Discord User ID，Bot 會在控方通知頻道提醒，補齊後再重送。
+
 首次啟用通知功能時，Bot 不會回頭轟炸既有任務；測試時請建立一筆新的測試任務。
 
 ## 主流程：每月時間收集到排程

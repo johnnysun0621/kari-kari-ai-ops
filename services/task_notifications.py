@@ -53,7 +53,6 @@ def find_dispatch_tasks(
         task
         for task in tasks
         if task.discord_visible
-        and task.artist_page_ids
         and task.status in {"尚未開始", "待提交"}
         and task.discord_notified_at is None
     ]

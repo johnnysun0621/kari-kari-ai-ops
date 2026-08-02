@@ -18,6 +18,7 @@ class RemindersCog(commands.Cog):
         # 每筆需求已送過的提醒階段（in-memory，重啟後最多重發一次，可接受）
         self._sent: dict[str, set[str]] = {}
         self._task_dispatch_state = task_notifications.load_state()
+        self._dispatch_warning_sent: set[str] = set()
         self.check_loop.start()
 
     def cog_unload(self):
@@ -172,10 +173,33 @@ class RemindersCog(commands.Cog):
         self._task_dispatch_state = next_state
         task_notifications.save_state(next_state)
         for task in unseen:
-            if not task.discord_visible or not task.artist_page_ids:
+            if not task.discord_visible:
                 continue
             artists = await repositories.get_artists_by_ids(task.artist_page_ids)
             notifyable_artists = [artist for artist in artists if artist.discord_user_id]
+            if not notifyable_artists:
+                if task.page_id not in self._dispatch_warning_sent:
+                    admin_channel = (
+                        self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+                        or self.bot.get_channel(config.TASK_CHANNEL_ID)
+                        or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+                    )
+                    if admin_channel:
+                        await admin_channel.send(
+                            f"⚠️ **任務通知未送出：{task.name}**\n"
+                            "找不到有效的關聯藝人或 Discord User ID，請回 Notion 補齊後再使用 `/任務通知重送`。"
+                        )
+                    self._dispatch_warning_sent.add(task.page_id)
+                    await audit.log_event(
+                        event_name=f"任務通知缺少收件人｜{task.name}",
+                        action_type="提醒",
+                        operator="System",
+                        target_db="Tasks",
+                        target_url=task.url,
+                        after="找不到有效的關聯藝人或 Discord User ID",
+                    )
+                continue
+            self._dispatch_warning_sent.discard(task.page_id)
             sent = 0
             for artist in artists:
                 if not artist.discord_user_id:

@@ -124,6 +124,49 @@ def format_task_buckets(
     return "\n".join(lines).strip()
 
 
+class TaskResendSelect(discord.ui.Select):
+    def __init__(self, tasks: list[repositories.TaskItem]):
+        self.tasks = {task.page_id: task for task in tasks}
+        options = [
+            discord.SelectOption(
+                label=(task.name or "未命名任務")[:100],
+                value=task.page_id,
+                description=f"狀態：{task.status or '未設定'}"[:100],
+            )
+            for task in tasks[:25]
+        ]
+        super().__init__(placeholder="選擇要重新通知的任務…", options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        task = self.tasks[self.values[0]]
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await repositories.reset_task_discord_notification(task.page_id)
+            await audit.log_event(
+                event_name=f"重送任務通知｜{task.name}",
+                action_type="更新",
+                operator=str(interaction.user),
+                discord_user_id=str(interaction.user.id),
+                target_db="Tasks",
+                target_url=task.url,
+                after="清除 Discord 通知／收到時間，等待下一輪重新派發",
+            )
+        except Exception:
+            logger.exception("重送任務通知設定失敗：%s", task.page_id)
+            await interaction.followup.send("❌ 重送設定失敗，請稍後再試。", ephemeral=True)
+            return
+        await interaction.followup.send(
+            f"✅ 已排入重送：**{task.name}**。Bot 將在下一輪背景檢查（目前每 30 秒）重新通知。",
+            ephemeral=True,
+        )
+
+
+class TaskResendView(discord.ui.View):
+    def __init__(self, tasks: list[repositories.TaskItem]):
+        super().__init__(timeout=180)
+        self.add_item(TaskResendSelect(tasks))
+
+
 class TasksCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -180,6 +223,31 @@ class TasksCog(commands.Cog):
         total = sum(len(v) for v in buckets.values())
         await interaction.followup.send(
             ui_text.trim_message(f"📋 未結案任務總覽（{total} 筆）：\n\n{body}"), ephemeral=True
+        )
+
+    @app_commands.command(name="任務通知重送", description="管理端：選擇任務重新通知關聯藝人")
+    @app_commands.default_permissions(administrator=True)
+    @is_admin()
+    async def resend_task_notification(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_task_channel(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            tasks = [
+                task for task in await repositories.get_active_tasks()
+                if task.discord_visible
+            ]
+        except Exception:
+            logger.exception("讀取可重送任務失敗")
+            await interaction.followup.send("❌ 讀取任務失敗，請稍後再試。", ephemeral=True)
+            return
+        if not tasks:
+            await interaction.followup.send("目前沒有開啟 Discord 顯示的任務。", ephemeral=True)
+            return
+        await interaction.followup.send(
+            "請選擇要重新通知的任務。這只會清除通知紀錄，不會修改任務內容。",
+            view=TaskResendView(tasks),
+            ephemeral=True,
         )
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error):

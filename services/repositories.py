@@ -1216,6 +1216,17 @@ async def mark_task_discord_notified(
     )
 
 
+async def reset_task_discord_notification(page_id: str) -> None:
+    """清除通知／收到時間，供管理者要求重新派發測試或補發通知。"""
+    await notion_api.update_page(
+        page_id,
+        {
+            "Discord 通知時間": {"date": None},
+            "Discord 收到時間": {"date": None},
+        },
+    )
+
+
 async def acknowledge_task(
     page_id: str,
     acknowledged_at: datetime | None = None,
