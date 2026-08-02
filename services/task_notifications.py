@@ -39,6 +39,24 @@ def find_unseen_tasks(
     return unseen, {"initialized": True, "known_task_ids": current_ids}
 
 
+def find_dispatch_tasks(
+    tasks: list[TaskItem],
+    state: dict,
+) -> tuple[list[TaskItem], dict]:
+    """找出尚未通知的可派發任務，包含 Bot 啟動前已存在的任務。"""
+    current_ids = [task.page_id for task in tasks]
+    pending = [
+        task
+        for task in tasks
+        if task.discord_visible
+        and task.artist_page_ids
+        and task.status in {"尚未開始", "待提交"}
+        and task.discord_notified_at is None
+    ]
+    # 已通知與否以 Notion 的 Discord 通知時間為準。
+    return pending, {"initialized": True, "known_task_ids": current_ids}
+
+
 def load_state(path: Path = STATE_PATH) -> dict:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))

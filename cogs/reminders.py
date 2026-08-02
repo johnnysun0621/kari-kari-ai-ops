@@ -166,7 +166,7 @@ class RemindersCog(commands.Cog):
     async def _check_task_dispatch_notifications(self):
         """通知新建立且開啟 Discord 顯示的任務；首次啟用只建立基準。"""
         all_tasks = await repositories.get_active_tasks()
-        unseen, next_state = task_notifications.find_unseen_tasks(
+        unseen, next_state = task_notifications.find_dispatch_tasks(
             all_tasks, self._task_dispatch_state
         )
         self._task_dispatch_state = next_state

@@ -10,6 +10,7 @@ def make_task(
     name: str = "歌唱課作業",
     submit_method: str | None = "檔案",
     end: datetime | None = None,
+    discord_notified_at: datetime | None = None,
 ) -> repositories.TaskItem:
     return repositories.TaskItem(
         page_id=page_id,
@@ -21,6 +22,7 @@ def make_task(
         end_has_time=end is not None,
         artist_page_ids=["artist-1"],
         discord_visible=True,
+        discord_notified_at=discord_notified_at,
     )
 
 
@@ -61,6 +63,29 @@ def test_failed_task_can_be_removed_for_retry():
     next_state = task_notifications.forget_task("new-1", state)
 
     assert next_state["known_task_ids"] == ["old-1"]
+
+
+def test_existing_unnotified_task_is_dispatchable_after_bootstrap():
+    task = make_task(page_id="existing-1")
+
+    pending, _ = task_notifications.find_dispatch_tasks(
+        [task], {"initialized": True, "known_task_ids": []}
+    )
+
+    assert [item.page_id for item in pending] == ["existing-1"]
+
+
+def test_notified_task_is_not_dispatchable_again():
+    task = make_task(
+        page_id="existing-1",
+        discord_notified_at=datetime(2026, 8, 2, 12, 0, tzinfo=config.TZ),
+    )
+
+    pending, _ = task_notifications.find_dispatch_tasks(
+        [task], {"initialized": True, "known_task_ids": []}
+    )
+
+    assert pending == []
 
 
 def test_acknowledgement_props_store_the_received_time():
