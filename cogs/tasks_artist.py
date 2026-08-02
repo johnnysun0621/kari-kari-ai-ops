@@ -28,15 +28,28 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
         )
         self.task_id = task_id
 
+    @classmethod
+    async def from_custom_id(
+        cls,
+        interaction: discord.Interaction,
+        item: discord.ui.Button,
+        match,
+    ) -> "TaskReceiptButton":
+        """從持久化按鈕的 custom_id 還原任務 ID。"""
+        return cls(match.group("task_id"))
+
     async def callback(self, interaction: discord.Interaction) -> None:
+        # 先回應 Discord，再進行 Notion 查詢，避免超過 3 秒互動期限。
+        await interaction.response.defer(ephemeral=True, thinking=True)
         task = await repositories.get_task(self.task_id)
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if task is None or artist is None or artist.page_id not in task.artist_page_ids:
-            await interaction.response.send_message("❌ 這不是分派給你的任務。")
+            await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
             return
         if not task_notifications.can_acknowledge(task):
-            await interaction.response.send_message(
-                f"ℹ️ 這項任務目前狀態是「{task.status or '未設定'}」，不需要重複確認。"
+            await interaction.followup.send(
+                f"ℹ️ 這項任務目前狀態是「{task.status or '未設定'}」，不需要重複確認。",
+                ephemeral=True,
             )
             return
 
@@ -57,9 +70,12 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
             )
         except Exception:
             logger.exception("任務收到確認寫入失敗：%s", self.task_id)
-            await interaction.response.send_message("❌ 收到確認寫入失敗，請稍後再試。")
+            await interaction.followup.send("❌ 收到確認寫入失敗，請稍後再試。", ephemeral=True)
             return
-        await interaction.response.send_message("✅ 已記錄你收到這項任務，狀態已更新為「進行中」。")
+        await interaction.followup.send(
+            "✅ 已記錄你收到這項任務，狀態已更新為「進行中」。",
+            ephemeral=True,
+        )
 
 # 顯示順序：藝人要行動的在前，資訊性的在後
 SECTION_ORDER = [
