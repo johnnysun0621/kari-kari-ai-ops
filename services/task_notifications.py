@@ -32,13 +32,13 @@ def notification_message(task: TaskItem) -> str:
 
 def acknowledgement_reminder_message(tasks: list[TaskItem]) -> str:
     """提醒藝人逐筆確認尚未收到的任務。"""
-    lines = ["⏰ **以下任務尚未確認收到**", "請逐一開啟原通知並按下「收到任務」："]
+    lines = ["⏰ **以下任務尚未確認收到**", "Bot 將重新送出任務通知，請直接按對應的「收到任務」按鈕："]
     for task in tasks:
         deadline = "未設定"
         if task.end:
             deadline = task.end.strftime("%m/%d %H:%M" if task.end_has_time else "%m/%d")
         lines.append(f"・**{task.name}**｜截止：{deadline}")
-    lines.append("\n每一筆任務都要分別確認；已按過的任務不會列在這裡。")
+    lines.append("\n每一筆任務都要分別確認；已按過的任務不會重新提醒。")
     return "\n".join(lines)
 
 

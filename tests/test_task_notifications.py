@@ -46,7 +46,7 @@ def test_acknowledgement_reminder_lists_each_unconfirmed_task():
 
     assert "歌唱課作業" in message
     assert "舞蹈課作業" in message
-    assert "逐一" in message
+    assert "重新送出任務通知" in message
 
 
 def test_first_state_bootstrap_does_not_notify_existing_tasks():

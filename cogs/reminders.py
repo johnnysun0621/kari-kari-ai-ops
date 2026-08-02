@@ -270,12 +270,18 @@ class RemindersCog(commands.Cog):
         artist_map = await repositories.get_artist_map()
         by_artist: dict[str, list[repositories.TaskItem]] = {}
         for task in pending:
-            last_reminded = self._task_ack_reminded_at.get(task.page_id)
-            if last_reminded and now - last_reminded < timedelta(hours=self.TASK_ACK_REMINDER_HOURS):
-                continue
             for artist_page_id in task.artist_page_ids:
                 artist = artist_map.get(artist_page_id)
-                if artist and artist.discord_user_id:
+                reminder_key = f"{task.page_id}:{artist_page_id}"
+                last_reminded = self._task_ack_reminded_at.get(reminder_key)
+                if (
+                    artist
+                    and artist.discord_user_id
+                    and (
+                        last_reminded is None
+                        or now - last_reminded >= timedelta(hours=self.TASK_ACK_REMINDER_HOURS)
+                    )
+                ):
                     by_artist.setdefault(artist_page_id, []).append(task)
 
         for artist_page_id, artist_tasks in by_artist.items():
@@ -283,8 +289,21 @@ class RemindersCog(commands.Cog):
             try:
                 user = await self.bot.fetch_user(int(artist.discord_user_id))
                 await user.send(task_notifications.acknowledgement_reminder_message(artist_tasks))
+                from cogs.tasks_artist import TaskReceiptButton
                 for task in artist_tasks:
-                    self._task_ack_reminded_at[task.page_id] = now
+                    view = discord.ui.View(timeout=None)
+                    view.add_item(TaskReceiptButton(task.page_id))
+                    if task.url:
+                        view.add_item(
+                            discord.ui.Button(
+                                label="查看任務內容",
+                                style=discord.ButtonStyle.link,
+                                url=task.url,
+                                emoji="📄",
+                            )
+                        )
+                    await user.send(task_notifications.notification_message(task), view=view)
+                    self._task_ack_reminded_at[f"{task.page_id}:{artist_page_id}"] = now
                 await audit.log_event(
                     event_name=f"任務未確認提醒｜{artist.name}",
                     action_type="提醒",
