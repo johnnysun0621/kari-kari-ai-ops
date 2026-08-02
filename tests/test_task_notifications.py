@@ -28,12 +28,14 @@ def make_task(
 
 def test_notification_message_explains_task_and_submission_method():
     task = make_task(end=datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ))
+    task.description = "請完成本週歌唱練習並提交錄音檔。"
 
     message = task_notifications.notification_message(task)
 
     assert "歌唱課作業" in message
     assert "08/05 18:00" in message
     assert "檔案" in message
+    assert "請完成本週歌唱練習" in message
     assert "收到任務" in message
 
 

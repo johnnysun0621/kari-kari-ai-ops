@@ -16,13 +16,17 @@ def notification_message(task: TaskItem) -> str:
     else:
         deadline = task.end.strftime("%m/%d")
     submit_method = task.submit_method or "請依任務說明"
+    description = task.description.strip() or "Notion 尚未填寫任務說明。"
+    if len(description) > 900:
+        description = description[:897].rstrip() + "..."
     return (
         f"📌 **新任務通知**\n"
         f"任務：**{task.name}**\n"
         f"類型：{task.task_type or '任務'}\n"
         f"截止：{deadline}\n"
         f"提交方式：{submit_method}\n\n"
-        f"請先按「收到任務」確認你已看到這項任務；完成後再依 Notion 指定方式提交。"
+        f"**任務內容**\n{description}\n\n"
+        f"請先按「收到任務」確認你已看到這項任務；完成後再依指定方式提交。"
     )
 
 

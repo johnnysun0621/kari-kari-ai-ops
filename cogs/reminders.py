@@ -185,6 +185,15 @@ class RemindersCog(commands.Cog):
                     view = discord.ui.View(timeout=None)
                     from cogs.tasks_artist import TaskReceiptButton
                     view.add_item(TaskReceiptButton(task.page_id))
+                    if task.url:
+                        view.add_item(
+                            discord.ui.Button(
+                                label="查看任務內容",
+                                style=discord.ButtonStyle.link,
+                                url=task.url,
+                                emoji="📄",
+                            )
+                        )
                     await user.send(task_notifications.notification_message(task), view=view)
                     sent += 1
                 except Exception:
