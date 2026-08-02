@@ -20,7 +20,7 @@
 |---|---|---|
 | pending-attachment 等附件模式 | [cogs/submissions.py](cogs/submissions.py) `PendingFileSubmission`＋`on_message` listener | D1 批改檔回傳、D2 上傳驗證都復用此模式（Cog 實例 dict＋過期，非全域） |
 | Drive 歸檔路徑 | [services/drive_archive.py](services/drive_archive.py) 對應表＋`resolve_archive_target` | D1 加「老師回饋」資料夾、D2 資料夾連結 |
-| Drive API | [services/drive_api.py](services/drive_api.py) `upload_submission_file`／`_find_or_create_folder_sync` | D2 需另加「列出資料夾檔案」查詢（驗證上傳用） |
+| Drive API | [services/drive_api.py](services/drive_api.py) `upload_submission_file`／`_find_or_create_folder_sync`／`list_recent_files` | D2 驗證指定資料夾入口後新增檔案 |
 | 任務建立 | [services/repositories.py](services/repositories.py) `create_formal_arrangement_task` | 課程比對後建立 Tasks；其他類型由控方手動建立 |
 | 時段去重/合併 | repositories `create_availability_slot_if_absent`（exact 已擋）＋`compact_availability_slots` | D3 重疊偵測沿用其語意（較寬窗勝出、性質無關——刻意設計勿改） |
 | 安全發送 | [cogs/channel_guard.py](cogs/channel_guard.py) `try_send` | 所有附帶通知 |
@@ -38,10 +38,10 @@
 - [x] 老師回傳批改檔：審核選結果後加「附批改檔」→ 復用 pending-attachment（10MB 同標準）→ 歸檔 `藝人專區/老師回饋/YYYY-MM/`（drive_archive 對應表加項）→ DM 藝人（回饋文字＋批改檔連結）；連結併入 Submissions `回饋` 文字（不動 schema）；>10MB 引導控方貼連結
 
 ### D2｜大檔 Drive 資料夾流（會議 #4，~1 天）
-- [ ] 觸發點：附件 >10MB 被擋、或任務提交方式=Drive 連結 → 顯示「📁 取得上傳資料夾」按鈕
-- [ ] find-or-create `專區/類型夾/YYYY-MM/` → 回資料夾連結（專區已分享給藝人）
-- [ ] 「✅ 我已上傳」→ bot 驗證資料夾內有**按鈕產生時間之後**新增的檔案 → 寫 Submissions（資料夾＋最新檔連結、檔名、大小）＋任務轉待審核；驗不到 → 提示重試
-- [ ] drive_api 加 `list_recent_files(folder_id, since_ts)`（asyncio.to_thread 包裝）
+- [x] 附件 >10MB 或任務提交方式=Drive 連結時，提供指定 Drive 資料夾與「我已上傳到 Drive」按鈕
+- [x] find-or-create `專區/類型夾/YYYY-MM/`，回傳資料夾連結（專區已分享給藝人）
+- [x] 驗證按鈕只讀取入口建立後新增檔案，寫入 Submissions（資料夾、File ID、檔名、大小）並將任務轉待審核；驗不到時提示重試
+- [x] `drive_api.list_recent_files(folder_id, since_ts)` 使用 `asyncio.to_thread`
 
 ### D3｜時段整理與驗證（會議 #6 #7，~0.5 天）
 - [ ] 送出前**重疊**偵測：與既有時段重疊 → 自動合併寫入並回報「已與既有時段合併為 X」（語意＝較寬窗勝出）

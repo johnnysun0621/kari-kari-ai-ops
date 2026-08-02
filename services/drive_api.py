@@ -10,6 +10,7 @@ googleapiclient 是 blocking 的——所有呼叫都包 asyncio.to_thread，
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -123,3 +124,27 @@ async def ensure_folder_path(
         return _folder_resource_sync(service, folder_id)
 
     return await asyncio.to_thread(run)
+
+
+def _list_recent_files_sync(service, folder_id: str, since: datetime) -> list[dict]:
+    since_utc = since.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    query = (
+        f"'{_escape_query_value(folder_id)}' in parents"
+        " and trashed = false"
+        " and mimeType != 'application/vnd.google-apps.folder'"
+        f" and createdTime > '{since_utc}'"
+    )
+    result = service.files().list(
+        q=query,
+        orderBy="createdTime desc",
+        pageSize=100,
+        fields="files(id,name,size,webViewLink,createdTime,mimeType)",
+    ).execute()
+    return result.get("files", [])
+
+
+async def list_recent_files(folder_id: str, since: datetime) -> list[dict]:
+    """列出資料夾內指定時間後新增的檔案，供藝人上傳驗證。"""
+    return await asyncio.to_thread(
+        lambda: _list_recent_files_sync(_get_service(), folder_id, since)
+    )

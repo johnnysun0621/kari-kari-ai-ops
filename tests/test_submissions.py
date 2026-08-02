@@ -12,6 +12,7 @@ from cogs.submissions import (
     PendingReviewFeedbackProofUpload,
     ReviewFeedbackDriveTarget,
     direct_upload_size_error,
+    drive_folder_submission_summary,
     expired_pending_keys,
     feedback_with_attachment_links,
     file_upload_wait_label,
@@ -310,6 +311,16 @@ class TestLargeFileDriveInstruction:
 
         assert "無法自動產生指定資料夾" in text
         assert "貼 Drive 連結完成提交" in text
+
+    def test_drive_folder_submission_summary_collects_names_ids_and_size(self):
+        names, ids, size_mb = drive_folder_submission_summary([
+            {"name": "a.pdf", "id": "file-a", "size": "1048576"},
+            {"name": "b.pptx", "id": "file-b", "size": "2097152"},
+        ])
+
+        assert names == "a.pdf、b.pptx"
+        assert ids == "file-a、file-b"
+        assert size_mb == 3.0
 
 
 class TestReviewFeedbackDriveInstruction:

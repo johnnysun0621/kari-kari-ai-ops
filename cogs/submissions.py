@@ -223,10 +223,18 @@ def large_file_drive_instruction(
     ]
     if folder_url:
         lines.append(f"指定上傳資料夾：{folder_url}")
-        lines.append("上傳完成後，請按「貼 Drive 連結完成提交」並貼檔案或資料夾連結。")
+        lines.append("上傳完成後，請按「我已上傳到 Drive」；若驗證失敗，也可按「貼 Drive 連結完成提交」。")
     else:
         lines.append("目前無法自動產生指定資料夾連結，請先把檔案上傳到你的雲端，再按「貼 Drive 連結完成提交」。")
     return "\n".join(lines)
+
+
+def drive_folder_submission_summary(files: list[dict]) -> tuple[str, str, float]:
+    """整理 Drive 驗證到的檔案資訊：(檔名摘要, File ID 摘要, 總 MB)。"""
+    names = [str(item.get("name") or "未命名檔案") for item in files]
+    ids = [str(item["id"]) for item in files if item.get("id")]
+    total_bytes = sum(int(item.get("size") or 0) for item in files)
+    return "、".join(names), "、".join(ids), round(total_bytes / 1048576, 2)
 
 
 def review_feedback_drive_instruction(
@@ -910,6 +918,9 @@ class SubmitTaskSelect(discord.ui.Select):
         if task.submit_method == "檔案":
             await self.cog.start_file_upload_wait(interaction, task)
             return
+        if task.submit_method == "Drive 連結":
+            await self.cog.start_file_upload_wait(interaction, task, drive_only=True)
+            return
         if task.submit_method == "混合":
             await interaction.response.send_message(
                 f"「{task.name}」可交檔案或貼連結／文字，請選擇提交方式：",
@@ -956,6 +967,7 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
         folder_url: str = "",
         target: tuple[str, list[str]] | None = None,
         owner_id: int | None = None,
+        drive_only: bool = False,
     ):
         super().__init__(timeout=FILE_UPLOAD_WAIT_MINUTES * 60)
         self.cog = cog
@@ -963,10 +975,21 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
         self.folder_url = folder_url
         self.target = target
         self.owner_id = owner_id
+        if drive_only:
+            for child in self.children:
+                if isinstance(child, discord.ui.Button) and child.label == "完成提交":
+                    child.disabled = True
 
     @discord.ui.button(label="貼 Drive 連結完成提交", style=discord.ButtonStyle.primary)
     async def submit_drive_link(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(DriveLinkSubmissionModal(self.cog, self.task, self.folder_url))
+
+    @discord.ui.button(label="我已上傳到 Drive", style=discord.ButtonStyle.success)
+    async def verify_drive_upload(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.owner_id is not None and interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ 這個提交入口只給原本操作的人使用。", ephemeral=True)
+            return
+        await self.cog.complete_drive_folder_submission(interaction)
 
     @discord.ui.button(label="完成提交", style=discord.ButtonStyle.success)
     async def finish_submission(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1195,6 +1218,8 @@ class SubmissionsCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         task: repositories.TaskItem,
+        *,
+        drive_only: bool = False,
     ) -> None:
         """選到檔案任務後，在目前頻道等待附件，避免要求藝人跳出或重打指令。"""
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1234,15 +1259,104 @@ class SubmissionsCog(commands.Cog):
             folder_url=folder_url,
         )
 
+        upload_intro = (
+            f"📁 請先把 **{task.name}** 的檔案上傳到指定 Google Drive 資料夾，"
+            "完成後按「我已上傳到 Drive」。\n"
+            if drive_only
+            else f"📎 請直接在這個頻道上傳 **{task.name}** 的檔案。\n"
+        )
+        upload_controls = (
+            "上傳完成後按「我已上傳到 Drive」；若驗證失敗，也可改按「貼 Drive 連結完成提交」。\n"
+            if drive_only
+            else "你可以連續上傳多個檔案；全部上傳後按「完成提交」。\n"
+        )
         await interaction.followup.send(
-            f"📎 請直接在這個頻道上傳 **{task.name}** 的檔案。\n"
-            f"你可以連續上傳多個檔案；全部上傳後按「完成提交」。\n"
-            f"每個檔案請在 **{MAX_UPLOAD_MB}MB 以下**；入口 **{file_upload_wait_label()}**後失效。\n\n"
+            upload_intro
+            + upload_controls
+            + f"每個檔案請在 **{MAX_UPLOAD_MB}MB 以下**；入口 **{file_upload_wait_label()}**後失效。\n\n"
             + large_file_drive_instruction(task_name=task.name, folder_url=folder_url),
             view=LargeFileSubmissionChoiceView(
                 self, task, folder_url=folder_url, target=target,
-                owner_id=interaction.user.id,
+                owner_id=interaction.user.id, drive_only=drive_only,
             ),
+            ephemeral=True,
+        )
+
+    async def complete_drive_folder_submission(self, interaction: discord.Interaction) -> None:
+        """驗證指定資料夾的新檔案，成功後建立一筆檔案提交。"""
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        pending = self.pending_file_submissions.get(interaction.user.id)
+        if pending is None or not pending.folder_url or not pending.folder_base_id:
+            await interaction.followup.send(
+                "❌ 目前沒有可驗證的指定資料夾，請重新執行 `/提交任務` 或改貼 Drive 連結。",
+                ephemeral=True,
+            )
+            return
+        folder_id = drive_archive.extract_drive_folder_id(pending.folder_url)
+        if not folder_id:
+            await interaction.followup.send("❌ 找不到指定 Drive 資料夾，請改貼 Drive 連結提交。", ephemeral=True)
+            return
+        try:
+            files = await drive_api.list_recent_files(folder_id, pending.created_at)
+        except Exception:
+            logger.exception("驗證 Drive 資料夾檔案失敗")
+            await interaction.followup.send("❌ 讀取 Drive 資料夾失敗，請稍後再按一次。", ephemeral=True)
+            return
+        if not files:
+            await interaction.followup.send(
+                "⚠️ 目前找不到入口建立後新增的檔案，請確認檔案已上傳到指定資料夾後再試。",
+                ephemeral=True,
+            )
+            return
+        names, file_ids, total_mb = drive_folder_submission_summary(files)
+        file_links = "、".join(
+            str(item["webViewLink"])
+            for item in files
+            if item.get("webViewLink")
+        )
+        content = f"Drive 資料夾驗證完成，共 {len(files)} 個檔案：{names}"
+        if file_links:
+            content += f"\n檔案連結：{file_links}"
+        try:
+            await repositories.mark_previous_submissions_not_latest(pending.task.page_id)
+            submission_page = await repositories.create_submission(
+                pending.task,
+                pending.artist,
+                submit_type="檔案",
+                link_url=pending.folder_url,
+                content=content,
+                drive_file_id=file_ids,
+                original_filename=names,
+                file_size_mb=total_mb,
+            )
+            await repositories.set_task_under_review(pending.task.page_id, pending.folder_url)
+        except Exception:
+            logger.exception("Drive 資料夾提交寫入 Notion 失敗")
+            await interaction.followup.send("❌ Drive 已讀到檔案，但 Notion 寫入失敗，請聯絡控方。", ephemeral=True)
+            return
+        self.pending_file_submissions.pop(interaction.user.id, None)
+        await audit.log_event(
+            event_name=f"提交任務（Drive 資料夾）｜{pending.artist.name}｜{pending.task.name}",
+            action_type="上傳",
+            operator=pending.artist.name,
+            discord_user_id=str(interaction.user.id),
+            target_db="Submissions & File Index",
+            target_url=submission_page.get("url", ""),
+            after=f"{len(files)} 個檔案｜{total_mb}MB｜{pending.folder_url}",
+        )
+        internal = interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+        await channel_guard.try_send(
+            internal,
+            content=(
+                f"📥 **新提交待審核（Drive 資料夾）**\n"
+                f"任務：{pending.task.name}｜{pending.artist.name}｜{len(files)} 個檔案（{total_mb}MB）\n"
+                f"Drive：{pending.folder_url}\nNotion：{submission_page.get('url', '')}"
+            ),
+        )
+        await interaction.followup.send(
+            f"✅ 已驗證 Drive 資料夾並提交：**{pending.task.name}**\n"
+            f"檔案數：{len(files)}｜{names}\n"
+            f"任務狀態已轉「待審核」。",
             ephemeral=True,
         )
 
@@ -1419,7 +1533,10 @@ class SubmissionsCog(commands.Cog):
         for attachment in message.attachments:
             size_error = direct_upload_size_error(attachment.size)
             if size_error:
-                await message.channel.send(f"❌ `{attachment.filename}`：{size_error}")
+                await message.channel.send(
+                    f"❌ `{attachment.filename}`：{size_error}\n"
+                    "請回到剛才的操作訊息，按「我已上傳到 Drive」完成驗證。"
+                )
                 continue
             pending.attachments.append(attachment)
         count = len(pending.attachments)
