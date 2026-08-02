@@ -21,7 +21,8 @@ class RemindersCog(commands.Cog):
         self._sent: dict[str, set[str]] = {}
         self._task_dispatch_state = task_notifications.load_state()
         self._dispatch_warning_sent: set[str] = set()
-        self._task_ack_reminded_at: dict[str, datetime] = {}
+        # 啟動時先建立掃描基準，避免啟動 Bot 的同一輪重複派送初始通知。
+        self._last_unacknowledged_scan_at = datetime.now(config.get_tenant().tz)
         self.check_loop.start()
 
     def cog_unload(self):
@@ -254,15 +255,20 @@ class RemindersCog(commands.Cog):
                 )
 
     async def _check_unacknowledged_task_notifications(self):
-        """每 12 小時提醒藝人逐筆確認尚未收到的任務。"""
+        """每 6 小時掃描一次，重新推送所有尚未確認的任務。"""
         now = datetime.now(config.get_tenant().tz)
+        if not task_notifications.should_run_acknowledgement_scan(
+            self._last_unacknowledged_scan_at,
+            now,
+            self.TASK_ACK_REMINDER_HOURS,
+        ):
+            return
+        self._last_unacknowledged_scan_at = now
         tasks = await repositories.get_active_tasks()
         pending = [
             task for task in tasks
             if task.discord_visible
-            and task.discord_notified_at is not None
             and task.discord_acknowledged_at is None
-            and now - task.discord_notified_at >= timedelta(hours=self.TASK_ACK_REMINDER_HOURS)
         ]
         if not pending:
             return
@@ -273,14 +279,9 @@ class RemindersCog(commands.Cog):
             for artist_page_id in task.artist_page_ids:
                 artist = artist_map.get(artist_page_id)
                 reminder_key = f"{task.page_id}:{artist_page_id}"
-                last_reminded = self._task_ack_reminded_at.get(reminder_key)
                 if (
                     artist
                     and artist.discord_user_id
-                    and (
-                        last_reminded is None
-                        or now - last_reminded >= timedelta(hours=self.TASK_ACK_REMINDER_HOURS)
-                    )
                 ):
                     by_artist.setdefault(artist_page_id, []).append(task)
 
@@ -303,7 +304,6 @@ class RemindersCog(commands.Cog):
                             )
                         )
                     await user.send(task_notifications.notification_message(task), view=view)
-                    self._task_ack_reminded_at[f"{task.page_id}:{artist_page_id}"] = now
                 await audit.log_event(
                     event_name=f"任務未確認提醒｜{artist.name}",
                     action_type="提醒",

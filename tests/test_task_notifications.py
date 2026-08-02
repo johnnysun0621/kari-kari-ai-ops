@@ -49,6 +49,17 @@ def test_acknowledgement_reminder_lists_each_unconfirmed_task():
     assert "重新送出任務通知" in message
 
 
+def test_acknowledgement_scan_runs_on_fixed_six_hour_interval():
+    now = datetime(2026, 8, 2, 18, 0, tzinfo=config.TZ)
+
+    assert not task_notifications.should_run_acknowledgement_scan(
+        datetime(2026, 8, 2, 12, 1, tzinfo=config.TZ), now
+    )
+    assert task_notifications.should_run_acknowledgement_scan(
+        datetime(2026, 8, 2, 12, 0, tzinfo=config.TZ), now
+    )
+
+
 def test_first_state_bootstrap_does_not_notify_existing_tasks():
     tasks = [make_task(page_id="old-1"), make_task(page_id="old-2")]
 

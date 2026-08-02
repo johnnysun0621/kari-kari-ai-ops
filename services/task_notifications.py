@@ -1,6 +1,6 @@
 """任務派發通知的純邏輯與本機去重狀態。"""
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from services.repositories import TaskItem
@@ -40,6 +40,15 @@ def acknowledgement_reminder_message(tasks: list[TaskItem]) -> str:
         lines.append(f"・**{task.name}**｜截止：{deadline}")
     lines.append("\n每一筆任務都要分別確認；已按過的任務不會重新提醒。")
     return "\n".join(lines)
+
+
+def should_run_acknowledgement_scan(
+    last_scan_at: datetime | None,
+    now: datetime,
+    interval_hours: float = 6,
+) -> bool:
+    """判斷是否到了固定週期的未確認任務掃描時間。"""
+    return last_scan_at is None or now - last_scan_at >= timedelta(hours=interval_hours)
 
 
 def find_unseen_tasks(
