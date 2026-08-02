@@ -13,12 +13,15 @@ logger = logging.getLogger(__name__)
 
 
 class RemindersCog(commands.Cog):
+    TASK_ACK_REMINDER_HOURS = 12
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         # 每筆需求已送過的提醒階段（in-memory，重啟後最多重發一次，可接受）
         self._sent: dict[str, set[str]] = {}
         self._task_dispatch_state = task_notifications.load_state()
         self._dispatch_warning_sent: set[str] = set()
+        self._task_ack_reminded_at: dict[str, datetime] = {}
         self.check_loop.start()
 
     def cog_unload(self):
@@ -37,6 +40,7 @@ class RemindersCog(commands.Cog):
         try:
             await self._check_monthly_pool_deadlines()
             await self._check_task_dispatch_notifications()
+            await self._check_unacknowledged_task_notifications()
             await self._check_task_reminders()
         except Exception:
             logger.exception("提醒 loop 執行失敗")
@@ -248,6 +252,54 @@ class RemindersCog(commands.Cog):
                     sent,
                     len(notifyable_artists),
                 )
+
+    async def _check_unacknowledged_task_notifications(self):
+        """每 12 小時提醒藝人逐筆確認尚未收到的任務。"""
+        now = datetime.now(config.get_tenant().tz)
+        tasks = await repositories.get_active_tasks()
+        pending = [
+            task for task in tasks
+            if task.discord_visible
+            and task.discord_notified_at is not None
+            and task.discord_acknowledged_at is None
+            and now - task.discord_notified_at >= timedelta(hours=self.TASK_ACK_REMINDER_HOURS)
+        ]
+        if not pending:
+            return
+
+        artist_map = await repositories.get_artist_map()
+        by_artist: dict[str, list[repositories.TaskItem]] = {}
+        for task in pending:
+            last_reminded = self._task_ack_reminded_at.get(task.page_id)
+            if last_reminded and now - last_reminded < timedelta(hours=self.TASK_ACK_REMINDER_HOURS):
+                continue
+            for artist_page_id in task.artist_page_ids:
+                artist = artist_map.get(artist_page_id)
+                if artist and artist.discord_user_id:
+                    by_artist.setdefault(artist_page_id, []).append(task)
+
+        for artist_page_id, artist_tasks in by_artist.items():
+            artist = artist_map[artist_page_id]
+            try:
+                user = await self.bot.fetch_user(int(artist.discord_user_id))
+                await user.send(task_notifications.acknowledgement_reminder_message(artist_tasks))
+                for task in artist_tasks:
+                    self._task_ack_reminded_at[task.page_id] = now
+                await audit.log_event(
+                    event_name=f"任務未確認提醒｜{artist.name}",
+                    action_type="提醒",
+                    operator="System",
+                    discord_user_id=str(artist.discord_user_id),
+                    target_db="Tasks",
+                    after="、".join(task.name for task in artist_tasks),
+                )
+                logger.info(
+                    "任務未確認提醒成功：%s，%s 筆任務",
+                    artist.name,
+                    len(artist_tasks),
+                )
+            except Exception:
+                logger.exception("任務未確認提醒失敗：%s", artist.name)
 
     # ---------- P0-4 任務提醒：截止前提醒、逾期標記＋管理層升級 ----------
 

@@ -39,6 +39,16 @@ def test_notification_message_explains_task_and_submission_method():
     assert "收到任務" in message
 
 
+def test_acknowledgement_reminder_lists_each_unconfirmed_task():
+    tasks = [make_task(page_id="task-a", name="歌唱課作業"), make_task(page_id="task-b", name="舞蹈課作業")]
+
+    message = task_notifications.acknowledgement_reminder_message(tasks)
+
+    assert "歌唱課作業" in message
+    assert "舞蹈課作業" in message
+    assert "逐一" in message
+
+
 def test_first_state_bootstrap_does_not_notify_existing_tasks():
     tasks = [make_task(page_id="old-1"), make_task(page_id="old-2")]
 
