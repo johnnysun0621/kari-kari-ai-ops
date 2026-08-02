@@ -288,6 +288,7 @@ class RemindersCog(commands.Cog):
             artist = artist_map[artist_page_id]
             try:
                 user = await self.bot.fetch_user(int(artist.discord_user_id))
+                await user.send(task_notifications.acknowledgement_reminder_message(artist_tasks))
                 from cogs.tasks_artist import TaskReceiptButton
                 for task in artist_tasks:
                     view = discord.ui.View(timeout=None)
