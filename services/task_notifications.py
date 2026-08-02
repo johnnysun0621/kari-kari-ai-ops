@@ -53,7 +53,7 @@ def find_dispatch_tasks(
         task
         for task in tasks
         if task.discord_visible
-        and task.status in {"尚未開始", "待提交"}
+        and task.status not in {"已完成", "已取消", "已封存"}
         and task.discord_notified_at is None
     ]
     # 已通知與否以 Notion 的 Discord 通知時間為準。
