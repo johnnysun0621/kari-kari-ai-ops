@@ -24,6 +24,16 @@ def _env_int(name: str, default: int = 0) -> int:
         return default
 
 
+def _env_float(name: str, default: float = 0.0) -> float:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class TenantConfig:
     """一間公司（租戶）的完整設定：Discord、Notion 資料層、業務常數。"""
@@ -69,7 +79,7 @@ class TenantConfig:
     # 填寫截止前幾小時開始催收
     remind_before_deadline_hours: int
     # 背景提醒 loop 間隔（分鐘）
-    reminder_interval_minutes: int
+    reminder_interval_minutes: float
     # 預設填寫截止時間（小時，從建立起算）
     default_fill_deadline_hours: int
     # Notion 布告欄背景同步間隔（分鐘）
@@ -136,7 +146,7 @@ def _load_karikari_from_env() -> TenantConfig:
         sla_hours=48,
         sla_hard_limit_hours=72,
         remind_before_deadline_hours=6,
-        reminder_interval_minutes=30,
+        reminder_interval_minutes=_env_float("REMINDER_INTERVAL_MINUTES", 30),
         default_fill_deadline_hours=24,
         bulletin_sync_interval_minutes=_env_int("BULLETIN_SYNC_INTERVAL_MINUTES", 5),
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
