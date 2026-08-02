@@ -175,6 +175,7 @@ class RemindersCog(commands.Cog):
             if not task.discord_visible or not task.artist_page_ids:
                 continue
             artists = await repositories.get_artists_by_ids(task.artist_page_ids)
+            notifyable_artists = [artist for artist in artists if artist.discord_user_id]
             sent = 0
             for artist in artists:
                 if not artist.discord_user_id:
@@ -188,11 +189,11 @@ class RemindersCog(commands.Cog):
                     sent += 1
                 except Exception:
                     logger.exception("任務派發通知失敗：%s／%s", task.name, artist.name)
-            if sent:
+            if notifyable_artists and sent == len(notifyable_artists):
+                logger.info("任務派發通知成功：%s，已通知 %s 位藝人", task.name, sent)
                 try:
                     await repositories.mark_task_discord_notified(task.page_id)
                 except Exception:
-                    # 本機 state 已去重，避免每輪重複 DM；Notion 缺欄位時保留 log。
                     logger.exception("任務通知時間寫入 Notion 失敗：%s", task.page_id)
                 await audit.log_event(
                     event_name=f"任務派發通知｜{task.name}",
@@ -201,6 +202,18 @@ class RemindersCog(commands.Cog):
                     target_db="Tasks",
                     target_url=task.url,
                     after=f"通知 {sent} 位藝人",
+                )
+            else:
+                # 私訊失敗時不要永久標記已處理，下一輪會重新嘗試。
+                self._task_dispatch_state = task_notifications.forget_task(
+                    task.page_id, self._task_dispatch_state
+                )
+                task_notifications.save_state(self._task_dispatch_state)
+                logger.warning(
+                    "任務派發未完成，將於下一輪重試：%s（成功 %s／應通知 %s）",
+                    task.name,
+                    sent,
+                    len(notifyable_artists),
                 )
 
     # ---------- P0-4 任務提醒：截止前提醒、逾期標記＋管理層升級 ----------

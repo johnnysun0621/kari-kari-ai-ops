@@ -55,6 +55,14 @@ def test_new_task_is_notified_once_after_bootstrap():
     assert next_state["known_task_ids"] == ["old-1", "new-1"]
 
 
+def test_failed_task_can_be_removed_for_retry():
+    state = {"initialized": True, "known_task_ids": ["old-1", "new-1"]}
+
+    next_state = task_notifications.forget_task("new-1", state)
+
+    assert next_state["known_task_ids"] == ["old-1"]
+
+
 def test_acknowledgement_props_store_the_received_time():
     received_at = datetime(2026, 8, 2, 12, 30, tzinfo=config.TZ)
 

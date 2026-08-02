@@ -52,6 +52,15 @@ def save_state(state: dict, path: Path = STATE_PATH) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def forget_task(task_id: str, state: dict) -> dict:
+    """移除未成功派發的任務，讓下一輪背景檢查可以重試。"""
+    known_ids = [
+        value for value in state.get("known_task_ids", [])
+        if str(value) != str(task_id)
+    ]
+    return {**state, "known_task_ids": known_ids}
+
+
 def acknowledgement_props(acknowledged_at: datetime) -> dict:
     """回傳 Notion 寫回收到確認的欄位；狀態由 repository 組合。"""
     return {"Discord 收到時間": {"date": {"start": acknowledged_at.isoformat()}}}
