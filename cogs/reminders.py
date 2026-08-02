@@ -2,11 +2,12 @@
 import logging
 from datetime import datetime, timedelta
 
+import discord
 from discord.ext import commands, tasks
 
 import config
 from cogs import ui_text
-from services import audit, repositories, time_collection
+from services import audit, repositories, task_notifications, time_collection
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ class RemindersCog(commands.Cog):
         self.bot = bot
         # 每筆需求已送過的提醒階段（in-memory，重啟後最多重發一次，可接受）
         self._sent: dict[str, set[str]] = {}
+        self._task_dispatch_state = task_notifications.load_state()
         self.check_loop.start()
 
     def cog_unload(self):
@@ -33,6 +35,7 @@ class RemindersCog(commands.Cog):
     async def check_loop(self):
         try:
             await self._check_monthly_pool_deadlines()
+            await self._check_task_dispatch_notifications()
             await self._check_task_reminders()
         except Exception:
             logger.exception("提醒 loop 執行失敗")
@@ -157,6 +160,48 @@ class RemindersCog(commands.Cog):
                     )
                 # 終態：逾期通知已發，之後不再對這個收集做每輪查詢
                 time_collection.deregister_collection(collection.month, collection.deadline_ts)
+
+    # ---------- P0-4 任務提醒：截止前提醒、逾期標記＋管理層升級 ----------
+
+    async def _check_task_dispatch_notifications(self):
+        """通知新建立且開啟 Discord 顯示的任務；首次啟用只建立基準。"""
+        all_tasks = await repositories.get_active_tasks()
+        unseen, next_state = task_notifications.find_unseen_tasks(
+            all_tasks, self._task_dispatch_state
+        )
+        self._task_dispatch_state = next_state
+        task_notifications.save_state(next_state)
+        for task in unseen:
+            if not task.discord_visible or not task.artist_page_ids:
+                continue
+            artists = await repositories.get_artists_by_ids(task.artist_page_ids)
+            sent = 0
+            for artist in artists:
+                if not artist.discord_user_id:
+                    continue
+                try:
+                    user = await self.bot.fetch_user(int(artist.discord_user_id))
+                    view = discord.ui.View(timeout=None)
+                    from cogs.tasks_artist import TaskReceiptButton
+                    view.add_item(TaskReceiptButton(task.page_id))
+                    await user.send(task_notifications.notification_message(task), view=view)
+                    sent += 1
+                except Exception:
+                    logger.exception("任務派發通知失敗：%s／%s", task.name, artist.name)
+            if sent:
+                try:
+                    await repositories.mark_task_discord_notified(task.page_id)
+                except Exception:
+                    # 本機 state 已去重，避免每輪重複 DM；Notion 缺欄位時保留 log。
+                    logger.exception("任務通知時間寫入 Notion 失敗：%s", task.page_id)
+                await audit.log_event(
+                    event_name=f"任務派發通知｜{task.name}",
+                    action_type="提醒",
+                    operator="System",
+                    target_db="Tasks",
+                    target_url=task.url,
+                    after=f"通知 {sent} 位藝人",
+                )
 
     # ---------- P0-4 任務提醒：截止前提醒、逾期標記＋管理層升級 ----------
 

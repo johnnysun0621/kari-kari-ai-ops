@@ -29,6 +29,7 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 - `Availability Slots` 是可配合時間，不是正式行程。
 - 正式安排以 `Tasks` / `Projects` 為主。
 - 課程場次資訊已集中在 `Tasks`，不再使用獨立 `Course Sessions`。
+- 新任務通知使用 `Discord 通知時間`、`Discord 收到時間` 兩個 Tasks 欄位；首次啟用會先建立歷史任務基準。
 
 ## 目前主要流程
 

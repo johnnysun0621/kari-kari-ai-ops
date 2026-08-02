@@ -696,6 +696,9 @@ class TaskItem:
     drive_folder_url: str = ""
     # Notion page 建立時間，用於沒有截止日的 Drive 資料夾命名
     created_at: datetime | None = None
+    # 任務派發通知／收件確認
+    discord_notified_at: datetime | None = None
+    discord_acknowledged_at: datetime | None = None
 
 
 @dataclass
@@ -799,6 +802,8 @@ def _to_task(page: dict) -> TaskItem:
         reminder_rules=_read_multi_select(page, "提醒規則"),
         drive_folder_url=_read_url(page, "Google Drive Folder"),
         created_at=created_at,
+        discord_notified_at=_read_date_start(page, "Discord 通知時間"),
+        discord_acknowledged_at=_read_date_start(page, "Discord 收到時間"),
     )
 
 
@@ -1198,6 +1203,38 @@ def compute_due_reminder_stages(task: TaskItem, now: datetime) -> list[str]:
 
 async def update_task_status(page_id: str, status: str) -> None:
     await notion_api.update_page(page_id, {"任務狀態": _select(status)})
+
+
+async def mark_task_discord_notified(
+    page_id: str,
+    notified_at: datetime | None = None,
+) -> None:
+    """記錄任務已發送 Discord 派發通知。"""
+    await notion_api.update_page(
+        page_id,
+        {"Discord 通知時間": _date(notified_at or datetime.now(config.TZ))},
+    )
+
+
+async def acknowledge_task(
+    page_id: str,
+    acknowledged_at: datetime | None = None,
+) -> bool:
+    """回寫藝人收到任務；回傳 False 代表舊 schema 沒有收到時間欄位。"""
+    acknowledged_at = acknowledged_at or datetime.now(config.TZ)
+    props = {
+        "任務狀態": _select("進行中"),
+        "Discord 收到時間": _date(acknowledged_at),
+    }
+    try:
+        await notion_api.update_page(page_id, props)
+        return True
+    except NotionAPIError as exc:
+        if "Discord 收到時間" not in str(exc):
+            raise
+        # 讓既有未加欄位的租戶仍可使用按鈕；收到時間會保留在 Audit Log。
+        await notion_api.update_page(page_id, {"任務狀態": _select("進行中")})
+        return False
 
 
 async def create_formal_arrangement_task(

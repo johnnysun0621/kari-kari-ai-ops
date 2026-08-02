@@ -55,6 +55,16 @@ Discord 頻道與 slash command 對應總表請看 [DISCORD_CHANNELS.md](DISCORD
 - `.env` 的 `SCHEDULE_CHANNEL_ID` 有設定時，時間池與排課指令只能在時間資訊彙整使用。
 - 若要讓錯頻道完全看不到不相關 slash command，請在 Discord App / Integration 的 command permission 再設定頻道可見性。
 
+## 任務派發與收件確認 SOP
+
+1. 控方在 Notion `Tasks` 建立或更新任務。
+2. 填寫 `關聯藝人`、`任務狀態=尚未開始`，並勾選 `Discord 顯示`。
+3. 確認 `Discord 通知時間`、`Discord 收到時間` 欄位已存在。
+4. Bot 會私訊關聯藝人，顯示任務名稱、截止日與提交方式。
+5. 藝人按「收到任務」後，Task 轉為 `進行中`，控方可在 Notion 或 Audit Log 確認收件時間。
+
+首次啟用通知功能時，Bot 不會回頭轟炸既有任務；測試時請建立一筆新的測試任務。
+
 ## 主流程：每月時間收集到排程
 
 1. 控方在例會或月度排程前確認下個月需要安排的方向。

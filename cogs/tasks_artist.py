@@ -9,9 +9,57 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, ui_text
 from services.permissions import is_admin
-from services import repositories
+from services import audit, repositories, task_notifications
 
 logger = logging.getLogger(__name__)
+
+
+class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"task_receipt:(?P<task_id>[\w-]+)"):
+    """任務通知中的持久化收到按鈕。"""
+
+    def __init__(self, task_id: str):
+        super().__init__(
+            discord.ui.Button(
+                label="收到任務",
+                style=discord.ButtonStyle.success,
+                emoji="✅",
+                custom_id=f"task_receipt:{task_id}",
+            )
+        )
+        self.task_id = task_id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        task = await repositories.get_task(self.task_id)
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if task is None or artist is None or artist.page_id not in task.artist_page_ids:
+            await interaction.response.send_message("❌ 這不是分派給你的任務。")
+            return
+        if not task_notifications.can_acknowledge(task):
+            await interaction.response.send_message(
+                f"ℹ️ 這項任務目前狀態是「{task.status or '未設定'}」，不需要重複確認。"
+            )
+            return
+
+        received_at = datetime.now(config.get_tenant().tz)
+        try:
+            stored_in_notion = await repositories.acknowledge_task(self.task_id, received_at)
+            await audit.log_event(
+                event_name=f"藝人收到任務｜{task.name}",
+                action_type="更新",
+                operator=artist.name,
+                discord_user_id=str(interaction.user.id),
+                target_db="Tasks",
+                target_url=task.url,
+                after=(
+                    f"狀態：進行中｜收到時間：{received_at.isoformat()}"
+                    + ("｜Notion 已寫入" if stored_in_notion else "｜收到時間欄位尚未建立")
+                ),
+            )
+        except Exception:
+            logger.exception("任務收到確認寫入失敗：%s", self.task_id)
+            await interaction.response.send_message("❌ 收到確認寫入失敗，請稍後再試。")
+            return
+        await interaction.response.send_message("✅ 已記錄你收到這項任務，狀態已更新為「進行中」。")
 
 # 顯示順序：藝人要行動的在前，資訊性的在後
 SECTION_ORDER = [
