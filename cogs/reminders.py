@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class RemindersCog(commands.Cog):
-    TASK_ACK_REMINDER_HOURS = 12
+    TASK_ACK_REMINDER_HOURS = 6
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
