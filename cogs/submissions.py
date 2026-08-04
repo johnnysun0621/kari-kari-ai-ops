@@ -470,8 +470,9 @@ class SubmissionModal(discord.ui.Modal):
                 self.task, artist,
                 submit_type=submit_type, link_url=link_url, content=content,
             )
-            latest_url = link_url or submission_page.get("url", "")
-            await repositories.set_task_under_review(self.task.page_id, latest_url)
+            await repositories.set_task_under_review(
+                self.task.page_id, submission_page.get("url", "")
+            )
         except Exception:
             logger.exception("建立提交失敗")
             await interaction.followup.send("❌ 寫入 Notion 失敗，請稍後再試或聯絡管理者。", ephemeral=True)
@@ -565,7 +566,9 @@ class DriveLinkSubmissionModal(discord.ui.Modal):
                 self.task, artist,
                 submit_type="Drive 連結", link_url=link_url, content=content,
             )
-            await repositories.set_task_under_review(self.task.page_id, link_url)
+            await repositories.set_task_under_review(
+                self.task.page_id, submission_page.get("url", "")
+            )
         except Exception:
             logger.exception("Drive 連結提交失敗")
             await interaction.followup.send("❌ 寫入 Notion 失敗，請稍後再試或聯絡管理者。", ephemeral=True)
@@ -779,7 +782,9 @@ async def _archive_file_submission_batch(
             original_filename=file_names,
             file_size_mb=file_size_mb,
         )
-        await repositories.set_task_under_review(task.page_id, folder_url)
+        await repositories.set_task_under_review(
+            task.page_id, submission_page.get("url", "")
+        )
     except Exception:
         logger.exception("檔案提交寫入 Notion 失敗")
         return False, f"⚠️ 檔案已上傳到 Drive（{folder_url}），但 Notion 紀錄寫入失敗，請聯絡營運補登。"
@@ -1281,7 +1286,9 @@ class SubmissionsCog(commands.Cog):
                 original_filename=names,
                 file_size_mb=total_mb,
             )
-            await repositories.set_task_under_review(pending.task.page_id, pending.folder_url)
+            await repositories.set_task_under_review(
+                pending.task.page_id, submission_page.get("url", "")
+            )
         except Exception:
             logger.exception("Drive 資料夾提交寫入 Notion 失敗")
             await interaction.followup.send("❌ Drive 已讀到檔案，但 Notion 寫入失敗，請聯絡控方。", ephemeral=True)
