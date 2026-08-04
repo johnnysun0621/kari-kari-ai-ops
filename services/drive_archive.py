@@ -67,7 +67,7 @@ def task_folder_name(
     task: "repositories.TaskItem",
     fallback_date: datetime | None = None,
 ) -> str:
-    """Return a readable task folder name without exposing an internal ID."""
+    """Return a date-first task folder name without exposing an internal ID."""
     name = re.sub(r"[\\/:*?\"<>|\r\n\t]+", "_", task.name or "未命名任務")
     name = re.sub(r"\s+", " ", name).strip(" ._") or "未命名任務"
     if task.end:
@@ -75,7 +75,8 @@ def task_folder_name(
     else:
         date_value = task.created_at or fallback_date or datetime.now()
         date_label = f"建立{date_value.strftime('%Y-%m-%d')}"
-    return f"{name[:70].rstrip(' ._')}｜{date_label}"
+    date_value = date_label.removeprefix("截止").removeprefix("建立")
+    return f"{date_value.replace('-', '.')}_{name[:70].rstrip(' ._')}"
 
 
 def archive_path_for_submission(
@@ -83,7 +84,7 @@ def archive_path_for_submission(
     now: datetime,
     type_folders: dict[str, str] | None = None,
 ) -> list[str]:
-    """回傳專區底下的任務資料夾路徑，例如 ["課程作業", "2026-07", "編曲作業｜建立2026-07-09"]。
+    """回傳專區底下的任務資料夾路徑，例如 ["課程作業", "2026-07", "2026.07.09_編曲作業"]。
 
     呼叫端負責：任務有 Google Drive Folder 時不呼叫這裡（直接用任務指定夾）。
     """

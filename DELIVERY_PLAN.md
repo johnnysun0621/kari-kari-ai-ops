@@ -44,8 +44,8 @@
 - [x] `drive_api.list_recent_files(folder_id, since_ts)` 使用 `asyncio.to_thread`
 
 ### D3｜時段整理與驗證（會議 #6 #7，~0.5 天）
-- [ ] 送出前**重疊**偵測：與既有時段重疊 → 自動合併寫入並回報「已與既有時段合併為 X」（語意＝較寬窗勝出）
-- [ ] 確認「完成」批次自動整理正常；若已被移除則接回
+- [x] 送出／完成後沿用 `compact_availability_slots`，重疊時段合併、包含時段封存，並回報整理結果
+- [x] `/我的時段`、月度收集「完成」與 `/時間池整理` 共用整理邏輯；管理者套用前重抓最新資料避免 TOCTOU
 
 ### D4｜安排流程調整（會議 #12，已完成）
 - [x] `/時間池比對` 產生共同空檔候選；不直接發布正式通告
@@ -55,8 +55,8 @@
 - [x] 舊 `/排課*` 從指令選單隱藏，保留程式相容碼以避免歷史資料造成啟動問題
 
 ### D5｜洽談中權限（會議 #3，~0.25 天）
-- [ ] `INACTIVE_ARTIST_STATUSES` 加「未簽」；文件明確「已簽約＋洽談中＝藝人指令全開」
-- [ ] 測試更新＋NOTION_SCHEMA／DISCORD_COMMANDS 同步
+- [x] `INACTIVE_ARTIST_STATUSES` 加「未簽」；文件明確「已簽約＋洽談中＝藝人指令全開」
+- [x] 補上未簽權限測試與 Artists 文件說明
 
 ### D6｜AI 問答（會議 #9，~2-3 天）
 - [ ] `services/ai_engine.py`：OpenAI 相容 chat（httpx 直打 `/v1/chat/completions`，零新依賴）；TenantConfig 加 `ai_base_url`/`ai_api_key`/`ai_model`

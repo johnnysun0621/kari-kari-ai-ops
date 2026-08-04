@@ -28,6 +28,7 @@ class TestSchedulableArtists:
 
     def test_drops_paused_and_archived_artists(self):
         artists = [
+            artist("Unsigned", discord_user_id="789", status="未簽"),
             artist("Paused", discord_user_id="123", status="暫停"),
             artist("Archived", discord_user_id="456", status="封存"),
         ]
@@ -716,6 +717,52 @@ class TestCompactAvailabilitySlots:
         result = repositories.compact_availability_slots(slots)
 
         assert [slot.page_id for slot in result.visible] == ["artist-1-slot", "artist-2-slot"]
+        assert result.redundant == []
+        assert result.updates == []
+
+    def test_does_not_merge_slots_from_different_dates(self):
+        slots = [
+            slot(
+                page_id="day-1",
+                start=datetime(2026, 8, 1, 13, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 1, 18, 0, tzinfo=config.TZ),
+                note="收集性質：月度可配合時段",
+            ),
+            slot(
+                page_id="day-2",
+                start=datetime(2026, 8, 2, 13, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 2, 18, 0, tzinfo=config.TZ),
+                note="收集性質：月度可配合時段",
+            ),
+        ]
+
+        result = repositories.compact_availability_slots(slots)
+
+        assert [item.page_id for item in result.visible] == ["day-1", "day-2"]
+        assert result.redundant == []
+        assert result.updates == []
+
+    def test_does_not_merge_slots_from_different_request_scopes(self):
+        slots = [
+            slot(
+                page_id="request-1-slot",
+                request_page_ids=["request-1"],
+                start=datetime(2026, 8, 1, 13, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 1, 18, 0, tzinfo=config.TZ),
+                note="收集性質：月度可配合時段",
+            ),
+            slot(
+                page_id="request-2-slot",
+                request_page_ids=["request-2"],
+                start=datetime(2026, 8, 1, 14, 0, tzinfo=config.TZ),
+                end=datetime(2026, 8, 1, 19, 0, tzinfo=config.TZ),
+                note="收集性質：月度可配合時段",
+            ),
+        ]
+
+        result = repositories.compact_availability_slots(slots)
+
+        assert [item.page_id for item in result.visible] == ["request-1-slot", "request-2-slot"]
         assert result.redundant == []
         assert result.updates == []
 

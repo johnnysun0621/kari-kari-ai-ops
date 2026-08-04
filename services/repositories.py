@@ -473,7 +473,7 @@ def _to_artist(page: dict) -> Artist:
     )
 
 
-INACTIVE_ARTIST_STATUSES = {"暫停", "封存"}
+INACTIVE_ARTIST_STATUSES = {"未簽", "暫停", "封存"}
 
 
 def filter_schedulable_artists(artists: list[Artist]) -> list[Artist]:

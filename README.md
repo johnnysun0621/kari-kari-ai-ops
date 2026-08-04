@@ -76,7 +76,7 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 - 控方成員需具備 Discord Administrator 權限，才會看到管理端 slash commands
 - 建議分兩個頻道：時間資訊彙整放時間池公告與比對；任務查詢入口放 `/我的任務`、`/任務總覽` 與任務提醒
 - Notion integration 要能讀寫：Artists、Availability Slots、Tasks、Projects、People、Submissions、Audit Log
-- Artists 的可排課藝人要填 `Discord User ID`，且 `合約狀態` 不要是 `暫停` / `封存`
+- Artists 的可用藝人帳號要填 `Discord User ID`，且 `合約狀態` 為 `已簽約` 或 `洽談中`
 
 ## 測試
 

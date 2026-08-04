@@ -68,21 +68,6 @@ class ReviewFeedbackDriveTarget:
     path_segments: list[str]
 
 
-@dataclass
-class PendingReviewFeedbackProofUpload:
-    submission: repositories.SubmissionItem
-    result: str
-    feedback: str
-    reviewer: str
-    targets: list[ReviewFeedbackDriveTarget]
-    channel_id: int | None
-    created_at: datetime
-    expires_at: datetime
-
-    def is_expired(self, now: datetime) -> bool:
-        return now > self.expires_at
-
-
 def expired_pending_keys(pending_by_user: dict, now: datetime) -> list:
     """回傳已過期的 pending 項目 key；純函式，供背景清理與測試共用。
 
@@ -199,20 +184,6 @@ def prefixed_review_feedback_filename(
     )
 
 
-def prefixed_review_feedback_proof_filename(
-    *,
-    submission_name: str,
-    original_filename: str,
-) -> str:
-    return "_".join(
-        [
-            "批改截圖",
-            _safe_filename_part(submission_name, fallback="submission"),
-            _safe_original_filename(original_filename),
-        ]
-    )
-
-
 def large_file_drive_instruction(
     *,
     task_name: str,
@@ -252,7 +223,7 @@ def review_feedback_drive_instruction(
             lines.append(f"- {target.artist_name}：{target.folder_url}")
         if len(targets) > 5:
             lines.append(f"- ...另 {len(targets) - 5} 個資料夾")
-        lines.append("上傳完成後，建議按「貼 Drive 連結補回饋」；也可以按「用截圖佐證」上傳完成畫面。")
+        lines.append("上傳完成後，請按「貼 Drive 連結補回饋」或直接上傳批改檔。")
     else:
         lines.append("目前無法自動產生老師回饋資料夾，請先把檔案上傳到可分享的雲端，再按「貼 Drive 連結補回饋」。")
     if skipped_artists:
@@ -697,7 +668,6 @@ class ReviewFeedbackDriveLinkModal(discord.ui.Modal):
             return
 
         self.cog.pending_review_feedback_files.pop(interaction.user.id, None)
-        self.cog.pending_review_feedback_proofs.pop(interaction.user.id, None)
         links_by_artist = {
             page_id: [link_url]
             for page_id in self.submission.artist_page_ids
@@ -1050,23 +1020,6 @@ class ReviewFeedbackLargeFileChoiceView(discord.ui.View):
             )
         )
 
-    @discord.ui.button(label="用截圖佐證", style=discord.ButtonStyle.secondary)
-    async def upload_proof(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.targets:
-            await interaction.response.send_message(
-                "❌ 目前沒有可用的老師回饋資料夾，請改用「貼 Drive 連結補回饋」。",
-                ephemeral=True,
-            )
-            return
-        await self.cog.start_review_feedback_proof_upload_wait(
-            interaction,
-            self.submission,
-            result=self.result,
-            feedback=self.feedback,
-            reviewer=self.reviewer,
-            targets=self.targets,
-        )
-
     @discord.ui.button(label="完成回饋", style=discord.ButtonStyle.success)
     async def finish_feedback(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.owner_id is not None and interaction.user.id != self.owner_id:
@@ -1207,7 +1160,6 @@ class SubmissionsCog(commands.Cog):
         self.bot = bot
         self.pending_file_submissions: dict[int, PendingFileSubmission] = {}
         self.pending_review_feedback_files: dict[int, PendingReviewFeedbackFile] = {}
-        self.pending_review_feedback_proofs: dict[int, PendingReviewFeedbackProofUpload] = {}
         self._review_notified: set[str] = set()
         self.review_poll_loop.start()
 
@@ -1454,40 +1406,6 @@ class SubmissionsCog(commands.Cog):
             )
         return targets, skipped
 
-    async def start_review_feedback_proof_upload_wait(
-        self,
-        interaction: discord.Interaction,
-        submission: repositories.SubmissionItem,
-        *,
-        result: str,
-        feedback: str,
-        reviewer: str,
-        targets: list[ReviewFeedbackDriveTarget],
-    ) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        now = datetime.now(config.get_tenant().tz)
-        expires_at = now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES)
-        self.pending_review_feedback_files.pop(interaction.user.id, None)
-        self.pending_review_feedback_proofs[interaction.user.id] = PendingReviewFeedbackProofUpload(
-            submission=submission,
-            result=result,
-            feedback=feedback,
-            reviewer=reviewer,
-            targets=targets,
-            channel_id=interaction.channel_id,
-            created_at=now,
-            expires_at=expires_at,
-        )
-        target_text = "\n".join(f"- {target.artist_name}：{target.folder_url}" for target in targets[:5])
-        if len(targets) > 5:
-            target_text += f"\n- ...另 {len(targets) - 5} 個資料夾"
-        await interaction.followup.send(
-            f"📷 請直接在這個頻道上傳 **{submission.name}** 的 Drive 上傳完成截圖。\n"
-            f"截圖請在 **{MAX_UPLOAD_MB}MB 以下**；入口 **{file_upload_wait_label()}**後失效。\n"
-            f"我會把以下老師回饋資料夾和截圖寫入 Notion：\n{target_text}",
-            ephemeral=True,
-        )
-
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """所有 pending 附件流程的統一入口；例外全部攔在這裡，不讓使用者的檔案憑空消失。"""
@@ -1506,10 +1424,6 @@ class SubmissionsCog(commands.Cog):
         pending_feedback = self.pending_review_feedback_files.get(message.author.id)
         if pending_feedback is not None:
             await self._handle_pending_review_feedback_message(message, pending_feedback)
-            return
-        pending_feedback_proof = self.pending_review_feedback_proofs.get(message.author.id)
-        if pending_feedback_proof is not None:
-            await self._handle_pending_review_feedback_proof_message(message, pending_feedback_proof)
             return
         pending = self.pending_file_submissions.get(message.author.id)
         if pending is None:
@@ -1543,131 +1457,6 @@ class SubmissionsCog(commands.Cog):
         await message.channel.send(
             f"✅ 已收到 {len(message.attachments)} 個檔案，目前共 {count} 個。"
             "可以繼續上傳；全部完成後按原本訊息的「完成提交」。"
-        )
-
-    async def _handle_pending_review_feedback_proof_message(
-        self,
-        message: discord.Message,
-        pending: PendingReviewFeedbackProofUpload,
-    ) -> None:
-        if pending.channel_id is not None and message.channel.id != pending.channel_id:
-            return
-        now = datetime.now(config.get_tenant().tz)
-        if pending.is_expired(now):
-            self.pending_review_feedback_proofs.pop(message.author.id, None)
-            await message.channel.send("❌ 這次批改截圖佐證入口已過期，請重新執行 `/審核提交`。")
-            return
-        if not message.attachments:
-            await message.channel.send("請直接上傳一張 Drive 上傳完成截圖；如果要貼批改檔連結，請重新按「貼 Drive 連結補回饋」。")
-            return
-        if len(message.attachments) > 1:
-            await message.channel.send("一次請上傳一張截圖；多張請先選最能證明已上傳完成的那張。")
-            return
-        attachment = message.attachments[0]
-        size_error = direct_upload_size_error(attachment.size)
-        if size_error:
-            await message.channel.send(f"{size_error}\n截圖超過標準大小時，請改用「貼 Drive 連結補回饋」。")
-            return
-        if not drive_api.is_configured():
-            await message.channel.send("❌ Drive 歸檔尚未設定，請改用「貼 Drive 連結補回饋」。")
-            return
-
-        self.pending_review_feedback_proofs.pop(message.author.id, None)
-        await message.channel.send("收到截圖，正在歸檔到 Google Drive、更新 Notion 並通知藝人...")
-        _ok, result_message = await self._archive_review_feedback_proof_file(
-            pending=pending,
-            attachment=attachment,
-            discord_user_id=message.author.id,
-        )
-        await message.channel.send(result_message)
-
-    async def _archive_review_feedback_proof_file(
-        self,
-        *,
-        pending: PendingReviewFeedbackProofUpload,
-        attachment: discord.Attachment,
-        discord_user_id: int,
-    ) -> tuple[bool, str]:
-        try:
-            content = await attachment.read()
-        except Exception:
-            logger.exception("讀取批改截圖附件失敗")
-            return False, "❌ 讀取 Discord 附件失敗，請稍後再試。"
-
-        drive_filename = prefixed_review_feedback_proof_filename(
-            submission_name=pending.submission.name,
-            original_filename=attachment.filename,
-        )
-        links_by_artist: dict[str, list[str]] = {}
-        flat_links: list[str] = []
-        folder_lines: list[str] = []
-        for target in pending.targets:
-            folder_lines.append(f"{target.artist_name}：{target.folder_url}")
-            try:
-                uploaded = await drive_api.upload_submission_file(
-                    base_folder_id=target.base_folder_id,
-                    path_segments=target.path_segments,
-                    filename=drive_filename,
-                    content=content,
-                    mime_type=attachment.content_type or "",
-                )
-            except Exception:
-                logger.exception("批改截圖 Drive 上傳失敗（artist=%s）", target.artist_name)
-                return False, (
-                    "❌ 批改截圖上傳 Google Drive 失敗（未更新 Notion）。\n"
-                    "請稍後再試，或改用「貼 Drive 連結補回饋」。"
-                )
-            drive_url = uploaded.get("webViewLink", "")
-            if drive_url:
-                links_by_artist.setdefault(target.artist_page_id, []).append(drive_url)
-                flat_links.append(drive_url)
-
-        if not flat_links:
-            return False, "❌ 沒有可用的老師回饋資料夾，請改用「貼 Drive 連結補回饋」。"
-
-        feedback_parts = [pending.feedback]
-        if folder_lines:
-            feedback_parts.append("大批改檔老師回饋資料夾：\n" + "\n".join(folder_lines))
-        enhanced_feedback = feedback_with_attachment_links(
-            "\n".join(part for part in feedback_parts if part),
-            flat_links,
-        )
-        now = datetime.now(config.get_tenant().tz)
-        try:
-            await repositories.update_submission_review(
-                pending.submission.page_id,
-                status=pending.result,
-                feedback=enhanced_feedback,
-                reviewer=pending.reviewer,
-                source="Discord",
-                notified_at=now,
-            )
-        except NotionAPIError:
-            logger.exception("批改截圖連結寫入 Notion 失敗")
-            return False, (
-                f"⚠️ 批改截圖已上傳到 Drive（{flat_links[0]}），但 Notion 回饋寫入失敗，請手動補登。"
-            )
-
-        sent = await self._notify_review_feedback_file(
-            pending.submission,
-            result=pending.result,
-            feedback=pending.feedback,
-            reviewer=pending.reviewer,
-            links_by_artist_page_id=links_by_artist,
-        )
-        file_size_mb = round(attachment.size / 1048576, 2)
-        await audit.log_event(
-            event_name=f"審核批改截圖佐證｜{pending.submission.name}",
-            action_type="上傳",
-            operator=pending.reviewer,
-            discord_user_id=str(discord_user_id),
-            target_db="Submissions & File Index",
-            target_url=pending.submission.url,
-            after=f"{drive_filename}｜原檔名 {attachment.filename}｜{file_size_mb}MB｜通知 {sent} 位藝人",
-        )
-        return True, (
-            f"✅ 批改截圖已歸檔，並把大檔資料夾寫入 Notion：**{pending.submission.name}**\n"
-            f"檔案：{drive_filename}｜通知 {sent} 位藝人"
         )
 
     async def _handle_pending_review_feedback_message(
@@ -1944,7 +1733,6 @@ class SubmissionsCog(commands.Cog):
         for pending_by_user in (
             self.pending_file_submissions,
             self.pending_review_feedback_files,
-            self.pending_review_feedback_proofs,
         ):
             for key in expired_pending_keys(pending_by_user, now):
                 pending_by_user.pop(key, None)
