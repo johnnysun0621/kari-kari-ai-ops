@@ -2,6 +2,7 @@
 import httpx
 
 import config
+from services import llm_usage
 from services.repositories import CourseMeetingRecord
 
 
@@ -39,10 +40,16 @@ async def answer_course_question(
             "尚未設定 LLM_API_KEY",
             "⚠️ 課程助教尚未設定 API，請聯絡控方。",
         )
+    if not llm_usage.within_daily_limit():
+        raise CourseQAError(
+            "LLM daily token limit reached",
+            "⚠️ 課程助教今日使用量已達上限，請明天再試或聯絡控方。",
+        )
     context = "\n\n".join(_record_text(record, attachment_names) for record in records)[:16000]
     payload = {
         "model": tenant.llm_model,
         "temperature": 0.2,
+        "max_tokens": tenant.llm_max_tokens,
         "messages": [
             {
                 "role": "system",
@@ -85,6 +92,7 @@ async def answer_course_question(
                 "⚠️ 課程助教暫時連不上 API，請稍後再試。",
             ) from exc
     data = response.json()
+    llm_usage.record(data.get("usage"))
     try:
         answer = data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError) as exc:

@@ -7,6 +7,7 @@ from datetime import datetime
 import httpx
 
 import config
+from services import llm_usage
 from services.repositories import CourseMeetingRecord
 
 
@@ -84,7 +85,7 @@ async def classify_query(
     tenant = config.get_tenant()
     if _is_other_followup(question, memory):
         return QueryIntent(mode="compare")
-    if not tenant.llm_api_key or not records:
+    if not tenant.llm_api_key or not records or not llm_usage.within_daily_limit():
         return _fallback_intent(question, records)
     previous = json.dumps(memory or {}, ensure_ascii=False)[:1200]
     payload = {
@@ -115,7 +116,9 @@ async def classify_query(
                 json=payload,
             )
             response.raise_for_status()
-        raw = response.json()["choices"][0]["message"]["content"]
+        response_data = response.json()
+        raw = response_data["choices"][0]["message"]["content"]
+        llm_usage.record(response_data.get("usage"))
         data = _parse_json(raw)
         valid_ids = {record.page_id for record in records}
         valid_attachment_names = {

@@ -60,10 +60,10 @@
 - [x] 補上未簽權限測試與 Artists 文件說明
 
 ### D6｜AI 問答（會議 #9，~2-3 天）
-- [ ] `services/ai_engine.py`：OpenAI 相容 chat（httpx 直打 `/v1/chat/completions`，零新依賴）；TenantConfig 加 `ai_base_url`/`ai_api_key`/`ai_model`
+- [x] 課程助教沿用 OpenAI 相容 chat（httpx 直打 `/v1/chat/completions`）；TenantConfig 支援 base URL、API key、model 與 token 護欄
 - [ ] `services/ai_context.py`：依身分組裝 context（藝人＝自己任務＋自己課程＋`可給藝人查詢`=true 決策＋`AI 可查詢等級`允許的會議；控方全開）；**權限過濾在組裝端**（LLM 看不到無權資料）；截斷上限
 - [ ] `cogs/ai_qa.py`：`/問 問題:<文字>`；可選 `AI_CHANNEL_ID` 限頻道；回答附來源；每用戶冷卻 30s；audit「AI 回答」；未設 ai_base_url → 回覆未啟用
-- [ ] 護欄：max_tokens、逾時、錯誤不洩 context；純函式測試（context 權限過濾／prompt 組裝／冷卻），engine monkeypatch httpx
+- [x] 護欄：`max_tokens`、每日 token 上限、逾時、錯誤不洩 context；使用量只寫 `.state/llm_usage.json`
 
 ### D7｜正式伺服器移轉包（會議 #8，~0.5 天）
 - [ ] `/伺服器初始化`：建四區頻道（公告區唯讀／時間資訊彙整／任務查詢入口／營運內部限管理）＋藝人/控方身分組＋輸出 .env 貼上清單
