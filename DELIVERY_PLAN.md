@@ -41,6 +41,7 @@
 - [x] 附件 >10MB 或任務提交方式=Drive 連結時，提供指定 Drive 資料夾與「我已上傳到 Drive」按鈕
 - [x] find-or-create `專區/類型夾/YYYY-MM/`，回傳資料夾連結（專區已分享給藝人）
 - [x] 驗證按鈕只讀取入口建立後新增檔案，寫入 Submissions（資料夾、File ID、檔名、大小）並將任務轉待審核；驗不到時提示重試
+- [x] 審核管理補強：Tasks 支援 `審核人員`、`審核期限`、`修改期限`；提交後預設 24 小時審核期限，需修改／退回預設 48 小時修改期限，背景 loop 依期限提醒
 - [x] `drive_api.list_recent_files(folder_id, since_ts)` 使用 `asyncio.to_thread`
 
 ### D3｜時段整理與驗證（會議 #6 #7，~0.5 天）

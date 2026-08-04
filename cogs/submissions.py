@@ -1670,6 +1670,13 @@ class SubmissionsCog(commands.Cog):
             return
         for task_page_id in submission.task_page_ids:
             await repositories.update_task_status(task_page_id, task_status)
+            # 修改期限以 48 小時為預設；控方仍可直接在 Notion 調整日期。
+            deadline = (
+                datetime.now(config.get_tenant().tz) + timedelta(hours=48)
+                if result in ("需修改", "退回")
+                else None
+            )
+            await repositories.set_task_revision_deadline(task_page_id, deadline)
 
     async def complete_discord_review(
         self,

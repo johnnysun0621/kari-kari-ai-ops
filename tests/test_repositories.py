@@ -1004,3 +1004,19 @@ class TestComputeDueReminderStages:
 
         assert repositories.compute_due_reminder_stages(done, NOW) == []
         assert repositories.compute_due_reminder_stages(no_end, NOW) == []
+
+
+class TestReviewDeadlines:
+    def test_review_deadline_warns_six_hours_before_and_after(self):
+        task = display_task(status="待審核")
+        task.review_deadline = NOW + repositories.timedelta(hours=5)
+        assert repositories.compute_review_deadline_stage(task, NOW) == "審核期限將到"
+        task.review_deadline = NOW - repositories.timedelta(minutes=1)
+        assert repositories.compute_review_deadline_stage(task, NOW) == "審核逾時"
+
+    def test_revision_deadline_only_applies_to_needs_fix(self):
+        task = display_task(status="需修改")
+        task.revision_deadline = NOW + repositories.timedelta(hours=12)
+        assert repositories.compute_revision_deadline_stage(task, NOW) == "修改期限將到"
+        task.status = "進行中"
+        assert repositories.compute_revision_deadline_stage(task, NOW) is None

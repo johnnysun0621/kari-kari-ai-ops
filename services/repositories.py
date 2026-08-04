@@ -528,6 +528,30 @@ async def get_teacher_options() -> list[tuple[str, str]]:
     return sorted({option for option in options if option[1]}, key=lambda option: option[1])
 
 
+@dataclass(frozen=True)
+class PersonItem:
+    page_id: str
+    name: str
+    discord_user_id: str = ""
+
+
+async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
+    """讀取指定 People，供審核人員提醒使用；沒有 Discord ID 的人只保留名稱。"""
+    if not page_ids:
+        return []
+    pages = await notion_api.query_data_source(config.DS_PEOPLE)
+    wanted = set(page_ids)
+    return [
+        PersonItem(
+            page_id=page["id"],
+            name=_read_title(page, "姓名 / 名稱").strip() or "未命名人員",
+            discord_user_id=_read_rich_text(page, "Discord User ID").strip(),
+        )
+        for page in pages
+        if page["id"] in wanted
+    ]
+
+
 # ---------- Schedule Requests ----------
 
 @dataclass
@@ -676,6 +700,7 @@ class TaskItem:
     course_category: str | None = None
     course_item_nature: str | None = None
     teacher_page_ids: list[str] = field(default_factory=list)
+    reviewer_page_ids: list[str] = field(default_factory=list)
     artist_page_ids: list[str] = field(default_factory=list)
     project_page_ids: list[str] = field(default_factory=list)
     start: datetime | None = None
@@ -699,6 +724,8 @@ class TaskItem:
     # 任務派發通知／收件確認
     discord_notified_at: datetime | None = None
     discord_acknowledged_at: datetime | None = None
+    review_deadline: datetime | None = None
+    revision_deadline: datetime | None = None
 
 
 @dataclass
@@ -717,6 +744,7 @@ class SubmissionItem:
     review_source: str | None = None
     review_notified_at: datetime | None = None
     url: str = ""
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -786,6 +814,7 @@ def _to_task(page: dict) -> TaskItem:
         course_category=_read_select(page, "課程類別"),
         course_item_nature=_read_select(page, "課程項目性質"),
         teacher_page_ids=_read_relation_ids(page, "負責老師"),
+        reviewer_page_ids=_read_relation_ids(page, "審核人員"),
         artist_page_ids=_read_relation_ids(page, "關聯藝人"),
         project_page_ids=_read_relation_ids(page, "關聯專案"),
         start=start.value,
@@ -804,6 +833,8 @@ def _to_task(page: dict) -> TaskItem:
         created_at=created_at,
         discord_notified_at=_read_date_start(page, "Discord 通知時間"),
         discord_acknowledged_at=_read_date_start(page, "Discord 收到時間"),
+        review_deadline=_read_date_start(page, "審核期限"),
+        revision_deadline=_read_date_start(page, "修改期限"),
     )
 
 
@@ -823,6 +854,8 @@ def _to_submission(page: dict) -> SubmissionItem:
         review_source=_read_select(page, "審核來源"),
         review_notified_at=_read_date_start(page, "審核通知時間"),
         url=page.get("url", ""),
+        created_at=_parse_notion_datetime(page.get("created_time")).value
+        if page.get("created_time") else None,
     )
 
 
@@ -1395,7 +1428,52 @@ async def set_task_under_review(task_page_id: str, latest_url: str) -> None:
     props: dict = {"任務狀態": _select("待審核")}
     if latest_url:
         props["最新提交 URL"] = _url(latest_url)
-    await notion_api.update_page(task_page_id, props)
+    # 審核期限是提交後 24 小時；舊租戶尚未建欄位時保留原本提交流程。
+    props["審核期限"] = _date(datetime.now(config.TZ) + timedelta(hours=24))
+    try:
+        await notion_api.update_page(task_page_id, props)
+    except NotionAPIError as exc:
+        if "審核期限" not in str(exc):
+            raise
+        props.pop("審核期限", None)
+        await notion_api.update_page(task_page_id, props)
+
+
+async def set_task_revision_deadline(
+    task_page_id: str,
+    deadline: datetime | None,
+) -> None:
+    """設定或清除需修改期限；舊租戶沒有欄位時不阻斷審核結果寫入。"""
+    try:
+        await notion_api.update_page(
+            task_page_id,
+            {"修改期限": _date(deadline) if deadline else {"date": None}},
+        )
+    except NotionAPIError as exc:
+        if "修改期限" not in str(exc):
+            raise
+
+
+def compute_review_deadline_stage(task: TaskItem, now: datetime) -> str | None:
+    """回傳審核期限提醒階段；只處理尚未完成的待審核任務。"""
+    if task.status != "待審核" or not task.review_deadline:
+        return None
+    if task.review_deadline <= now:
+        return "審核逾時"
+    if task.review_deadline - now <= timedelta(hours=6):
+        return "審核期限將到"
+    return None
+
+
+def compute_revision_deadline_stage(task: TaskItem, now: datetime) -> str | None:
+    """回傳藝人修改期限提醒階段。"""
+    if task.status != "需修改" or not task.revision_deadline:
+        return None
+    if task.revision_deadline <= now:
+        return "修改期限逾時"
+    if task.revision_deadline - now <= timedelta(hours=24):
+        return "修改期限將到"
+    return None
 
 
 # ---------- P0-5 審核通知（Submissions → Tasks → Discord DM） ----------

@@ -42,6 +42,8 @@ class RemindersCog(commands.Cog):
             await self._check_monthly_pool_deadlines()
             await self._check_task_dispatch_notifications()
             await self._check_unacknowledged_task_notifications()
+            await self._check_review_deadlines()
+            await self._check_revision_deadlines()
             await self._check_task_reminders()
         except Exception:
             logger.exception("提醒 loop 執行失敗")
@@ -278,7 +280,6 @@ class RemindersCog(commands.Cog):
         for task in pending:
             for artist_page_id in task.artist_page_ids:
                 artist = artist_map.get(artist_page_id)
-                reminder_key = f"{task.page_id}:{artist_page_id}"
                 if (
                     artist
                     and artist.discord_user_id
@@ -319,6 +320,97 @@ class RemindersCog(commands.Cog):
                 )
             except Exception:
                 logger.exception("任務未確認提醒失敗：%s", artist.name)
+
+    async def _check_review_deadlines(self):
+        """審核期限前提醒指定審核人員，逾時升級控方。"""
+        submissions = await repositories.get_submissions_by_review_status(["待審核"])
+        if not submissions:
+            return
+        tasks = {task.page_id: task for task in await repositories.get_active_tasks()}
+        admin_channel = (
+            self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+            or self.bot.get_channel(config.TASK_CHANNEL_ID)
+            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+        )
+        for submission in submissions:
+            related = [tasks[pid] for pid in submission.task_page_ids if pid in tasks]
+            stages = {stage for stage in (repositories.compute_review_deadline_stage(task, datetime.now(config.TZ)) for task in related) if stage}
+            if not stages:
+                continue
+            stage = "審核逾時" if "審核逾時" in stages else "審核期限將到"
+            if not self._once(f"review:{submission.page_id}", stage):
+                continue
+            reviewer_ids = sorted({pid for task in related for pid in task.reviewer_page_ids})
+            reviewers = await repositories.get_people_by_ids(reviewer_ids)
+            deadline = next((task.review_deadline for task in related if task.review_deadline), None)
+            deadline_text = deadline.strftime("%m/%d %H:%M") if deadline else "未設定"
+            message = (
+                f"⏰ 提交待審核：**{submission.name}**\n"
+                f"審核期限：{deadline_text}\n"
+                "請完成審核並回填結果。"
+            )
+            sent_reviewers = 0
+            for reviewer in reviewers:
+                if not reviewer.discord_user_id:
+                    continue
+                try:
+                    user = await self.bot.fetch_user(int(reviewer.discord_user_id))
+                    await user.send(message)
+                    sent_reviewers += 1
+                except Exception:
+                    logger.exception("審核人員提醒失敗：%s", reviewer.name)
+            if admin_channel and stage == "審核逾時":
+                await admin_channel.send(
+                    f"🚨 **審核逾時**｜{submission.name}\n"
+                    f"期限：{deadline_text}｜已通知指定審核人員：{sent_reviewers} 位"
+                )
+            await audit.log_event(
+                event_name=f"審核期限提醒｜{submission.name}",
+                action_type="提醒", operator="System", source="System",
+                target_db="Submissions & Tasks", target_url=submission.url,
+                after=f"{stage}｜指定審核人員通知 {sent_reviewers} 位",
+            )
+
+    async def _check_revision_deadlines(self):
+        """需修改期限前提醒藝人，逾時通知控方。"""
+        tasks = await repositories.get_active_tasks()
+        due = []
+        now = datetime.now(config.TZ)
+        for task in tasks:
+            stage = repositories.compute_revision_deadline_stage(task, now)
+            if stage and self._once(f"revision:{task.page_id}", stage):
+                due.append((task, stage))
+        if not due:
+            return
+        artist_map = await repositories.get_artist_map()
+        admin_channel = (
+            self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+            or self.bot.get_channel(config.TASK_CHANNEL_ID)
+            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+        )
+        for task, stage in due:
+            deadline_text = task.revision_deadline.strftime("%m/%d %H:%M") if task.revision_deadline else "未設定"
+            if task.discord_visible:
+                for page_id in task.artist_page_ids:
+                    artist = artist_map.get(page_id)
+                    if not artist or not artist.discord_user_id:
+                        continue
+                    try:
+                        user = await self.bot.fetch_user(int(artist.discord_user_id))
+                        await user.send(
+                            f"⏰ 修改期限提醒：**{task.name}**｜期限：{deadline_text}\n"
+                            "請依老師回饋完成修改並重新提交。"
+                        )
+                    except Exception:
+                        logger.exception("修改期限提醒失敗：%s", artist.name)
+            if admin_channel and stage == "修改期限逾時":
+                await admin_channel.send(f"🚨 **修改期限逾時**｜{task.name}｜期限：{deadline_text}")
+            await audit.log_event(
+                event_name=f"修改期限提醒｜{task.name}",
+                action_type="提醒", operator="System", source="System",
+                target_db="Tasks", target_url=task.url,
+                after=f"{stage}｜{deadline_text}",
+            )
 
     # ---------- P0-4 任務提醒：截止前提醒、逾期標記＋管理層升級 ----------
 
