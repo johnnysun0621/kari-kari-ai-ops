@@ -533,6 +533,7 @@ class PersonItem:
     page_id: str
     name: str
     discord_user_id: str = ""
+    identity_type: str | None = None
 
 
 async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
@@ -546,9 +547,11 @@ async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
             page_id=page["id"],
             name=_read_title(page, "姓名 / 名稱").strip() or "未命名人員",
             discord_user_id=_read_rich_text(page, "Discord User ID").strip(),
+            identity_type=_read_select(page, "身份類型"),
         )
         for page in pages
         if page["id"] in wanted
+        and _read_select(page, "身份類型") == "公司成員"
     ]
 
 
