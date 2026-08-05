@@ -2,6 +2,7 @@ from datetime import datetime
 
 import config
 from cogs.bulletin import bulletin_fingerprint, format_bulletin
+from services import repositories
 from services.repositories import BulletinItem
 
 
@@ -30,3 +31,20 @@ def test_format_bulletin_contains_operational_fields_and_link():
     assert "類別：📢 公告｜狀態：未處理" in text
     assert "人員：Johnny" in text
     assert "https://notion.so/page-1" in text
+
+
+def test_ai_feedback_uses_usage_feedback_category_without_question_text():
+    props, children = repositories.build_ai_feedback_page(
+        artist_name="Johnny",
+        discord_user="Johnny#1234",
+        discord_user_id=1234,
+        feedback="來源連結打不開",
+        answer_message_url="https://discord.com/channels/1/2/3",
+    )
+
+    assert props["類別"]["select"]["name"] == "🙋 使用回饋"
+    assert props["狀態"]["select"]["name"] == "未處理"
+    body = children[0]["paragraph"]["rich_text"][0]["text"]["content"]
+    assert "來源連結打不開" in body
+    assert "原始問題" not in body
+    assert "https://discord.com/channels/1/2/3" in body

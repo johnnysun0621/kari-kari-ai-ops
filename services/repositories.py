@@ -424,6 +424,25 @@ async def get_course_meetings_for_artist(artist_page_id: str) -> list[CourseMeet
     return records
 
 
+async def get_course_meeting_summaries() -> list[CourseMeetingRecord]:
+    """管理端 AI 使用的輕量清單；不下載頁面附件或正文。"""
+    pages = await notion_api.query_data_source(
+        config.DS_COURSE_MEETINGS,
+        sorts=[{"property": "Date", "direction": "descending"}],
+    )
+    return [CourseMeetingRecord(
+        page_id=page["id"],
+        url=page.get("url", ""),
+        title=_read_title(page, "Name"),
+        date=_read_date_start(page, "Date"),
+        summary=_read_rich_text(page, "會議摘要"),
+        content="",
+        artist_page_ids=tuple(_read_relation_ids(page, "參與藝人")),
+        task_page_ids=(),
+        project_page_ids=tuple(_read_relation_ids(page, "關聯專案")),
+    ) for page in pages if not page.get("archived")]
+
+
 async def create_bulletin_feedback(
     source: BulletinItem,
     discord_user: str,
@@ -457,6 +476,46 @@ async def create_bulletin_feedback(
         "類別": _select("🙋 使用回饋"),
         "狀態": _select("未處理"),
     }
+    return await notion_api.create_page(config.DS_BULLETIN, props, children=children)
+
+
+def build_ai_feedback_page(
+    *,
+    artist_name: str,
+    discord_user: str,
+    discord_user_id: int,
+    feedback: str,
+    answer_message_url: str = "",
+) -> tuple[dict, list[dict]]:
+    """建立課程助教回報資料；刻意不保存原始問題與完整回答。"""
+    now = datetime.now(config.TZ)
+    body_text = (
+        f"藝人：{artist_name}\n"
+        f"回報者：{discord_user}（Discord ID：{discord_user_id}）\n"
+        f"Discord 回答：{answer_message_url or '未提供'}\n\n"
+        f"回報內容：\n{feedback.strip()}"
+    )
+    props = {
+        "Name": _title(f"AI 回報｜{artist_name}｜{now:%Y-%m-%d %H:%M}"[:2000]),
+        "Date": _date(now),
+        "類別": _select("🙋 使用回饋"),
+        "狀態": _select("未處理"),
+    }
+    children = [{
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": [{
+                "type": "text",
+                "text": {"content": body_text[:2000]},
+            }],
+        },
+    }]
+    return props, children
+
+
+async def create_ai_feedback(**kwargs) -> dict:
+    props, children = build_ai_feedback_page(**kwargs)
     return await notion_api.create_page(config.DS_BULLETIN, props, children=children)
 
 
@@ -978,6 +1037,11 @@ async def get_project_map() -> dict[str, ProjectItem]:
     return {page["id"]: _to_project(page) for page in pages}
 
 
+async def get_all_projects() -> list[ProjectItem]:
+    pages = await notion_api.query_data_source(config.DS_PROJECTS)
+    return [_to_project(page) for page in pages if not page.get("archived")]
+
+
 async def get_course_training_projects() -> list[ProjectItem]:
     """供時間池課程安排選擇的進行中「課程培訓」專案。"""
     pages = await notion_api.query_data_source(config.DS_PROJECTS)
@@ -1042,6 +1106,11 @@ async def get_active_tasks() -> list[TaskItem]:
     conditions.append({"property": "任務狀態", "select": {"is_empty": True}})
     pages = await notion_api.query_data_source(config.DS_TASKS, filter_={"or": conditions})
     return [_to_task(p) for p in pages]
+
+
+async def get_all_tasks() -> list[TaskItem]:
+    pages = await notion_api.query_data_source(config.DS_TASKS)
+    return [_to_task(page) for page in pages if not page.get("archived")]
 
 
 def task_deadline_passed(task: TaskItem, now: datetime) -> bool:
@@ -1453,6 +1522,11 @@ async def get_submissions_by_review_status(
 
 async def get_reviewable_submissions() -> list[SubmissionItem]:
     return await get_submissions_by_review_status(["待審核"], latest_only=True)
+
+
+async def get_all_submissions() -> list[SubmissionItem]:
+    pages = await notion_api.query_data_source(config.DS_SUBMISSIONS)
+    return [_to_submission(page) for page in pages if not page.get("archived")]
 
 
 def review_submission_ready_for_auto_notify(submission: SubmissionItem) -> bool:

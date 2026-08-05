@@ -18,6 +18,16 @@ _MEMORY_STATE_PATH = Path(".state/course_qa_memory.json")
 _DISCORD_MESSAGE_LIMIT = 1900
 
 
+def can_artist_use_ai(artist: repositories.Artist) -> bool:
+    return artist.status not in repositories.INACTIVE_ARTIST_STATUSES
+
+
+def _sanitize_memory(value: dict) -> dict:
+    """只保留檢索狀態，不持久化使用者問題文字。"""
+    allowed = {"mode", "month", "record_ids", "attachment_names"}
+    return {key: item for key, item in value.items() if key in allowed}
+
+
 def _split_discord_message(content: str, limit: int = _DISCORD_MESSAGE_LIMIT) -> list[str]:
     """切成低於 Discord 2,000 字限制的訊息，優先在換行處切斷。"""
     chunks: list[str] = []
@@ -33,11 +43,74 @@ def _split_discord_message(content: str, limit: int = _DISCORD_MESSAGE_LIMIT) ->
     return chunks or [""]
 
 
+class AIAnswerFeedbackModal(discord.ui.Modal, title="回報課程助教回答"):
+    feedback = discord.ui.TextInput(
+        label="問題說明",
+        placeholder="例如：來源連結錯誤、回答漏掉某堂課，或內容不正確",
+        style=discord.TextStyle.paragraph,
+        max_length=1800,
+        required=True,
+    )
+
+    def __init__(
+        self,
+        artist_name: str,
+        expected_user_id: int,
+        answer_message_url: str,
+    ):
+        super().__init__()
+        self.artist_name = artist_name
+        self.expected_user_id = expected_user_id
+        self.answer_message_url = answer_message_url
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != self.expected_user_id:
+            await interaction.response.send_message("❌ 這不是你的回答。", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await repositories.create_ai_feedback(
+                artist_name=self.artist_name,
+                discord_user=str(interaction.user),
+                discord_user_id=interaction.user.id,
+                feedback=self.feedback.value,
+                answer_message_url=self.answer_message_url,
+            )
+        except Exception:
+            logger.exception("課程助教問題回報寫入 Notion 失敗")
+            await interaction.followup.send("❌ 回報寫入失敗，請稍後再試。", ephemeral=True)
+            return
+        await interaction.followup.send(
+            "✅ 已寫入 Notion 布告欄的「🙋 使用回饋」，控方會在那裡追蹤。",
+            ephemeral=True,
+        )
+
+
+class AIAnswerFeedbackView(discord.ui.View):
+    def __init__(self, artist_name: str, expected_user_id: int, answer_message_url: str = ""):
+        super().__init__(timeout=86400)
+        self.artist_name = artist_name
+        self.expected_user_id = expected_user_id
+        self.answer_message_url = answer_message_url
+
+    @discord.ui.button(label="回報問題", style=discord.ButtonStyle.secondary)
+    async def report(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if interaction.user.id != self.expected_user_id:
+            await interaction.response.send_message("❌ 這不是你的回答。", ephemeral=True)
+            return
+        await interaction.response.send_modal(AIAnswerFeedbackModal(
+            self.artist_name,
+            self.expected_user_id,
+            self.answer_message_url,
+        ))
+
+
 class CourseQACog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._thread_by_user = self._load_thread_state()
         self._memory_by_user = self._load_memory_state()
+        self._save_memory_state()
         self._records_cache: dict[int, list[repositories.CourseMeetingRecord]] = {}
         self._catalog_sent_threads: set[int] = set()
         self._warm_task: asyncio.Task | None = None
@@ -80,7 +153,11 @@ class CourseQACog(commands.Cog):
     def _load_memory_state() -> dict[str, dict]:
         try:
             raw = json.loads(_MEMORY_STATE_PATH.read_text(encoding="utf-8"))
-            return {str(user_id): value for user_id, value in raw.items() if isinstance(value, dict)}
+            return {
+                str(user_id): _sanitize_memory(value)
+                for user_id, value in raw.items()
+                if isinstance(value, dict)
+            }
         except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
             return {}
 
@@ -103,6 +180,8 @@ class CourseQACog(commands.Cog):
         artist = await repositories.find_artist_by_discord_id(user.id)
         if artist is None:
             return None, None, "❌ 找不到你的藝人資料，請聯絡控方。"
+        if not can_artist_use_ai(artist):
+            return artist, None, "❌ 目前的合約狀態無法使用課程助教，請聯絡控方。"
         cached_records = self._records_cache.get(user.id)
         try:
             # Notion 是課程資料的來源；每次提問先同步，避免啟動預熱後看不到新紀錄。
@@ -124,7 +203,12 @@ class CourseQACog(commands.Cog):
             return error
         memory = self._memory_by_user.get(str(user.id), {})
         try:
-            intent = await course_intent.classify_query(question, records, memory)
+            intent = await course_intent.classify_query(
+                question,
+                records,
+                memory,
+                usage_key=artist.page_id,
+            )
         except Exception:
             logger.exception("課程助教意圖判斷失敗，改用全部課程紀錄")
             intent = course_intent.QueryIntent(mode="compare")
@@ -145,6 +229,7 @@ class CourseQACog(commands.Cog):
                 selected,
                 intent_context=intent_context,
                 attachment_names=intent.attachment_names,
+                usage_key=artist.page_id,
             )
         except course_qa.CourseQAError as exc:
             logger.warning("課程助教未能回答：%s", exc)
@@ -153,7 +238,6 @@ class CourseQACog(commands.Cog):
             logger.exception("課程助教回答階段發生未預期錯誤")
             return "⚠️ 課程助教這次未能完成回答，請稍後重試。"
         self._memory_by_user[str(user.id)] = {
-            "last_question": question[:500],
             "mode": intent.mode,
             "month": intent.month,
             "record_ids": [record.page_id for record in selected[:8]],
@@ -212,8 +296,13 @@ class CourseQACog(commands.Cog):
         if not await channel_guard.ensure_ai_channel(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         chunks = _split_discord_message(await self._answer_for_user(interaction.user, 問題))
-        await interaction.followup.send(chunks[0], ephemeral=True)
+        view = AIAnswerFeedbackView(
+            artist.name if artist else str(interaction.user),
+            interaction.user.id,
+        )
+        await interaction.followup.send(chunks[0], ephemeral=True, view=view)
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk, ephemeral=True)
 
@@ -261,7 +350,13 @@ class CourseQACog(commands.Cog):
             waiting = await thread.send("⏳ 我正在整理你的課程紀錄，請稍候……")
             answer = await self._answer_for_user(message.author, question)
             chunks = _split_discord_message(answer)
-            await waiting.edit(content=chunks[0])
+            artist = await repositories.find_artist_by_discord_id(message.author.id)
+            view = AIAnswerFeedbackView(
+                artist.name if artist else str(message.author),
+                message.author.id,
+                waiting.jump_url,
+            )
+            await waiting.edit(content=chunks[0], view=view)
             for chunk in chunks[1:]:
                 await thread.send(chunk)
         except Exception:

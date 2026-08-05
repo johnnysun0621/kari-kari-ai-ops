@@ -173,6 +173,12 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - 每次提問重新讀取 Notion；Notion 暫時失敗時才退回上次成功快取。
 - 長回覆會切成 Discord 可接受的多則訊息。
 - 公開問題刪除失敗只寫 log，不把權限錯誤洗到頻道。
+- 以藝人 page ID 分開計算每日 token，並同時受租戶總額限制。
+- 回答附問題回報入口；只把使用者主動填寫的回報寫入 Notion 布告欄。
+
+### `cogs/operations_qa.py`
+
+控方限定的 `/營運查詢`，只允許在營運內部頻道執行。讀取 Tasks、Projects、課程／會議摘要與 Submissions 審核回饋，不修改 Notion。
 
 ## Services
 

@@ -80,12 +80,13 @@ async def classify_query(
     question: str,
     records: list[CourseMeetingRecord],
     memory: dict | None = None,
+    usage_key: str | None = None,
 ) -> QueryIntent:
     """用短上下文判斷意圖；失敗時退回本地月份／文字檢索。"""
     tenant = config.get_tenant()
     if _is_other_followup(question, memory):
         return QueryIntent(mode="compare")
-    if not tenant.llm_api_key or not records or not llm_usage.within_daily_limit():
+    if not tenant.llm_api_key or not records or not llm_usage.within_daily_limit(usage_key):
         return _fallback_intent(question, records)
     previous = json.dumps(memory or {}, ensure_ascii=False)[:1200]
     payload = {
@@ -118,7 +119,7 @@ async def classify_query(
             response.raise_for_status()
         response_data = response.json()
         raw = response_data["choices"][0]["message"]["content"]
-        llm_usage.record(response_data.get("usage"))
+        llm_usage.record(response_data.get("usage"), user_key=usage_key)
         data = _parse_json(raw)
         valid_ids = {record.page_id for record in records}
         valid_attachment_names = {

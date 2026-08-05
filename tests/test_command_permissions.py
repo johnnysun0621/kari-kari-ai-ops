@@ -3,6 +3,7 @@
 from cogs import channel_guard
 from cogs.scheduling_admin import SchedulingAdminCog
 from cogs.tasks_artist import TasksCog
+from cogs.operations_qa import OperationsQACog
 
 
 ADMIN_COMMANDS = [
@@ -11,6 +12,7 @@ ADMIN_COMMANDS = [
     SchedulingAdminCog.match_availability_pool,
     SchedulingAdminCog.publish_formal_notice,
     TasksCog.task_overview,
+    OperationsQACog.operations_query,
 ]
 
 
@@ -65,6 +67,14 @@ def test_schedule_channel_restricts_when_configured(monkeypatch):
     assert channel_guard.is_schedule_channel(789)
     assert not channel_guard.is_schedule_channel(123)
     assert channel_guard.schedule_channel_message() == "請到 <#789> 使用這個時間 / 排課指令。"
+
+
+def test_admin_channel_restricts_management_ai_when_configured(monkeypatch):
+    monkeypatch.setattr(channel_guard.config, "ADMIN_NOTIFY_CHANNEL_ID", 987)
+
+    assert channel_guard.is_admin_channel(987)
+    assert not channel_guard.is_admin_channel(123)
+    assert channel_guard.admin_channel_message() == "請到 <#987> 使用這個營運管理指令。"
 
 
 def test_announce_channel_falls_back_to_schedule_channel(monkeypatch):

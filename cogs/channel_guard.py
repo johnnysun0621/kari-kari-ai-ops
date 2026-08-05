@@ -68,6 +68,11 @@ def is_ai_channel(channel_id: int | None) -> bool:
     return _is_allowed_channel(config.AI_CHANNEL_ID, channel_id)
 
 
+def is_admin_channel(channel_id: int | None) -> bool:
+    """營運管理指令只允許在營運通知頻道；未設定時不限制。"""
+    return _is_allowed_channel(config.ADMIN_NOTIFY_CHANNEL_ID, channel_id)
+
+
 def schedule_channel_message() -> str:
     return _channel_message(config.SCHEDULE_CHANNEL_ID, "時間 / 排課")
 
@@ -78,6 +83,10 @@ def task_channel_message() -> str:
 
 def ai_channel_message() -> str:
     return _channel_message(config.AI_CHANNEL_ID, "課程問答")
+
+
+def admin_channel_message() -> str:
+    return _channel_message(config.ADMIN_NOTIFY_CHANNEL_ID, "營運管理")
 
 
 async def ensure_schedule_channel(interaction: discord.Interaction) -> bool:
@@ -98,4 +107,11 @@ async def ensure_ai_channel(interaction: discord.Interaction) -> bool:
     if is_ai_channel(interaction.channel_id):
         return True
     await interaction.response.send_message(ai_channel_message(), ephemeral=True)
+    return False
+
+
+async def ensure_admin_channel(interaction: discord.Interaction) -> bool:
+    if is_admin_channel(interaction.channel_id):
+        return True
+    await interaction.response.send_message(admin_channel_message(), ephemeral=True)
     return False
