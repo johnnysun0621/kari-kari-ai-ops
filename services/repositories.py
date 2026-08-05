@@ -567,124 +567,6 @@ async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
     ]
 
 
-# ---------- Schedule Requests ----------
-
-@dataclass
-class ScheduleRequest:
-    page_id: str
-    url: str
-    name: str
-    course_type: str | None
-    status: str | None
-    duration_minutes: int
-    artist_page_ids: list[str] = field(default_factory=list)
-    fill_deadline: datetime | None = None
-    candidates_text: str = ""
-    teacher: str = ""
-    created_time: datetime | None = None
-    sla_breached: bool = False
-    schedule_id: int | None = None
-
-
-def _to_request(page: dict) -> ScheduleRequest:
-    created = datetime.fromisoformat(page["created_time"].replace("Z", "+00:00"))
-    return ScheduleRequest(
-        page_id=page["id"],
-        url=page.get("url", ""),
-        name=_read_title(page, "排課名稱"),
-        course_type=_read_select(page, "課程類型"),
-        status=_read_select(page, "需求狀態"),
-        duration_minutes=int(_read_number(page, "時長分鐘") or 60),
-        artist_page_ids=_read_relation_ids(page, "參與藝人"),
-        fill_deadline=_read_date_start(page, "填寫截止時間"),
-        candidates_text=_read_rich_text(page, "候選時段"),
-        teacher=_read_rich_text(page, "老師 / 確認對象"),
-        created_time=created.astimezone(config.TZ),
-        sla_breached=_read_checkbox(page, "是否超過 2 天 SLA"),
-        schedule_id=_read_unique_id(page, "Schedule ID"),
-    )
-
-
-ACTIONABLE_REQUEST_STATUSES = ["等待藝人填寫", "比對中", "等待老師確認", "已確認"]
-COMPLETED_REQUEST_STATUSES = ["已發布通告", "已取消"]
-OPEN_REQUEST_STATUSES = ACTIONABLE_REQUEST_STATUSES
-
-
-async def create_schedule_request(
-    name: str,
-    course_type: str,
-    duration_minutes: int,
-    artist_page_ids: list[str],
-    fill_deadline: datetime,
-    teacher: str,
-    month_week: str = "",
-    note: str = "",
-) -> ScheduleRequest:
-    props = {
-        "排課名稱": _title(name),
-        "課程類型": _select(course_type),
-        "需求狀態": _select("等待藝人填寫"),
-        "時長分鐘": _number(duration_minutes),
-        "參與藝人": _relation(artist_page_ids),
-        "填寫截止時間": _date(fill_deadline),
-        "老師 / 確認對象": _rich_text(teacher),
-    }
-    if month_week:
-        props["月份 / 週次"] = _rich_text(month_week)
-    if note:
-        props["備註"] = _rich_text(note)
-    page = await notion_api.create_page(config.DS_SCHEDULE_REQUESTS, props)
-    return _to_request(page)
-
-
-async def get_request(page_id: str) -> ScheduleRequest | None:
-    try:
-        page = await notion_api.retrieve_page(page_id)
-    except notion_api.NotionAPIError as e:
-        if e.status_code == 404:
-            return None  # 需求已不存在
-        raise
-    return _to_request(page)
-
-
-async def get_requests_by_status(statuses: list[str]) -> list[ScheduleRequest]:
-    filter_ = {"or": [{"property": "需求狀態", "select": {"equals": s}} for s in statuses]}
-    pages = await notion_api.query_data_source(config.DS_SCHEDULE_REQUESTS, filter_=filter_)
-    return [_to_request(p) for p in pages]
-
-
-async def update_request_status(page_id: str, status: str) -> None:
-    await notion_api.update_page(page_id, {"需求狀態": _select(status)})
-
-
-async def set_request_candidates(page_id: str, candidates_text: str, status: str = "等待老師確認") -> None:
-    await notion_api.update_page(page_id, {
-        "候選時段": _rich_text(candidates_text),
-        "需求狀態": _select(status),
-    })
-
-
-async def set_request_confirmed(
-    page_id: str,
-    final_start: datetime,
-    final_end: datetime,
-    session_page_id: str,
-    notice_url: str = "",
-) -> None:
-    props = {
-        "最終確認時段": _date(final_start, final_end),
-        "需求狀態": _select("已發布通告"),
-        "正式課程": _relation([session_page_id]),
-    }
-    if notice_url:
-        props["正式通告 URL"] = _url(notice_url)
-    await notion_api.update_page(page_id, props)
-
-
-async def mark_request_sla_breached(page_id: str) -> None:
-    await notion_api.update_page(page_id, {"是否超過 2 天 SLA": _checkbox(True)})
-
-
 # ---------- Tasks / Projects formal schedule impact ----------
 
 ACTIVE_TASK_STATUSES = {"尚未開始", "進行中", "待提交", "待審核", "需修改", "已逾期"}
@@ -1003,25 +885,6 @@ def warnings_for_projects(projects: list[ProjectItem]) -> list[ScheduleWarning]:
             )
         )
     return warnings
-
-
-def busy_intervals_for_course_sessions(sessions: list["CourseSession"]) -> list[BusyInterval]:
-    intervals: list[BusyInterval] = []
-    for session in sessions:
-        if session.status in CANCELLED_SESSION_STATUSES:
-            continue
-        if not session.start or not session.end or session.end <= session.start:
-            continue
-        intervals.append(
-            BusyInterval(
-                source_id=session.page_id,
-                source_name=session.name,
-                source_type="CourseSession",
-                start=session.start,
-                end=session.end,
-            )
-        )
-    return intervals
 
 
 def split_availability_by_busy_intervals(
@@ -1630,7 +1493,6 @@ async def get_schedule_impact_context_for_artist(
 class AvailabilitySlot:
     page_id: str
     name: str
-    request_page_ids: list[str]
     artist_page_ids: list[str]
     start: datetime | None
     end: datetime | None
@@ -1672,7 +1534,6 @@ def _to_slot(page: dict) -> AvailabilitySlot:
     return AvailabilitySlot(
         page_id=page["id"],
         name=_read_title(page, "可用時段名稱"),
-        request_page_ids=_read_relation_ids(page, "關聯排課需求"),
         artist_page_ids=_read_relation_ids(page, "填寫藝人"),
         start=_read_date_start(page, "可用開始時間"),
         end=_read_date_start(page, "可用結束時間"),
@@ -1680,11 +1541,8 @@ def _to_slot(page: dict) -> AvailabilitySlot:
     )
 
 
-def _slot_scope(slot: AvailabilitySlot) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    return (
-        tuple(sorted(slot.artist_page_ids)),
-        tuple(sorted(slot.request_page_ids)),
-    )
+def _slot_scope(slot: AvailabilitySlot) -> tuple[str, ...]:
+    return tuple(sorted(slot.artist_page_ids))
 
 
 def _note_field(note: str, field_name: str) -> str | None:
@@ -1811,19 +1669,13 @@ def _merge_overlapping_same_nature_slots(
 
 def find_duplicate_availability_slot(
     slots: list[AvailabilitySlot],
-    request_page_id: str | None,
     artist_page_id: str,
     start: datetime,
     end: datetime,
 ) -> AvailabilitySlot | None:
-    """Find an existing active slot for the same artist, scope, and exact time window."""
+    """Find an existing active slot for the same artist and exact time window."""
     for slot in slots:
         if artist_page_id not in slot.artist_page_ids:
-            continue
-        if request_page_id is None:
-            if slot.request_page_ids:
-                continue
-        elif request_page_id not in slot.request_page_ids:
             continue
         if slot.start == start and slot.end == end:
             return slot
@@ -1831,7 +1683,6 @@ def find_duplicate_availability_slot(
 
 
 def _build_availability_slot_props(
-    request_page_id: str | None,
     artist: Artist,
     start: datetime,
     end: datetime,
@@ -1850,28 +1701,24 @@ def _build_availability_slot_props(
         "提交時間": _date(datetime.now(config.TZ)),
         "是否逾期提交": _checkbox(is_late),
     }
-    if request_page_id:
-        props["關聯排課需求"] = _relation([request_page_id])
     if note:
         props["備註"] = _rich_text(note)
     return props
 
 
 async def create_availability_slot(
-    request_page_id: str | None,
     artist: Artist,
     start: datetime,
     end: datetime,
     is_late: bool,
     note: str = "",
 ) -> AvailabilitySlot:
-    props = _build_availability_slot_props(request_page_id, artist, start, end, is_late, note)
+    props = _build_availability_slot_props(artist, start, end, is_late, note)
     page = await notion_api.create_page(config.DS_AVAILABILITY_SLOTS, props)
     return _to_slot(page)
 
 
 async def create_availability_slot_if_absent(
-    request_page_id: str | None,
     artist: Artist,
     start: datetime,
     end: datetime,
@@ -1886,14 +1733,13 @@ async def create_availability_slot_if_absent(
     slots = existing_slots if existing_slots is not None else await get_slots_for_artist(artist.page_id)
     duplicate = find_duplicate_availability_slot(
         slots,
-        request_page_id=request_page_id,
         artist_page_id=artist.page_id,
         start=start,
         end=end,
     )
     if duplicate is not None:
         return duplicate, False
-    created = await create_availability_slot(request_page_id, artist, start, end, is_late, note)
+    created = await create_availability_slot(artist, start, end, is_late, note)
     slots.append(created)
     return created, True
 
@@ -1915,8 +1761,6 @@ def availability_slot_month(slot: AvailabilitySlot) -> str | None:
 def is_monthly_pool_slot(slot: AvailabilitySlot, month: str) -> bool:
     normalized_month = time_collection.normalize_month(month)
     if normalized_month is None:
-        return False
-    if slot.request_page_ids:
         return False
     if not slot.start or not slot.end or slot.end <= slot.start:
         return False
@@ -1959,9 +1803,8 @@ def match_monthly_pool_windows(
 ) -> MonthlyPoolMatchResult:
     """Build common availability windows from monthly pool slots.
 
-    The pool only includes slots not tied to a Schedule Request. Each selected
-    artist's slots are split by formal busy intervals before the all-person
-    intersection is calculated.
+    Each selected artist's slots are split by formal busy intervals before the
+    all-person intersection is calculated.
     """
     normalized_month = time_collection.normalize_month(month)
     if normalized_month is None:
@@ -2027,14 +1870,6 @@ async def get_monthly_pool_progress(
 ) -> MonthlyPoolProgress:
     slots = await get_monthly_pool_slots_for_artists(artist_page_ids)
     return monthly_pool_progress_from_slots(slots, artist_page_ids, month)
-
-
-async def get_slots_for_request(request_page_id: str) -> list[AvailabilitySlot]:
-    pages = await notion_api.query_data_source(
-        config.DS_AVAILABILITY_SLOTS,
-        filter_={"property": "關聯排課需求", "relation": {"contains": request_page_id}},
-    )
-    return [_to_slot(p) for p in pages]
 
 
 def _future_date_filter(property_name: str) -> dict:
@@ -2104,98 +1939,3 @@ async def apply_availability_slot_compaction(
     for slot in compaction.redundant:
         await archive_slot(slot.page_id)
     return compaction
-
-
-# ---------- Course Sessions ----------
-
-@dataclass
-class CourseSession:
-    page_id: str
-    name: str
-    status: str | None
-    artist_page_ids: list[str] = field(default_factory=list)
-    start: datetime | None = None
-    end: datetime | None = None
-
-
-def _to_course_session(page: dict) -> CourseSession:
-    return CourseSession(
-        page_id=page["id"],
-        name=_read_title(page, "課程名稱"),
-        status=_read_select(page, "課程狀態"),
-        artist_page_ids=_read_relation_ids(page, "參與藝人"),
-        start=_read_date_start(page, "上課時間"),
-        end=_read_date_end(page, "上課時間"),
-    )
-
-
-CANCELLED_SESSION_STATUSES = {"已取消", "取消", "取消 / 改期", "已改期"}
-
-
-def occupied_session_dates_for_artist(
-    sessions: list[CourseSession],
-    artist_page_id: str,
-    now: datetime | None = None,
-) -> set:
-    now = now or datetime.now(config.TZ)
-    occupied_dates = set()
-    for session in sessions:
-        if artist_page_id not in session.artist_page_ids:
-            continue
-        if session.status in CANCELLED_SESSION_STATUSES:
-            continue
-        if not session.start:
-            continue
-        session_end = session.end or session.start
-        if session_end <= now:
-            continue
-        occupied_dates.add(session.start.date())
-    return occupied_dates
-
-
-async def get_course_sessions_for_artist(
-    artist_page_id: str, future_only: bool = True
-) -> list[CourseSession]:
-    filter_: dict = {"property": "參與藝人", "relation": {"contains": artist_page_id}}
-    if future_only:
-        # 撞課檢查只對未來的填寫有意義，過去的課程不需要撈回來
-        filter_ = {"and": [filter_, _future_date_filter("上課時間")]}
-    pages = await notion_api.query_data_source(config.DS_COURSE_SESSIONS, filter_=filter_)
-    return [_to_course_session(page) for page in pages]
-
-
-async def get_occupied_session_dates_for_artist(artist_page_id: str) -> set:
-    sessions = await get_course_sessions_for_artist(artist_page_id)
-    return occupied_session_dates_for_artist(sessions, artist_page_id)
-
-
-async def create_course_session(
-    name: str,
-    course_type: str,
-    artist_page_ids: list[str],
-    teacher: str,
-    start: datetime,
-    end: datetime,
-    request_page_id: str,
-    location: str = "",
-) -> dict:
-    props = {
-        "課程名稱": _title(name),
-        "課程類型": _select(course_type),
-        "課程狀態": _select("已排定"),
-        "參與藝人": _relation(artist_page_ids),
-        "老師": _rich_text(teacher),
-        "上課時間": _date(start, end),
-        "關聯排課需求": _relation([request_page_id]),
-    }
-    if location:
-        props["地點"] = _rich_text(location)
-    return await notion_api.create_page(config.DS_COURSE_SESSIONS, props)
-
-
-async def mark_session_notified(page_id: str, notify_record: str) -> None:
-    await notion_api.update_page(page_id, {
-        "課程狀態": _select("已通知"),
-        "通告發布時間": _date(datetime.now(config.TZ)),
-        "Discord 通知紀錄": _rich_text(notify_record),
-    })

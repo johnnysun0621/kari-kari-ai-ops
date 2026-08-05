@@ -9,10 +9,6 @@ ADMIN_COMMANDS = [
     SchedulingAdminCog.create_availability_collection,
     SchedulingAdminCog.cleanup_availability_pool,
     SchedulingAdminCog.match_availability_pool,
-    SchedulingAdminCog.create_schedule,
-    SchedulingAdminCog.match_schedule,
-    SchedulingAdminCog.confirm_schedule,
-    SchedulingAdminCog.schedule_status,
     TasksCog.task_overview,
 ]
 
@@ -24,7 +20,7 @@ def test_admin_commands_are_hidden_from_non_admins():
 
 
 def test_legacy_scheduling_commands_removed_from_tree():
-    """7/11 決議：排課建立流程取消——舊四指令不得出現在指令選單（程式保留）。"""
+    """舊排課架構已刪除，四個舊指令不得出現在指令樹。"""
     import asyncio
 
     import discord

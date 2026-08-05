@@ -19,12 +19,15 @@ def _set_teacher_config(monkeypatch, *, secret="unit-test-secret", base_url=""):
 
 def test_signed_token_verifies_and_becomes_one_time(monkeypatch):
     _set_teacher_config(monkeypatch)
-    token = teacher_confirm.sign_token("request-1", expires_at_ts=2000)
+    token = teacher_confirm.sign_task_token(
+        "task-1", 2000, task_name="課程", course_type="歌唱課",
+        duration_text="1 小時", teacher="老師", participants=["Johnny"], windows=["8/1 13:00-14:00"],
+    )
 
     check = teacher_confirm.verify_token(token, now_ts=1000)
 
     assert check.ok
-    assert check.request_page_id == "request-1"
+    assert check.resource_page_id == "task-1"
     assert check.expires_at_ts == 2000
 
     teacher_confirm.mark_token_used(token, check.expires_at_ts)
@@ -36,7 +39,10 @@ def test_signed_token_verifies_and_becomes_one_time(monkeypatch):
 
 def test_token_rejects_tampering_and_expiry(monkeypatch):
     _set_teacher_config(monkeypatch)
-    token = teacher_confirm.sign_token("request-1", expires_at_ts=2000)
+    token = teacher_confirm.sign_task_token(
+        "task-1", 2000, task_name="課程", course_type="歌唱課",
+        duration_text="1 小時", teacher="老師", participants=["Johnny"], windows=["8/1 13:00-14:00"],
+    )
 
     assert teacher_confirm.verify_token(token + "x", now_ts=1000).error == "invalid"
     assert teacher_confirm.verify_token(token, now_ts=2001).error == "expired"
@@ -58,7 +64,7 @@ def test_task_form_token_keeps_task_payload_signed(monkeypatch):
     check = teacher_confirm.verify_token(token, now_ts=1000)
 
     assert check.ok
-    assert check.request_page_id == "task-1"
+    assert check.resource_page_id == "task-1"
     assert check.payload["kind"] == "task"
     assert check.payload["participants"] == ["Johnny", "Chenhua"]
     assert check.payload["windows"] == ["8/1 13:00-14:00", "8/2 15:00-16:00"]

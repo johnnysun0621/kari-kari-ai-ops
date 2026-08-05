@@ -58,9 +58,7 @@ class TenantConfig:
     notion_token: str
     notion_version: str
     ds_artists: str
-    ds_schedule_requests: str
     ds_availability_slots: str
-    ds_course_sessions: str
     ds_audit_log: str
     # P0-2/P0-3 使用
     ds_tasks: str
@@ -129,9 +127,7 @@ def _load_karikari_from_env() -> TenantConfig:
         notion_token=os.getenv("NOTION_TOKEN", ""),
         notion_version="2025-09-03",
         ds_artists=os.getenv("NOTION_DS_ARTISTS", "c0253aec-d18c-47de-a92f-e4a6f9eda641"),
-        ds_schedule_requests=os.getenv("NOTION_DS_SCHEDULE_REQUESTS", "028529f8-42ea-41f2-ba81-68d49c438f43"),
         ds_availability_slots=os.getenv("NOTION_DS_AVAILABILITY_SLOTS", "3726792b-a0f2-47f0-9fb2-2a49a0444266"),
-        ds_course_sessions=os.getenv("NOTION_DS_COURSE_SESSIONS", "12402cad-242d-4caf-978f-9f56b794e646"),
         ds_audit_log=os.getenv("NOTION_DS_AUDIT_LOG", "af855535-af5a-42b7-922a-4bc96449b267"),
         ds_tasks=os.getenv("NOTION_DS_TASKS", "f5fdde00-d0b9-4b9b-8786-06432dbdc0c9"),
         ds_projects=os.getenv("NOTION_DS_PROJECTS", "579092eb-68ae-4f1c-99c5-253d801ee07d"),
@@ -190,9 +186,7 @@ AI_CHANNEL_ID = TENANT.ai_channel_id
 NOTION_TOKEN = TENANT.notion_token
 NOTION_VERSION = TENANT.notion_version
 DS_ARTISTS = TENANT.ds_artists
-DS_SCHEDULE_REQUESTS = TENANT.ds_schedule_requests
 DS_AVAILABILITY_SLOTS = TENANT.ds_availability_slots
-DS_COURSE_SESSIONS = TENANT.ds_course_sessions
 DS_AUDIT_LOG = TENANT.ds_audit_log
 DS_TASKS = TENANT.ds_tasks
 DS_PROJECTS = TENANT.ds_projects

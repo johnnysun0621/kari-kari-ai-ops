@@ -44,23 +44,6 @@ class InteractionDebugView(discord.ui.View):
             logger.exception("回覆 Discord UI 錯誤訊息失敗")
 
 
-async def _verify_participant(
-    user: discord.abc.User, request_page_id: str
-) -> tuple[repositories.Artist | None, repositories.ScheduleRequest | None, str | None]:
-    """回傳 (artist, request, 錯誤訊息)。錯誤訊息為 None 表示驗證通過。"""
-    artist = await repositories.find_artist_by_discord_id(user.id)
-    if artist is None:
-        return None, None, "找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。"
-    request = await repositories.get_request(request_page_id)
-    if request is None:
-        return artist, None, "這筆排課需求已不存在，請聯絡管理者。"
-    if artist.page_id not in request.artist_page_ids:
-        return artist, request, "你不在這次排課的參與名單中。"
-    if request.status not in ("等待藝人填寫", "比對中"):
-        return artist, request, f"這筆排課目前狀態是「{request.status}」，已不開放填寫。"
-    return artist, request, None
-
-
 def _future_slots(slots: list[repositories.AvailabilitySlot]) -> list[repositories.AvailabilitySlot]:
     now = datetime.now(config.TZ)
     return [slot for slot in slots if slot.end and slot.end > now]
@@ -279,161 +262,6 @@ async def _send_pool_completion_notifications(
         await admin_channel.send(pool_all_done_notice(month, artists))
 
 
-class AvailabilityModal(discord.ui.Modal):
-    """單一時段填寫表單，一次一筆，送出後可按「再填一筆」。"""
-
-    def __init__(self, request_page_id: str, request_name: str = ""):
-        super().__init__(title=f"填寫可用時間{('｜' + request_name)[:30] if request_name else ''}")
-        self.request_page_id = request_page_id
-        self.date_input = discord.ui.TextInput(
-            label="日期（例：7/15 或 2026-07-15）", placeholder="7/15", max_length=12
-        )
-        self.start_input = discord.ui.TextInput(
-            label="開始時間（例：14:00）", placeholder="14:00", max_length=8
-        )
-        self.end_input = discord.ui.TextInput(
-            label="結束時間（例：18:00，可跨日）", placeholder="18:00", max_length=8
-        )
-        self.note_input = discord.ui.TextInput(
-            label="備註（選填）", required=False, max_length=100
-        )
-        for item in (self.date_input, self.start_input, self.end_input, self.note_input):
-            self.add_item(item)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            start, end = timeparse.parse_slot(
-                self.date_input.value, self.start_input.value, self.end_input.value
-            )
-        except timeparse.ParseError as e:
-            await interaction.followup.send(
-                f"❌ {e}\n請再按一次「填寫可用時間」重新輸入。", ephemeral=True
-            )
-            return
-
-        artist, request, err = await _verify_participant(interaction.user, self.request_page_id)
-        if err:
-            await interaction.followup.send(f"❌ {err}", ephemeral=True)
-            return
-
-        is_late = bool(request.fill_deadline and datetime.now(config.TZ) > request.fill_deadline)
-        try:
-            context = await _schedule_impact_context(artist)
-        except Exception:
-            logger.exception("讀取正式安排衝突資料失敗")
-            await interaction.followup.send(
-                "❌ 讀不到你已安排的正式任務，暫時不能填寫，請稍後再試或聯絡管理者。",
-                ephemeral=True,
-            )
-            return
-
-        windows, conflicts, warnings = _available_windows_with_impact(start, end, context)
-        if not windows:
-            await interaction.followup.send(
-                "⚠️ 你填寫的時段已被正式安排占用，未新增可用時間。"
-                + _conflict_text(conflicts),
-                ephemeral=True,
-            )
-            return
-
-        base_parts: list[str] = []
-        _append_note_part(base_parts, self.note_input.value or "")
-        try:
-            existing_slots = await repositories.get_slots_for_artist(artist.page_id)
-            created_slots: list[repositories.AvailabilitySlot] = []
-            duplicates: list[repositories.AvailabilitySlot] = []
-            for window_start, window_end in windows:
-                slot, created = await repositories.create_availability_slot_if_absent(
-                    self.request_page_id,
-                    artist,
-                    window_start,
-                    window_end,
-                    is_late=is_late,
-                    note=_slot_note(base_parts, warnings),
-                    existing_slots=existing_slots,
-                )
-                if created:
-                    created_slots.append(slot)
-                else:
-                    duplicates.append(slot)
-        except Exception:
-            logger.exception("建立可用時段失敗")
-            await interaction.followup.send("❌ 寫入 Notion 失敗，請稍後再試或聯絡管理者。", ephemeral=True)
-            await audit.log_event(
-                event_name=f"填寫可用時間失敗｜{artist.name}",
-                action_type="錯誤", operator=artist.name,
-                discord_user_id=str(interaction.user.id),
-                target_db="Availability Slots", result="失敗",
-                error_message="create_availability_slot exception（詳見 bot log）",
-            )
-            return
-
-        if not created_slots:
-            duplicate_lines = [
-                f"・{timeparse.humanize(slot.start, slot.end)}"
-                for slot in duplicates[:8]
-                if slot.start and slot.end
-            ]
-            await interaction.followup.send(
-                f"⚠️ 這些時段已經存在，沒有重複新增：{len(duplicates)} 筆\n"
-                + "\n".join(duplicate_lines)
-                + _conflict_text(conflicts)
-                + _warning_text(warnings)
-                + "\n\n若要修改，請用 `/我的時段` 刪除後再重新填寫。",
-                view=AfterSubmitView(self.request_page_id, request.name),
-                ephemeral=True,
-            )
-            return
-
-        created_text = "\n".join(
-            f"・{timeparse.humanize(slot.start, slot.end)}"
-            for slot in created_slots
-            if slot.start and slot.end
-        )
-        await audit.log_event(
-            event_name=f"填寫可用時間｜{artist.name}｜{request.name}",
-            action_type="提交", operator=artist.name,
-            discord_user_id=str(interaction.user.id),
-            target_db="Availability Slots",
-            target_url=created_slots[0].page_id,
-            after=f"{len(created_slots)} 筆",
-        )
-        late_note = "\n⚠️ 已超過填寫截止時間，此筆標記為逾期提交。" if is_late else ""
-        await interaction.followup.send(
-            "✅ 已記錄你的可用時間：\n"
-            + created_text
-            + _conflict_text(conflicts)
-            + _warning_text(warnings)
-            + late_note,
-            view=AfterSubmitView(self.request_page_id, request.name),
-            ephemeral=True,
-        )
-
-
-class AfterSubmitView(InteractionDebugView):
-    """送出一筆後的後續動作：再填一筆／完成。"""
-
-    def __init__(self, request_page_id: str, request_name: str):
-        super().__init__()
-        self.request_page_id = request_page_id
-        self.request_name = request_name
-
-    @discord.ui.button(label="再填一筆", style=discord.ButtonStyle.primary, emoji="➕")
-    async def add_more(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.send_modal(
-            AvailabilityModal(self.request_page_id, self.request_name)
-        )
-
-    @discord.ui.button(label="完成", style=discord.ButtonStyle.secondary, emoji="✅")
-    async def done(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.edit_message(content="⏳ 正在整理你的時間池…", view=None)
-        cleanup_text = await _cleanup_notice_for_user(interaction)
-        await interaction.edit_original_response(
-            content="✅ 感謝填寫！所有時段都已記錄，排課結果會再通知你。" + cleanup_text
-        )
-
-
 class PoolAvailabilityModal(discord.ui.Modal):
     """月度可配合時段收集表單，不綁定單一排課需求。"""
 
@@ -507,7 +335,6 @@ class PoolAvailabilityModal(discord.ui.Modal):
             duplicates: list[repositories.AvailabilitySlot] = []
             for window_start, window_end in windows:
                 slot, created = await repositories.create_availability_slot_if_absent(
-                    request_page_id=None,
                     artist=artist,
                     start=window_start,
                     end=window_end,
@@ -758,7 +585,6 @@ async def _submit_pool_slots(
                     skipped.append(window_start.strftime("%m/%d"))
                     continue
                 slot, did_create = await repositories.create_availability_slot_if_absent(
-                    request_page_id=None,
                     artist=artist,
                     start=window_start,
                     end=window_end,
@@ -1092,31 +918,6 @@ class PoolContinueView(InteractionDebugView):
         )
 
 
-class FillAvailabilityButton(
-    discord.ui.DynamicItem[discord.ui.Button],
-    template=r"fill_avail:(?P<request_id>[0-9a-f\-]+)",
-):
-    """公告訊息上的「填寫可用時間」按鈕；custom_id 帶排課需求 page id，bot 重啟後仍有效。"""
-
-    def __init__(self, request_page_id: str):
-        self.request_page_id = request_page_id
-        super().__init__(
-            discord.ui.Button(
-                label="📅 填寫可用時間",
-                style=discord.ButtonStyle.success,
-                custom_id=f"fill_avail:{request_page_id}",
-            )
-        )
-
-    @classmethod
-    async def from_custom_id(cls, interaction, item, match: re.Match):
-        return cls(match["request_id"])
-
-    async def callback(self, interaction: discord.Interaction):
-        # Modal 必須是元件互動的第一個回應，Notion 驗證移到 Modal 送出時做
-        await interaction.response.send_modal(AvailabilityModal(self.request_page_id))
-
-
 class PoolAvailabilityButton(
     discord.ui.DynamicItem[discord.ui.Button],
     template=r"pool_avail:(?P<month>\d{4}-\d{2}):(?P<deadline_ts>\d+)(?::(?P<nature_code>[a-z_]+))?",
@@ -1160,12 +961,6 @@ class PoolAvailabilityButton(
             view=WeekSelectView(self.month, self.deadline_ts, self.nature_code),
             ephemeral=True,
         )
-
-
-def make_announcement_view(request_page_id: str) -> discord.ui.View:
-    view = discord.ui.View(timeout=None)
-    view.add_item(FillAvailabilityButton(request_page_id))
-    return view
 
 
 def make_pool_availability_view(month: str, deadline: datetime, nature_code: str) -> discord.ui.View:
@@ -1221,7 +1016,7 @@ class MySlotsDeleteView(InteractionDebugView):
             discord.SelectOption(
                 label=_slot_delete_label(slot),
                 value=slot.page_id,
-                description=(_slot_month_label(slot) if not slot.request_page_ids else "排課需求")[:100],
+                description=_slot_month_label(slot)[:100],
             )
             for slot in slots[:25]
         ]
@@ -1314,15 +1109,9 @@ class SchedulingArtistCog(commands.Cog):
             return
         now = datetime.now(config.TZ)
         all_slots = await repositories.get_slots_for_artist(artist.page_id)
-        open_requests = await repositories.get_requests_by_status(["等待藝人填寫", "比對中"])
-        open_request_ids = {r.page_id for r in open_requests}
-        request_name_by_id = {r.page_id: r.name for r in open_requests}
         my_slots = [
             slot for slot in all_slots
-            if slot.end and slot.end > now and (
-                not slot.request_page_ids
-                or any(req_id in open_request_ids for req_id in slot.request_page_ids)
-            )
+            if slot.end and slot.end > now
         ]
         compaction = repositories.compact_availability_slots(my_slots)
         cleanup_count = len(compaction.redundant) + len(compaction.updates)
@@ -1340,10 +1129,7 @@ class SchedulingArtistCog(commands.Cog):
                 return
         my_slots = [
             slot for slot in compaction.visible
-            if slot.end and slot.end > now and (
-                not slot.request_page_ids
-                or any(req_id in open_request_ids for req_id in slot.request_page_ids)
-            )
+            if slot.end and slot.end > now
         ]
         my_slots = sorted(my_slots, key=_slot_sort_key)
         if not my_slots:
@@ -1354,28 +1140,14 @@ class SchedulingArtistCog(commands.Cog):
             )
             return
         lines: list[str] = []
-        free_slots = sorted(
-            [slot for slot in my_slots if not slot.request_page_ids],
-            key=_slot_sort_key,
-        )
-        if free_slots:
-            lines.append("**月度可配合時段（不是正式行程）**")
-            current_month = ""
-            for slot in free_slots:
-                month = _slot_month_label(slot)
-                if month != current_month:
-                    current_month = month
-                    lines.append(f"__{month}__")
-                lines.append(f"・{_slot_line(slot)}")
-        for req in open_requests:
-            mine = sorted([
-                slot for slot in my_slots
-                if req.page_id in slot.request_page_ids
-            ], key=_slot_sort_key)
-            if mine:
-                lines.append(f"**{request_name_by_id[req.page_id]}**")
-                for slot in mine:
-                    lines.append(f"・{_slot_line(slot)}")
+        lines.append("**月度可配合時段（不是正式行程）**")
+        current_month = ""
+        for slot in my_slots:
+            month = _slot_month_label(slot)
+            if month != current_month:
+                current_month = month
+                lines.append(f"__{month}__")
+            lines.append(f"・{_slot_line(slot)}")
         await interaction.followup.send(
             _trim_discord_message(
                 "你目前填寫的可用時段：\n"

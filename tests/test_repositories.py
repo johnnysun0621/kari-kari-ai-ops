@@ -42,9 +42,8 @@ class TestSchedulableArtists:
 
 
 class TestAvailabilitySlotProps:
-    def test_pool_slot_omits_schedule_request_relation(self):
+    def test_slot_uses_finalized_monthly_pool_schema(self):
         props = repositories._build_availability_slot_props(
-            request_page_id=None,
             artist=artist("Johnny"),
             start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
             end=datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ),
@@ -58,22 +57,9 @@ class TestAvailabilitySlotProps:
         assert props["來源"]["select"]["name"] == "Discord"
         assert props["備註"]["rich_text"][0]["text"]["content"] == "收集月份：2026-08"
 
-    def test_request_slot_keeps_schedule_request_relation(self):
-        props = repositories._build_availability_slot_props(
-            request_page_id="request-1",
-            artist=artist("Johnny"),
-            start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
-            end=datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ),
-            is_late=False,
-        )
-
-        assert props["關聯排課需求"]["relation"] == [{"id": "request-1"}]
-
-
 def slot(
     *,
     page_id: str = "slot-1",
-    request_page_ids: list[str] | None = None,
     artist_page_ids: list[str] | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
@@ -82,29 +68,10 @@ def slot(
     return repositories.AvailabilitySlot(
         page_id=page_id,
         name="Johnny｜08/05 14:00-18:00",
-        request_page_ids=request_page_ids or [],
         artist_page_ids=artist_page_ids if artist_page_ids is not None else ["artist-1"],
         start=start,
         end=end,
         note=note,
-    )
-
-
-def session(
-    *,
-    page_id: str = "session-1",
-    artist_page_ids: list[str] | None = None,
-    start: datetime | None = None,
-    end: datetime | None = None,
-    status: str | None = "已排定",
-):
-    return repositories.CourseSession(
-        page_id=page_id,
-        name="例會",
-        status=status,
-        artist_page_ids=artist_page_ids or ["artist-1"],
-        start=start,
-        end=end,
     )
 
 
@@ -354,15 +321,14 @@ class TestAvailabilityBusySplit:
 
 
 class TestMonthlyPoolMatching:
-    def test_monthly_pool_slot_excludes_schedule_request_slots(self):
+    def test_monthly_pool_slot_accepts_finalized_slot(self):
         item = slot(
-            request_page_ids=["request-1"],
             start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
             end=datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ),
             note="收集月份：2026-08",
         )
 
-        assert not repositories.is_monthly_pool_slot(item, "2026-08")
+        assert repositories.is_monthly_pool_slot(item, "2026-08")
 
     def test_monthly_pool_slot_matches_explicit_collection_month(self):
         item = slot(
@@ -489,7 +455,7 @@ class TestMonthlyPoolMatching:
         assert repositories.format_duration_hours(240) == "4 小時"
         assert repositories.format_duration_hours(90) == "1.5 小時"
 
-    def test_monthly_pool_progress_counts_only_pool_slots(self):
+    def test_monthly_pool_progress_counts_each_artist_monthly_slot(self):
         slots = [
             slot(
                 page_id="artist-1-pool",
@@ -499,9 +465,8 @@ class TestMonthlyPoolMatching:
                 note="收集月份：2026-08",
             ),
             slot(
-                page_id="artist-2-request",
+                page_id="artist-2-pool",
                 artist_page_ids=["artist-2"],
-                request_page_ids=["request-1"],
                 start=datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ),
                 end=datetime(2026, 8, 5, 22, 0, tzinfo=config.TZ),
                 note="收集月份：2026-08",
@@ -514,89 +479,9 @@ class TestMonthlyPoolMatching:
             month="2026-08",
         )
 
-        assert progress.filled_artist_page_ids == ["artist-1"]
-        assert progress.missing_artist_page_ids == ["artist-2"]
-        assert not progress.is_complete
-
-
-class TestCourseSessionOccupiedDates:
-    def test_returns_future_occupied_dates_for_artist(self):
-        sessions = [
-            session(
-                artist_page_ids=["artist-1"],
-                start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
-                end=datetime(2026, 8, 5, 15, 0, tzinfo=config.TZ),
-            ),
-            session(
-                artist_page_ids=["artist-2"],
-                start=datetime(2026, 8, 6, 14, 0, tzinfo=config.TZ),
-                end=datetime(2026, 8, 6, 15, 0, tzinfo=config.TZ),
-            ),
-        ]
-
-        result = repositories.occupied_session_dates_for_artist(
-            sessions,
-            artist_page_id="artist-1",
-            now=datetime(2026, 8, 1, 0, 0, tzinfo=config.TZ),
-        )
-
-        assert result == {datetime(2026, 8, 5, tzinfo=config.TZ).date()}
-
-    def test_ignores_cancelled_and_past_sessions(self):
-        sessions = [
-            session(
-                page_id="cancelled",
-                status="已取消",
-                start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
-                end=datetime(2026, 8, 5, 15, 0, tzinfo=config.TZ),
-            ),
-            session(
-                page_id="past",
-                start=datetime(2026, 7, 1, 14, 0, tzinfo=config.TZ),
-                end=datetime(2026, 7, 1, 15, 0, tzinfo=config.TZ),
-            ),
-        ]
-
-        result = repositories.occupied_session_dates_for_artist(
-            sessions,
-            artist_page_id="artist-1",
-            now=datetime(2026, 8, 1, 0, 0, tzinfo=config.TZ),
-        )
-
-        assert result == set()
-
-
-class TestCourseSessionBusyIntervals:
-    def test_course_session_with_precise_start_and_end_is_busy(self):
-        sessions = [
-            session(
-                page_id="session-1",
-                start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
-                end=datetime(2026, 8, 5, 15, 0, tzinfo=config.TZ),
-            )
-        ]
-
-        result = repositories.busy_intervals_for_course_sessions(sessions)
-
-        assert result == [
-            repositories.BusyInterval(
-                source_id="session-1",
-                source_name="例會",
-                source_type="CourseSession",
-                start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
-                end=datetime(2026, 8, 5, 15, 0, tzinfo=config.TZ),
-            )
-        ]
-
-    def test_course_session_without_end_is_not_precise_busy_time(self):
-        sessions = [
-            session(
-                start=datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ),
-                end=None,
-            )
-        ]
-
-        assert repositories.busy_intervals_for_course_sessions(sessions) == []
+        assert progress.filled_artist_page_ids == ["artist-1", "artist-2"]
+        assert progress.missing_artist_page_ids == []
+        assert progress.is_complete
 
 
 class TestDuplicateAvailabilitySlots:
@@ -607,7 +492,6 @@ class TestDuplicateAvailabilitySlots:
 
         duplicate = repositories.find_duplicate_availability_slot(
             slots,
-            request_page_id=None,
             artist_page_id="artist-1",
             start=start,
             end=end,
@@ -622,25 +506,10 @@ class TestDuplicateAvailabilitySlots:
 
         assert repositories.find_duplicate_availability_slot(
             slots,
-            request_page_id=None,
             artist_page_id="artist-1",
             start=start,
             end=end,
         ) is None
-
-    def test_request_slots_only_match_same_request(self):
-        start = datetime(2026, 8, 5, 14, 0, tzinfo=config.TZ)
-        end = datetime(2026, 8, 5, 18, 0, tzinfo=config.TZ)
-        slots = [slot(request_page_ids=["request-2"], start=start, end=end)]
-
-        assert repositories.find_duplicate_availability_slot(
-            slots,
-            request_page_id="request-1",
-            artist_page_id="artist-1",
-            start=start,
-            end=end,
-        ) is None
-
 
 class TestCompactAvailabilitySlots:
     def test_archives_exact_duplicate_and_keeps_one_visible_slot(self):
@@ -817,43 +686,14 @@ class TestCompactAvailabilitySlots:
         assert result.redundant == []
         assert result.updates == []
 
-    def test_does_not_merge_slots_from_different_request_scopes(self):
-        slots = [
-            slot(
-                page_id="request-1-slot",
-                request_page_ids=["request-1"],
-                start=datetime(2026, 8, 1, 13, 0, tzinfo=config.TZ),
-                end=datetime(2026, 8, 1, 18, 0, tzinfo=config.TZ),
-                note="收集性質：月度可配合時段",
-            ),
-            slot(
-                page_id="request-2-slot",
-                request_page_ids=["request-2"],
-                start=datetime(2026, 8, 1, 14, 0, tzinfo=config.TZ),
-                end=datetime(2026, 8, 1, 19, 0, tzinfo=config.TZ),
-                note="收集性質：月度可配合時段",
-            ),
-        ]
-
-        result = repositories.compact_availability_slots(slots)
-
-        assert [item.page_id for item in result.visible] == ["request-1-slot", "request-2-slot"]
-        assert result.redundant == []
-        assert result.updates == []
-
-
 class TestScheduleImpactContextCache:
-    def test_context_does_not_query_deleted_course_sessions_data_source(self, monkeypatch):
+    def test_context_uses_only_task_and_project_sources(self, monkeypatch):
         import asyncio
 
         async def fake_query(data_source_id, filter_=None, sorts=None):
             return []
 
-        async def deleted_course_sessions_query(*args, **kwargs):
-            raise AssertionError("deleted Course Sessions data source must not be queried")
-
         monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
-        monkeypatch.setattr(repositories, "get_course_sessions_for_artist", deleted_course_sessions_query)
         repositories._invalidate_impact_context_cache()
 
         context = asyncio.run(

@@ -50,10 +50,7 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 5. 需要交作業／作品時，藝人執行 `/提交任務`，Bot 依 Notion `提交方式` 引導。
 6. 控方用 `/審核提交` 回覆通過／需修改／退回，Bot DM 藝人審核結果。
 
-舊排課流程：
-
-
-這組仍保留，但不是月度時間池主流程。
+舊 `/排課*`、`Schedule Requests` 與 `Course Sessions` 已從程式、設定與文件介面移除。
 `/時間池比對` 的課程分流會選擇課程培訓 Project、課程類別、老師與自訂名稱，直接建立 `Tasks`；候選時段寫入任務說明，正式時間由營運填回 Task。
 
 ## 開發前檢查
@@ -84,7 +81,7 @@ pgrep -fl "python.*bot.py"
 - 不要把 KariKari 的 Discord channel ID、role ID、guild ID 寫死到程式。
 - 不要把 Notion token 或 Discord token 寫進文件。
 - 不要未確認就改 Notion schema。
-- 不要把舊 `/排課*` 流程移除；它目前仍是相容流程。
+- 不要重新引入舊 `/排課*`、`Schedule Requests` 或 `Course Sessions`。
 - 不要把 `Availability Slots` 當正式行程。
 
 ### 應該做
@@ -110,7 +107,7 @@ pgrep -fl "python.*bot.py"
 | 任務 / 作業提交 / 審核通知 | `cogs/submissions.py`、`SUBMISSION_FLOW.md` |
 | Drive 歸檔路徑 | `services/drive_archive.py` |
 | Google Drive 上傳 | `services/drive_api.py`、`DRIVE_OAUTH_SETUP.md` |
-| 老師確認連結 | `services/teacher_confirm.py`、`web/server.py`、`services/scheduling_flow.py` |
+| 老師確認連結 | `services/teacher_confirm.py`、`web/server.py` |
 | 共同時段演算法 | `services/overlap.py` |
 | 時間解析 / 顯示 | `services/timeparse.py` |
 | Audit Log | `services/audit.py` |

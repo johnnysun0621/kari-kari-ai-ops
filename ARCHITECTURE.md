@@ -95,7 +95,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - 建立月度時間收集公告。
 - 讓控方選藝人比對共同空檔。
 - 預覽與套用時間池整理。
-- 舊 Schedule Request / Course Session 流程已停用；程式只保留相容碼，主流程使用 Tasks。
+- 舊 Schedule Request / Course Session 流程已從程式與設定完整移除；主流程只使用 Tasks。
 - 月度時間池候選依課程／錄音／通告／其他分流；非課程不自動寫入正式資料。
 
 ### `cogs/scheduling_artist.py`
@@ -157,10 +157,8 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 主要責任：
 
-- 舊排課需求填寫催收。
 - 月度時間池未填提醒。
 - 月度時間池全員完成通知。
-- 排課 SLA 提醒。
 - Tasks 截止提醒與逾期升級。
 
 提醒 loop 間隔由 `REMINDER_INTERVAL_MINUTES` 控制，目前預設 30 分鐘。
@@ -285,19 +283,7 @@ Audit Log 寫入。
 
 ### `services/scheduling_flow.py`
 
-時間池確認後的共用落地流程。
-
-責任：
-
-- 建立或更新 `Tasks`。
-- 發正式通告到公告區。
-- DM 參與藝人。
-- 回寫通知紀錄與 `Audit Log`。
-
-呼叫來源：
-
-- 課程 Task 建立後產生表單連結；Bot 啟動時會啟動表單服務。
-- 表單只通知控方，不直接改 Notion 或發布通告。
+Task 正式安排的 Discord 通知積木。正式通告管理指令完成前，僅供現有 Task 安排流程使用，不讀寫舊排課資料庫。
 
 ## Web
 
@@ -307,14 +293,14 @@ Audit Log 寫入。
 
 責任：
 
-- `GET /confirm/{token}`：驗證 token、讀候選時段、顯示 HTML 表單。
+- `GET /confirm/{token}`：驗證 Task token、讀簽名候選時段、顯示 HTML 表單。
 - `POST /confirm/{token}`：老師選時段或回覆都不行。
-- 確認成功後呼叫 `services/scheduling_flow.py`。
+- 確認成功後通知控方，由控方在 Task 定案。
 
 安全邊界：
 
 - 本機只綁 `127.0.0.1`；對外由 Cloudflare Tunnel 或正式反向代理處理。
-- token 只存排課需求 ID 與過期時間，不包含 Notion token 或 Discord token。
+- token 只存 Task ID、候選顯示資料與過期時間，不包含 Notion token 或 Discord token。
 
 ## Discord 互動限制
 

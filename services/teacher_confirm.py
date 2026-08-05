@@ -1,9 +1,6 @@
-"""老師外部確認連結：token 簽名／驗證／一次性使用（Phase 2）。
+"""Task 老師外部確認連結：token 簽名、驗證與一次性使用。
 
-token = base64url(payload) + "." + base64url(HMAC-SHA256(secret, payload))
-payload = {"rid": 排課需求 page_id, "exp": unix 過期時間}
-
-- secret 來自 TenantConfig.teacher_link_secret（未設定＝功能停用，排課流程維持人工）
+- secret 來自 TenantConfig.teacher_link_secret（未設定＝功能停用）
 - 一次性：成功送出後 token 指紋存 .state/teacher_confirm.json（沿用 time_collection 模式），
   重啟不失效；過期指紋於載入時修剪
 """
@@ -56,18 +53,10 @@ def _fingerprint(token: str) -> str:
     return hashlib.sha256(token.encode("ascii")).hexdigest()[:24]
 
 
-def sign_token(request_page_id: str, expires_at_ts: int) -> str:
-    payload = json.dumps(
-        {"rid": request_page_id, "exp": int(expires_at_ts)}, separators=(",", ":")
-    ).encode("utf-8")
-    sig = hmac.new(_secret_bytes(), payload, hashlib.sha256).digest()
-    return f"{_b64e(payload)}.{_b64e(sig)}"
-
-
 @dataclass(frozen=True)
 class TokenCheck:
     ok: bool
-    request_page_id: str = ""
+    resource_page_id: str = ""
     expires_at_ts: int = 0
     error: str = ""  # "invalid" | "expired" | "used"
     payload: dict = None
@@ -90,7 +79,9 @@ def verify_token(token: str, now_ts: int) -> TokenCheck:
     _load_state()
     if _fingerprint(token) in _used_tokens:
         return TokenCheck(ok=False, error="used")
-    return TokenCheck(ok=True, request_page_id=rid, expires_at_ts=exp, payload=data)
+    if data.get("kind") != "task":
+        return TokenCheck(ok=False, error="invalid")
+    return TokenCheck(ok=True, resource_page_id=rid, expires_at_ts=exp, payload=data)
 
 
 def sign_task_token(

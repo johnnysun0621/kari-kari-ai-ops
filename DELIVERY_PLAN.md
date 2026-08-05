@@ -53,7 +53,7 @@
 - [x] 課程選擇課程類別、課程培訓 Project、老師後，直接建立 Tasks 的「課程與作業」
 - [x] 錄音／通告／其他維持控方手動建立 Project / Task
 - [x] `Schedule Requests`、`Course Sessions` 已移至 Notion 垃圾桶；殘留關聯欄位已移除
-- [x] 舊 `/排課*` 從指令選單隱藏，保留程式相容碼以避免歷史資料造成啟動問題
+- [x] 舊 `/排課*`、Schedule Request／Course Session repository、設定、token 分支與測試完整刪除
 
 ### D5｜洽談中權限（會議 #3，~0.25 天）
 - [x] `INACTIVE_ARTIST_STATUSES` 加「未簽」；文件明確「已簽約＋洽談中＝藝人指令全開」

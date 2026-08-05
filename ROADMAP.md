@@ -39,7 +39,7 @@
 | 1b | 作業提交（P0-3）：/提交任務（連結/文字/檔案歸檔 全通） | ✅ 完成 | `47b55b4` / `0950222` |
 | 1c | 審核流：/審核提交 通過/需修改/退回＋DM 藝人＋批改檔回傳 | ✅ 完成 | `0950222` / D1 |
 | 1e | 頻道/身分組初始化（P0-①）：/伺服器初始化 或 SOP | ⬜ 待做 | — |
-| 2 | 老師外部確認連結（歷史相容模組） | ⏸️ 不列入目前主流程 | `5a938a7` |
+| 2 | Task 老師外部確認連結 | ✅ 課程候選複選可用 | `5a938a7` / P1 |
 | 3 | AI-ready：permissions 權限層、/查詢 結構化查詢、LLM adapter 預留 | ⬜ 8 月底 | — |
 | 4 | 合約履約提醒（新 Notion DB＋90/30 天預警＋補救任務） | ⬜ 9 月 | — |
 | 5 | 財務審批（新 Notion DB＋申請→核決→執行→結案） | ⬜ 9-10 月 | — |
@@ -112,7 +112,7 @@
 - `cogs/submissions.py`：`on_message` 補上頂層例外保護（比照 `course_qa.py` 既有模式），
   避免處理附件時出錯卻讓使用者的檔案憑空消失、毫無回應；`review_poll_loop`（既有的每分鐘
   背景 loop）順便清掉逾期未完成的上傳／回饋 pending 項目，避免長時間運行下記憶體累積。
-- `web/server.py`：修正過時 docstring（不再提已經沒被呼叫的 `scheduling_flow`）。
+- `web/server.py`：老師確認頁已收斂為 Task token，不再讀舊排課資料庫。
 - 測試 213 → 215（新增 `expired_pending_keys` 純函式測試）。
 - 踩雷記錄：一度把 `channel_guard.announce_channel_id()` 改成呼叫
   `TenantConfig.resolved_announce_channel_id`，結果打壞兩個測試——`TenantConfig` 是
@@ -124,7 +124,7 @@
 - 課程安排改由 `/時間池比對` 選課程類別、課程培訓 Project、老師與課程名稱後，直接建立 Tasks 的「課程與作業」。
 - 錄音／通告／其他只提供共同空檔候選，由控方手動在 Notion 建立 Project / Task。
 - `Schedule Requests`、`Course Sessions` 已移至 Notion 垃圾桶；Tasks 集中管理課程、老師、正式時間、作業與審核。
-- 老師確認表單已重新接回課程 Task 流程；舊 `/排課*` 仍不列入目前主流程。
+- 老師確認表單使用課程 Task；舊 `/排課*`、Schedule Requests、Course Sessions 已完整移除。
 
 ### 2026-07-18（v1.0 D1 審核體驗補強）
 
@@ -136,10 +136,10 @@
 
 ### 2026-07-10 深夜（歷史：Phase 2 老師外部確認連結開發版）
 
-- 新增 `TEACHER_LINK_SECRET` / `TEACHER_LINK_BASE_URL` / `WEB_PORT` 設定；未設定 secret 時功能停用，既有人工 `/排課確認` 流程不受影響
+- 新增 `TEACHER_LINK_SECRET` / `TEACHER_LINK_BASE_URL` / `WEB_PORT` 設定；此段為歷史開發紀錄，現行只支援 Task 老師表單
 - 新增 aiohttp web 服務：`/confirm/{token}` 顯示候選時段，老師可免 Discord 選時段或回覆都不行
 - 新增簽名 token：HMAC-SHA256、24 小時有效、成功確認後一次性失效，狀態存 `.state/teacher_confirm.json`
-- `/排課比對` 選定候選後，若已設定對外網址，會產生老師確認連結；老師確認後共用同一條 `scheduling_flow` 建 Course Session、更新 Schedule Request、發正式通告與 DM
+- 歷史版本曾由 `/排課比對` 建 Course Session；該架構已在 P1 完整刪除
 - 新增 `scripts/start_tunnel.sh`：開發期可用 Cloudflare quick tunnel，把外部網址填入 `.env` 後重啟 bot
 - 測試：`168 passed`，包含 token 簽名/過期/一次性、HTML escape、既有 command permission 回歸
 
@@ -221,7 +221,7 @@
 - [ ] 月度收集接近截止或逾期時，未填藝人收到 DM，控方收到未填名單
 - [ ] `/時間池比對 月份:2026-08 時長分鐘:60` → 選 2 位以上藝人 → 看共同空檔與可開始時間
 - [ ] `/時間池整理`：預覽 → 套用（資料變動會提示）
-- [x] 舊排課流程從指令選單隱藏；目前改用 `/時間池比對` + Tasks 單一安排來源
+- [x] 舊排課流程從程式、設定與指令樹完整刪除；目前使用 `/時間池比對` + Tasks 單一安排來源
 - [x] 老師確認表單綁定課程 Task；老師多選後通知控方，正式時間仍由控方在 Tasks 完成
 
 ## 待 Johnny 提供／決定
