@@ -95,7 +95,6 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 - `/時間資訊蒐集`
 - `/任務建立與安排`
-- `/時間池整理`
 
 主要責任：
 

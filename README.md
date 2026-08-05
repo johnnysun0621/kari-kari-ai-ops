@@ -104,7 +104,7 @@ services/
   timeparse.py            # Modal 輸入解析、候選時段文字格式
   audit.py                # Audit Log 寫入（失敗不阻斷主流程）
 cogs/
-  scheduling_admin.py     # /時間資訊蒐集 /任務建立與安排 /時間池整理
+  scheduling_admin.py     # /時間資訊蒐集 /任務建立與安排
   scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段 /補填時間
   tasks_artist.py         # /我的任務 /任務總覽
   submissions.py          # /提交任務 /審核提交

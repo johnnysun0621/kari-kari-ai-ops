@@ -1,4 +1,4 @@
-"""管理者端：月度時間收集、時間池整理與 Task 版正式安排。"""
+"""管理者端：月度時間收集與 Task 版正式安排。"""
 import logging
 import time
 from datetime import datetime, timedelta
@@ -231,6 +231,10 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
         chosen = [self.artists[page_id] for page_id in self.select.values]
         artist_page_ids = [artist.page_id for artist in chosen]
         try:
+            # 先整理被選藝人的未來時段，讓比對使用最新且不重複的時間池。
+            slots = await repositories.get_monthly_pool_slots_for_artists(artist_page_ids)
+            await repositories.apply_availability_slot_compaction(slots)
+            # 套用後重新讀取，取得合併後的最新時間。
             slots = await repositories.get_monthly_pool_slots_for_artists(artist_page_ids)
             busy_by_artist: dict[str, list[repositories.BusyInterval]] = {}
             for artist_page_id in artist_page_ids:
@@ -977,40 +981,6 @@ class SchedulingAdminCog(commands.Cog):
         )
         await interaction.followup.send(
             f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}",
-            ephemeral=True,
-        )
-
-    # ---------- /時間池整理 ----------
-    @app_commands.command(name="時間池整理", description="主動整理未來可用時段，合併重疊並清除重複資料")
-    @app_commands.default_permissions(administrator=True)
-    @is_admin()
-    async def cleanup_availability_pool(self, interaction: discord.Interaction):
-        if not await channel_guard.ensure_schedule_channel(interaction):
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            all_slots = await repositories.get_all_availability_slots()
-            now = datetime.now(config.TZ)
-            future_slots = [
-                slot for slot in all_slots
-                if slot.end and slot.end > now
-            ]
-            compaction = repositories.compact_availability_slots(future_slots)
-        except Exception:
-            logger.exception("整理時間池失敗")
-            await interaction.followup.send(
-                "❌ 產生時間池整理預覽失敗，請稍後再試或查看 bot log。",
-                ephemeral=True,
-            )
-            return
-
-        content = _cleanup_preview_text(future_slots, compaction)
-        if not compaction.updates and not compaction.redundant:
-            await interaction.followup.send(content, ephemeral=True)
-            return
-        await interaction.followup.send(
-            content,
-            view=AvailabilityCleanupPreviewView(future_slots, compaction, interaction.user),
             ephemeral=True,
         )
 
