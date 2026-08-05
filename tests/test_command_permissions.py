@@ -4,6 +4,7 @@ from cogs import channel_guard
 from cogs.scheduling_admin import SchedulingAdminCog
 from cogs.tasks_artist import TasksCog
 from cogs.operations_qa import OperationsQACog
+from cogs.server_setup import ServerSetupCog
 
 
 ADMIN_COMMANDS = [
@@ -13,6 +14,7 @@ ADMIN_COMMANDS = [
     SchedulingAdminCog.publish_formal_notice,
     TasksCog.task_overview,
     OperationsQACog.operations_query,
+    ServerSetupCog.initialize_server,
 ]
 
 

@@ -151,6 +151,10 @@ Discord 頻道與 slash command 對應總表請看 [DISCORD_CHANNELS.md](DISCORD
 
 SLA：藝人預設 24 小時回填；截止後半天仍未比對會提醒控方；老師表單 24 小時未回覆會提醒；流程超過 48 小時升級，72 小時提示候選可能失效。
 
+### TimeTree 補登
+
+TimeTree 沒有納入 API 自動同步。正式 Task 與 Discord 通告確認後，由控方人工補登 TimeTree；TimeTree 是過渡期展示／行事曆，不是 Bot 的正式資料來源。若 TimeTree 與 Notion 不一致，以 Notion Tasks 為準並人工修正 TimeTree。
+
 判讀：
 
 - `可排 4 小時` 代表該共同空檔總長度。

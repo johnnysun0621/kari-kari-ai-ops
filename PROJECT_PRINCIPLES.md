@@ -16,10 +16,12 @@ The reusable product is an operations scheduling layer with these modules:
 
 - Time collection
 - Availability pool cleanup and deduplication
-- Scheduling requests
 - Candidate time matching
-- Final confirmation
+- Task drafts and formal arrangements
+- Teacher candidate confirmation
 - Announcement and notification
+- Submission and review
+- Governed AI retrieval
 - Audit log
 
 Discord is the current interaction layer.
@@ -94,9 +96,9 @@ Good examples:
 - Collect availability
 - View my slots
 - Clean availability pool
-- Create schedule request
 - Match candidate times
-- Confirm final schedule
+- Create a formal task
+- Publish a formal notice
 
 Avoid encoding company-specific processes into command behavior unless the behavior is configurable.
 

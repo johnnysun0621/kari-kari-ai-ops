@@ -14,6 +14,9 @@
 7. [NOTION_SCHEMA.md](NOTION_SCHEMA.md)：Notion 資料庫交互邏輯。
 8. [ARCHITECTURE.md](ARCHITECTURE.md)：工程架構與程式責任切分。
 9. [TESTING.md](TESTING.md)：測試與驗收方式。
+10. [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md)：會議需求與完成狀態。
+11. [NOTION_VIEWS_AUDIT.md](NOTION_VIEWS_AUDIT.md)：定稿 workspace 的 view 稽核。
+12. [SERVER_MIGRATION.md](SERVER_MIGRATION.md)：正式伺服器初始化與平轉。
 
 課程助教近期新增規則：先顯示藝人自己的課程檔案索引，再依使用者指定的課程頁／檔案檢索；不要把所有附件文字預先混入回答 context。詳見 `DISCORD_COMMANDS.md`、`NOTION_SCHEMA.md` 的課程助教段落。
 
@@ -39,7 +42,7 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 2. 藝人填月度可配合時段。
 3. 藝人可用 `/我的時段` 查看與刪除，或用 `/補填時間` 補填。
 4. 控方用 `/時間池比對` 找共同空檔。
-5. 控方在 Notion 建立正式 `Project` / `Task`。
+5. 課程由 Bot 建立 Task；其他安排建立隱藏 Task 草稿，控方補齊後用 `/正式通告發布`。
 
 任務流程：
 
@@ -113,6 +116,8 @@ pgrep -fl "python.*bot.py"
 | Audit Log | `services/audit.py` |
 | 租戶設定 | `config.py`、`.env.example` |
 | 背景提醒 | `cogs/reminders.py` |
+| 正式伺服器初始化 | `cogs/server_setup.py`、`SERVER_MIGRATION.md` |
+| 營運 AI 查詢 | `cogs/operations_qa.py`、`services/operations_qa.py` |
 
 ## 文件更新對照表
 

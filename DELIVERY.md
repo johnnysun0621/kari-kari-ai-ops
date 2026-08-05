@@ -1,0 +1,48 @@
+# KariKari v1.0 交付說明
+
+## 已交付主流程
+
+```text
+Discord 收集月度可配合時間
+→ 自動／人工整理重複時段
+→ 控方比對共同空檔
+→ 建立 Tasks 正式安排或草稿
+→ 老師複選候選
+→ 控方定案
+→ 預覽並發布正式通告
+→ TimeTree 人工補登
+```
+
+任務則由 Notion Tasks 派送到 Discord，支援逐筆收到確認、每 6 小時未確認重送、提交、Drive 歸檔、指定審核與修改期限。
+
+## 系統邊界
+
+| 系統 | 責任 |
+|---|---|
+| Discord | 操作、通知、個人查詢、課程助教 |
+| Notion | 正式營運資料與狀態 |
+| Google Drive | 提交與批改檔案 |
+| TimeTree | 控方人工補登 |
+
+## 已知限制
+
+- Discord slash command 的「完全隱藏」仍需在伺服器 Integrations 人工設定。
+- TimeTree 無 API，未自動同步。
+- 掃描型 PDF、舊 `.doc`／`.ppt`、加密附件不保證可抽取文字。
+- 課程助教品質取決於 Notion 頁面正文、relation 與附件內容是否完整。
+- 合約、財務、NAS、營運儀表板與多公司 onboarding 尚未建立資料模型。
+
+## 上線與回復
+
+- 上線前依 [SERVER_MIGRATION.md](SERVER_MIGRATION.md) 真機驗收。
+- 每次部署先跑 [TESTING.md](TESTING.md) 的完整驗證。
+- 發生回歸時切回上一個已驗證 commit；Notion 破壞性整理採封存而非刪除。
+- 秘密只保留在 `.env` 或部署平台 secret，不進 Git。
+
+## 稽核文件
+
+- [會議需求追蹤矩陣](REQUIREMENTS_TRACEABILITY.md)
+- [Notion Views 稽核](NOTION_VIEWS_AUDIT.md)
+- [Notion Schema](NOTION_SCHEMA.md)
+- [Discord 指令](DISCORD_COMMANDS.md)
+- [營運 SOP](OPERATIONS_PLAYBOOK.md)

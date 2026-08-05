@@ -7,7 +7,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 
 目前主流程是：
 
-`/時間收集建立` → 藝人填月度可配合時段 → `/時間池比對` → 直接建立課程 Task 或由控方建立其他 Project / Task
+`/時間收集建立` → 藝人填月度可配合時段 → `/時間池比對` → 建立課程 Task／其他安排草稿 → 老師複選 → `/正式通告發布`
 
 課程與作業、錄音、通告與其他正式事項都以 `Tasks` 為唯一安排來源。
 
@@ -24,6 +24,10 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 | [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Discord 上傳限制、10MB 分界、審核通知 |
 | [OPERATIONS_PLAYBOOK.md](OPERATIONS_PLAYBOOK.md) | 控方營運 SOP |
 | [NOTION_SCHEMA.md](NOTION_SCHEMA.md) | Notion 資料庫交互邏輯 |
+| [NOTION_VIEWS_AUDIT.md](NOTION_VIEWS_AUDIT.md) | KariKari Testing 各區與 view 稽核 |
+| [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md) | 三次會議需求、功能與測試對照 |
+| [SERVER_MIGRATION.md](SERVER_MIGRATION.md) | Discord 正式伺服器初始化與平轉 SOP |
+| [DELIVERY.md](DELIVERY.md) | v1.0 交付範圍、限制與回復方式 |
 | [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則與平展化方向 |
 | [ROADMAP.md](ROADMAP.md) | 開發進度與下一步 |
 | [RESEARCH.md](RESEARCH.md) | 需求研究與歷史脈絡 |
@@ -77,7 +81,7 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 - 邀請連結 scopes：`bot` + `applications.commands`
 - Bot 權限：View Channels、Send Messages、Embed Links、Mention Everyone（點名用）
 - 控方成員需具備 Discord Administrator 權限，才會看到管理端 slash commands
-- 建議分兩個頻道：時間資訊彙整放時間池公告與比對；任務查詢入口放 `/我的任務`、`/任務總覽` 與任務提醒
+- 可由控方執行 `/伺服器初始化` 建立五用途頻道與 `藝人`／`控方` 身分組；詳細步驟見 [SERVER_MIGRATION.md](SERVER_MIGRATION.md)
 - Notion integration 要能讀寫：Artists、Availability Slots、Tasks、Projects、People、Submissions、Audit Log
 - Artists 的可用藝人帳號要填 `Discord User ID`，且 `合約狀態` 為 `已簽約` 或 `洽談中`
 
@@ -104,6 +108,8 @@ cogs/
   scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段 /補填時間
   tasks_artist.py         # /我的任務 /任務總覽
   submissions.py          # /提交任務 /審核提交
-  reminders.py            # 月度時間池催收與任務提醒（每 30 分鐘）
+  operations_qa.py        # /營運查詢（控方限定）
+  server_setup.py         # /伺服器初始化（角色、頻道、env 清單）
+  reminders.py            # 月度時間池、排課 SLA、任務與審核提醒
 tests/                    # 純函式、互動邏輯、資料層測試
 ```

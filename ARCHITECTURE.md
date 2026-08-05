@@ -41,8 +41,11 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - `cogs.scheduling_admin`
 - `cogs.scheduling_artist`
 - `cogs.tasks_artist`
+- `cogs.submissions`
 - `cogs.reminders`
 - `cogs.course_qa`
+- `cogs.operations_qa`
+- `cogs.server_setup`
 
 ## 設定層
 
@@ -77,6 +80,10 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 |---|---|
 | `ensure_schedule_channel()` | 時間池 / 排課指令只允許在 `SCHEDULE_CHANNEL_ID` |
 | `ensure_task_channel()` | 任務指令只允許在 `TASK_CHANNEL_ID` |
+
+### `cogs/server_setup.py`
+
+`/伺服器初始化` 以預覽／確認兩階段建立或對齊可平轉的角色與五用途頻道。未指派身分組的成員預設看不到營運區；完成後只回傳 `.env` 清單，不直接改本機秘密檔。
 
 若對應 channel ID 留空，該類指令不限制頻道，方便新租戶初期測試。
 
