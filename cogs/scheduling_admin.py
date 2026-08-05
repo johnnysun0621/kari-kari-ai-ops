@@ -733,7 +733,6 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
                 artist_page_ids=[a.page_id for a in self.artists],
                 description=description,
                 course_category=self.course_type,
-                course_item_nature="課程場次",
                 teacher_page_ids=[self.teacher_page_id],
                 project_page_ids=[self.project_page_id],
             )

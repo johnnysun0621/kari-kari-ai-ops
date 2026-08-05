@@ -80,6 +80,12 @@
 
 ## 進度日誌
 
+### 2026-08-05 定稿 Schema 對齊
+
+- ✅ Projects、Tasks、People 與課程紀錄 relation 已依 KariKari Testing 定稿 schema 對齊。
+- ✅ 移除 `課程項目性質` 程式依賴，新增 schema contract 回歸測試。
+- ✅ 老師選單納入公司成員，課程類別補上聽力訓練課。
+
 ### 2026-08-04 會議決議對齊與 D3 / D5
 
 - ✅ Drive 任務資料夾改為 `YYYY.MM.DD_任務名稱`，日期來源沿用截止日／Notion 建立日。

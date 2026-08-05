@@ -130,7 +130,7 @@ def task(
     *,
     page_id: str = "task-1",
     task_type: str | None = "錄音",
-    course_item_nature: str | None = None,
+    course_category: str | None = None,
     status: str | None = "進行中",
     artist_page_ids: list[str] | None = None,
     project_page_ids: list[str] | None = None,
@@ -144,7 +144,7 @@ def task(
         name="辰葳錄音",
         status=status,
         task_type=task_type,
-        course_item_nature=course_item_nature,
+        course_category=course_category,
         artist_page_ids=artist_page_ids if artist_page_ids is not None else ["artist-1"],
         project_page_ids=project_page_ids if project_page_ids is not None else [],
         start=start,
@@ -195,7 +195,7 @@ class TestTaskScheduleImpact:
     def test_course_and_homework_session_with_explicit_time_is_busy(self):
         item = task(
             task_type="課程與作業",
-            course_item_nature="課程場次",
+            course_category="歌唱課",
             start=datetime(2026, 8, 1, 14, 0, tzinfo=config.TZ),
             end=datetime(2026, 8, 1, 17, 0, tzinfo=config.TZ),
             start_has_time=True,
@@ -207,7 +207,7 @@ class TestTaskScheduleImpact:
     def test_homework_date_range_is_warning_only(self):
         item = task(
             task_type="課程與作業",
-            course_item_nature="課程作業",
+            course_category="歌唱課",
             start=datetime(2026, 8, 1, 0, 0, tzinfo=config.TZ),
             end=datetime(2026, 8, 3, 0, 0, tzinfo=config.TZ),
             start_has_time=False,
@@ -215,6 +215,81 @@ class TestTaskScheduleImpact:
         )
 
         assert repositories.classify_task_time_impact(item) == "warning"
+
+    def test_course_without_category_is_warning_only(self):
+        item = task(
+            task_type="課程與作業",
+            course_category=None,
+            start=datetime(2026, 8, 1, 14, 0, tzinfo=config.TZ),
+            end=datetime(2026, 8, 1, 17, 0, tzinfo=config.TZ),
+        )
+
+        assert repositories.classify_task_time_impact(item) == "warning"
+
+
+class TestFinalizedSchemaMapping:
+    def test_project_reads_start_date(self):
+        page = {
+            "id": "project-1",
+            "properties": {
+                "專案名稱": {"title": [{"plain_text": "八月課程"}]},
+                "專案狀態": {"select": {"name": "進行中"}},
+                "專案類型": {"select": {"name": "課程培訓"}},
+                "關聯藝人": {"relation": []},
+                "開始日": {"date": {"start": "2026-08-01"}},
+                "截止日": {"date": {"start": "2026-08-31"}},
+            },
+        }
+
+        item = repositories._to_project(page)
+
+        assert item.start.date().isoformat() == "2026-08-01"
+
+    def test_task_reads_course_meeting_relation_without_removed_nature(self):
+        page = {
+            "id": "task-1",
+            "url": "",
+            "properties": {
+                "任務名稱": {"title": [{"plain_text": "歌唱課"}]},
+                "任務狀態": {"select": {"name": "尚未開始"}},
+                "任務類型": {"select": {"name": "課程與作業"}},
+                "課程類別": {"select": {"name": "歌唱課"}},
+                "課程與會議記錄": {"relation": [{"id": "meeting-1"}]},
+            },
+        }
+
+        item = repositories._to_task(page)
+
+        assert item.course_category == "歌唱課"
+        assert item.course_meeting_page_ids == ["meeting-1"]
+
+    def test_teacher_options_include_teachers_and_company_members(self, monkeypatch):
+        import asyncio
+
+        pages = [
+            {"id": "teacher", "properties": {
+                "姓名 / 名稱": {"title": [{"plain_text": "阿橘"}]},
+                "身份類型": {"select": {"name": "老師"}},
+            }},
+            {"id": "member", "properties": {
+                "姓名 / 名稱": {"title": [{"plain_text": "Tony"}]},
+                "身份類型": {"select": {"name": "公司成員"}},
+            }},
+            {"id": "vendor", "properties": {
+                "姓名 / 名稱": {"title": [{"plain_text": "廠商"}]},
+                "身份類型": {"select": {"name": "合作廠商"}},
+            }},
+        ]
+
+        async def fake_query(*args, **kwargs):
+            return pages
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+
+        assert asyncio.run(repositories.get_teacher_options()) == [
+            ("member", "Tony"),
+            ("teacher", "阿橘"),
+        ]
 
     def test_homework_warning_applies_to_middle_day(self):
         item = task(

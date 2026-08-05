@@ -381,17 +381,25 @@ async def get_course_meetings_for_artist(artist_page_id: str) -> list[CourseMeet
         sorts=[{"property": "Date", "direction": "descending"}],
     )
     project_map = await get_project_map()
-    task_pages = await notion_api.query_data_source(config.DS_TASKS)
-    task_map = {page["id"]: _to_task(page) for page in task_pages}
+    task_pages = await notion_api.query_data_source(
+        config.DS_TASKS,
+        filter_={"property": "課程與會議記錄", "relation": {"is_not_empty": True}},
+    )
+    tasks_by_meeting: dict[str, list[TaskItem]] = {}
+    for task_page in task_pages:
+        task = _to_task(task_page)
+        for meeting_page_id in task.course_meeting_page_ids:
+            tasks_by_meeting.setdefault(meeting_page_id, []).append(task)
     records: list[CourseMeetingRecord] = []
     for page in pages:
         artists = tuple(_read_relation_ids(page, "參與藝人"))
-        task_ids = tuple(_read_relation_ids(page, "關聯任務"))
+        related_tasks = tasks_by_meeting.get(page["id"], [])
+        task_ids = tuple(task.page_id for task in related_tasks)
         project_ids = tuple(_read_relation_ids(page, "關聯專案"))
         related = artist_page_id in artists
         related = related or any(
-            task_id in task_map and task_applies_to_artist(task_map[task_id], artist_page_id, project_map)
-            for task_id in task_ids
+            task_applies_to_artist(task, artist_page_id, project_map)
+            for task in related_tasks
         )
         related = related or any(
             project_id in project_map and artist_page_id in project_map[project_id].artist_page_ids
@@ -516,14 +524,18 @@ async def get_teachers() -> list[str]:
 
 
 async def get_teacher_options() -> list[tuple[str, str]]:
-    """回傳 People 老師的 (page_id, name)，供 Task Relation 選擇使用。"""
+    """回傳可授課 People 的 (page_id, name)，供 Task Relation 選擇使用。"""
     pages = await notion_api.query_data_source(
         config.DS_PEOPLE,
-        filter_={"property": "身份類型", "select": {"equals": "老師"}},
+        filter_={"or": [
+            {"property": "身份類型", "select": {"equals": "老師"}},
+            {"property": "身份類型", "select": {"equals": "公司成員"}},
+        ]},
     )
     options = [
         (page["id"], _read_title(page, "姓名 / 名稱").strip())
         for page in pages
+        if _read_select(page, "身份類型") in {"老師", "公司成員"}
     ]
     return sorted({option for option in options if option[1]}, key=lambda option: option[1])
 
@@ -701,7 +713,7 @@ class TaskItem:
     status: str | None
     task_type: str | None
     course_category: str | None = None
-    course_item_nature: str | None = None
+    course_meeting_page_ids: list[str] = field(default_factory=list)
     teacher_page_ids: list[str] = field(default_factory=list)
     reviewer_page_ids: list[str] = field(default_factory=list)
     artist_page_ids: list[str] = field(default_factory=list)
@@ -784,7 +796,7 @@ class ScheduleImpactContext:
 
 
 def _to_project(page: dict) -> ProjectItem:
-    start = _read_date_value(page, "開案日")
+    start = _read_date_value(page, "開始日")
     end = _read_date_value(page, "截止日")
     return ProjectItem(
         page_id=page["id"],
@@ -815,7 +827,7 @@ def _to_task(page: dict) -> TaskItem:
         status=_read_select(page, "任務狀態"),
         task_type=_read_select(page, "任務類型"),
         course_category=_read_select(page, "課程類別"),
-        course_item_nature=_read_select(page, "課程項目性質"),
+        course_meeting_page_ids=_read_relation_ids(page, "課程與會議記錄"),
         teacher_page_ids=_read_relation_ids(page, "負責老師"),
         reviewer_page_ids=_read_relation_ids(page, "審核人員"),
         artist_page_ids=_read_relation_ids(page, "關聯藝人"),
@@ -903,10 +915,7 @@ def classify_task_time_impact(task: TaskItem) -> str | None:
     if (
         (
             task.task_type in HARD_BLOCK_TASK_TYPES
-            or (
-                task.task_type == "課程與作業"
-                and task.course_item_nature == "課程場次"
-            )
+            or (task.task_type == "課程與作業" and bool(task.course_category))
         )
         and task.start
         and task.end
@@ -1292,7 +1301,6 @@ async def create_formal_arrangement_task(
     start: datetime | None = None,
     end: datetime | None = None,
     course_category: str | None = None,
-    course_item_nature: str | None = None,
     teacher_page_ids: list[str] | None = None,
     project_page_ids: list[str] | None = None,
 ) -> TaskItem:
@@ -1312,8 +1320,6 @@ async def create_formal_arrangement_task(
     }
     if course_category:
         props["課程類別"] = _select(course_category)
-    if course_item_nature:
-        props["課程項目性質"] = _select(course_item_nature)
     if teacher_page_ids:
         props["負責老師"] = _relation(teacher_page_ids)
     if project_page_ids:

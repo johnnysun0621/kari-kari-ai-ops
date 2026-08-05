@@ -140,10 +140,10 @@ def _load_karikari_from_env() -> TenantConfig:
         ds_bulletin=os.getenv("NOTION_DS_BULLETIN", "d605806f-097b-823e-ac69-07fa536ba05f"),
         ds_course_meetings=os.getenv("NOTION_DS_COURSE_MEETINGS", "0a95806f-097b-8368-bb02-8705bdfa744b"),
         tz=ZoneInfo("Asia/Taipei"),
-        # 課程類型（與 Notion Schedule Requests / Course Sessions 的 select 選項一致）
+        # 課程類型（與 Tasks.課程類別 select 選項一致）
         course_types=(
             "歌唱課", "編曲課", "樂理課", "表演藝術課",
-            "舞蹈課", "音樂製作課",
+            "舞蹈課", "音樂製作課", "聽力訓練課",
         ),
         sla_hours=48,
         sla_hard_limit_hours=72,
