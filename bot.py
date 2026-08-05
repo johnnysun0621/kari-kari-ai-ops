@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 
 import config
-from cogs.scheduling_artist import FillAvailabilityButton, PoolAvailabilityButton
+from cogs.scheduling_artist import PoolAvailabilityButton
 from cogs.tasks_artist import TaskReceiptButton
 from services import audit, notion_api, repositories
 from web import server as teacher_web
@@ -53,7 +53,6 @@ class KariKariBot(commands.Bot):
         except Exception:
             logger.exception("老師確認 web 服務啟動失敗，Discord 功能仍會繼續啟動")
         # persistent 按鈕：bot 重啟後公告上的「填寫可用時間」仍可用
-        self.add_dynamic_items(FillAvailabilityButton)
         self.add_dynamic_items(PoolAvailabilityButton)
         self.add_dynamic_items(TaskReceiptButton)
         if config.GUILD_ID:

@@ -94,7 +94,7 @@
 - ✅ 未指派成員預設看不到營運區；公告對藝人唯讀，營運內部只限控方。
 - ✅ 完成 `SERVER_MIGRATION.md`、`DELIVERY.md`、會議需求追蹤矩陣與 32 個 Notion views 稽核。
 - ✅ TimeTree 定案維持控方人工補登，Tasks 為正式資料來源。
-- ✅ `compileall`、`pyflakes`、253 項測試與 9 個正式 Notion Data Source 唯讀 smoke test 通過。
+- ✅ `compileall`、`pyflakes`、254 項測試與 9 個正式 Notion Data Source 唯讀 smoke test 通過。
 - ⬜ 待在客戶正式 Discord server 執行初始化、角色指派與全指令真機驗收。
 - ⬜ 真機驗收完成後建立 `v1.0-karikari` tag。
 

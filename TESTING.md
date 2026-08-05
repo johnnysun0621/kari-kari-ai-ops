@@ -17,7 +17,7 @@
 .venv/bin/python -m pytest tests/ -q
 ```
 
-2026-08-05 v1.0 候選版基準：`253 passed`；正式 Notion 唯讀 smoke test 讀取 9 個 Data Source 全數通過。
+2026-08-05 v1.0 候選版基準：`254 passed`；正式 Notion 唯讀 smoke test 讀取 9 個 Data Source 全數通過。
 
 目前測試重點：
 
