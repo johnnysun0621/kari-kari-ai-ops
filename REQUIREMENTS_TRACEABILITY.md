@@ -4,7 +4,7 @@
 
 | 會議日期 | 客戶需求 | 最終決策 | 對應功能 | Notion 來源 | Discord 操作 | 測試案例 | 狀態 |
 |---|---|---|---|---|---|---|---|
-| 2026-06-29 | 排課從一週縮短到兩天 | 月度時間池＋Task 正式安排；TimeTree 人工補登 | 收集、整理、比對、SLA | Availability、Tasks、Audit | `/時間收集建立`、`/時間池比對` | overlap、提醒與 SLA tests | 已完成 |
+| 2026-06-29 | 排課從一週縮短到兩天 | 月度時間池＋Task 正式安排；TimeTree 人工補登 | 收集、整理、比對、SLA | Availability、Tasks、Audit | `/任務建立與安排`、`/時間池比對` | overlap、提醒與 SLA tests | 已完成 |
 | 2026-06-29 | 藝人主動回填多天多時段 | Discord 分頁批次，同時允許不同日期不同時段 | 月度可配合時間 | Availability | `/補填時間`、`/我的時段` | availability UI / repository tests | 已完成 |
 | 2026-06-29 | 正式事項與可配合時間分開 | Availability 不是承諾；Tasks 是唯一正式來源 | Task-first 安排 | Availability、Tasks、Projects | `/正式通告發布` | formal notice tests | 已完成 |
 | 2026-06-29 | 未填與逾時要催收 | 24h 藝人期限、老師 24h、48h 升級、72h 失效警告 | Scheduling SLA | Audit、Availability、Tasks | 控方頻道＋DM | scheduling SLA tests | 已完成 |

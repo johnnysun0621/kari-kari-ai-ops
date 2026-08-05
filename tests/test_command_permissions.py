@@ -41,6 +41,10 @@ def test_legacy_scheduling_commands_removed_from_tree():
     assert "時間池比對" in names
 
 
+def test_time_collection_command_uses_task_focused_name():
+    assert SchedulingAdminCog.create_availability_collection.name == "任務建立與安排"
+
+
 def test_task_channel_allows_anywhere_when_not_configured(monkeypatch):
     monkeypatch.setattr(channel_guard.config, "TASK_CHANNEL_ID", 0)
 

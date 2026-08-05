@@ -866,8 +866,8 @@ class SchedulingAdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ---------- /時間收集建立 ----------
-    @app_commands.command(name="時間收集建立", description="發起月度可配合時段收集，不綁定單一排課需求")
+    # ---------- /任務建立與安排 ----------
+    @app_commands.command(name="任務建立與安排", description="建立回報任務並發起月度可配合時段收集")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         月份="要收集的月份，例：2026-08",
