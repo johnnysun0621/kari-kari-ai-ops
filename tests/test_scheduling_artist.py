@@ -117,7 +117,7 @@ class TestPoolNotificationCopy:
         text = scheduling_artist.pool_all_done_notice("2026-08", artists)
 
         assert "已收齊" in text
-        assert "/時間池比對" in text
+        assert "/任務建立與安排" in text
         assert "Johnny、Chenhua" in text
 
 

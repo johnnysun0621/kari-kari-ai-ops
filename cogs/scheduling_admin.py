@@ -188,7 +188,7 @@ class AvailabilityCleanupPreviewView(discord.ui.View):
 
 
 class MonthlyPoolArtistSelectView(discord.ui.View):
-    """/時間池比對 的第二步：手動選擇要比對共同空檔的藝人。"""
+    """/任務建立與安排 的第二步：手動選擇要比對共同空檔的藝人。"""
 
     def __init__(
         self,
@@ -558,7 +558,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
         names = "、".join(a.name for a in self.artists)
         candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in teacher_windows)
         description = (
-            f"安排來源：/時間池比對\n"
+            f"安排來源：/任務建立與安排\n"
             f"課程類別：{self.course_type}\n"
             f"負責老師：{self.teacher_name}\n"
             f"需要時長：{repositories.format_duration_hours(self.duration_minutes)}\n"
@@ -703,7 +703,7 @@ class DirectArrangementModal(discord.ui.Modal, title="建立安排 Task 草稿")
             return
         location = self.location_input.value.strip()
         description = (
-            f"安排來源：/時間池比對\n"
+            f"安排來源：/任務建立與安排\n"
             f"安排類型：{self.arrangement_type}\n"
             f"地點／連結：{location or '待補'}\n"
             "此為控方草稿；補齊內容後使用 /正式通告發布。"
@@ -1014,8 +1014,8 @@ class SchedulingAdminCog(commands.Cog):
             ephemeral=True,
         )
 
-    # ---------- /時間池比對 ----------
-    @app_commands.command(name="時間池比對", description="比對月度可配合時間池，找多位藝人的共同空檔")
+    # ---------- /任務建立與安排 ----------
+    @app_commands.command(name="任務建立與安排", description="從月度時間池找共同空檔並建立安排")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         月份="要比對的月份，例：2026-08",

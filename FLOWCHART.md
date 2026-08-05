@@ -38,7 +38,7 @@ flowchart TD
     B -->|尚未確定| V["控方用 /時間資訊蒐集"]
     V --> W["藝人填月度可配合時段"]
     W --> X["Availability Slots 寫入時間池"]
-    X --> Y["控方用 /時間池比對"]
+    X --> Y["控方用 /任務建立與安排"]
     Y --> Z["找共同空檔候選"]
     Z --> C
 ```
@@ -47,7 +47,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["/時間池比對\n取得共同空檔"] --> B{"安排類型"}
+    A["/任務建立與安排\n取得共同空檔"] --> B{"安排類型"}
     B -->|課程| C["選課程類別、課程培訓 Project、老師、名稱"]
     C --> D["Bot 建立 Tasks\n類型：課程與作業"]
     B -->|錄音／通告／其他| E["控方手動在 Notion 建立 Project / Task"]

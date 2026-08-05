@@ -38,7 +38,7 @@ def test_legacy_scheduling_commands_removed_from_tree():
 
     names = asyncio.run(load())
     assert not ({"排課建立", "排課比對", "排課確認", "排課狀態"} & names)
-    assert "時間池比對" in names
+    assert "任務建立與安排" in names
 
 
 def test_time_collection_command_uses_task_focused_name():

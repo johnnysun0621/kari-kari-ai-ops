@@ -37,7 +37,7 @@ def test_course_task_is_publishable_when_course_category_exists():
 
 
 def test_description_field_extracts_location():
-    description = "安排來源：/時間池比對\n地點／連結：https://example.com\n內容：錄音"
+    description = "安排來源：/任務建立與安排\n地點／連結：https://example.com\n內容：錄音"
 
     assert repositories.task_description_field(
         description, "地點", "地點／連結"

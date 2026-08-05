@@ -143,7 +143,7 @@ class RemindersCog(commands.Cog):
                     await admin_channel.send(
                         f"✅ **{collection.month} 月度時間池已收齊**\n"
                         f"已填藝人：{names}\n"
-                        f"可以開始使用 `/時間池比對 月份:{collection.month} 時長分鐘:60` 查看共同空檔。"
+                        f"可以開始使用 `/任務建立與安排 月份:{collection.month} 時長分鐘:60` 查看共同空檔。"
                     )
                 # 終態：之後不再對這個收集做每輪查詢
                 time_collection.deregister_collection(collection.month, collection.deadline_ts)
