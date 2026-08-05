@@ -46,3 +46,18 @@ async def log_event(
         await notion_api.create_page(config.DS_AUDIT_LOG, props)
     except Exception:
         logger.exception("Audit Log 寫入失敗（不阻斷主流程）: %s", event_name)
+
+
+async def has_successful_event(event_name: str, target_url: str) -> bool:
+    """跨重啟檢查重要操作是否已完成；查詢失敗交由呼叫端決定是否中止。"""
+    if not target_url:
+        return False
+    pages = await notion_api.query_data_source(
+        config.DS_AUDIT_LOG,
+        filter_={"and": [
+            {"property": "事件名稱", "title": {"equals": event_name}},
+            {"property": "目標頁面 URL", "url": {"equals": target_url}},
+            {"property": "結果", "select": {"equals": "成功"}},
+        ]},
+    )
+    return bool(pages)

@@ -8,10 +8,11 @@ def test_only_course_requires_teacher_confirmation():
     assert arrangement.requires_teacher_confirmation("其他") is False
 
 
-def test_recording_and_notice_publish_immediately():
-    assert arrangement.publishes_immediately("錄音") is True
-    assert arrangement.publishes_immediately("通告") is True
-    assert arrangement.publishes_immediately("其他") is False
+def test_non_course_arrangements_create_unpublished_task_drafts():
+    assert arrangement.creates_unpublished_task_draft("錄音") is True
+    assert arrangement.creates_unpublished_task_draft("通告") is True
+    assert arrangement.creates_unpublished_task_draft("其他") is True
+    assert arrangement.creates_unpublished_task_draft("課程") is False
 
 
 def test_non_course_arrangements_use_existing_task_types():

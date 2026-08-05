@@ -15,10 +15,9 @@ def requires_teacher_confirmation(arrangement_type: str) -> bool:
     return arrangement_type == "課程"
 
 
-def publishes_immediately(arrangement_type: str) -> bool:
-    return arrangement_type in {"錄音", "通告"}
+def creates_unpublished_task_draft(arrangement_type: str) -> bool:
+    return arrangement_type in {"錄音", "通告", "其他"}
 
 
 def task_type_for_arrangement(arrangement_type: str) -> str | None:
     return TASK_TYPE_BY_ARRANGEMENT.get(arrangement_type)
-

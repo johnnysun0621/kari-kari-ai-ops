@@ -297,7 +297,7 @@ Project：課程培訓
     └── 作業提交與審核
 ```
 
-`/時間池比對` 選擇課程後，Bot 會選擇進行中的課程培訓 Project、老師與課程類別，直接建立一筆 Task；共同候選時段寫在 `任務說明`，正式時間由營運直接在 Task 填寫。
+`/時間池比對` 選擇課程後，Bot 會選擇進行中的課程培訓 Project、老師與課程類別，直接建立一筆 Task；共同候選時段寫在 `任務說明`，正式時間由營運直接在 Task 填寫。錄音／通告／其他會建立 `Discord 顯示=false` 的 Task 草稿，補齊後由 `/正式通告發布` 預覽確認。
 
 `Schedule Requests` 與 `Course Sessions` 已移出目前主流程並移至垃圾桶；其關聯欄位也已從 `Tasks` 與 `Availability Slots` 移除。歷史資料若需查閱，應從 Notion 垃圾桶恢復，不再由 Bot 讀寫。
 

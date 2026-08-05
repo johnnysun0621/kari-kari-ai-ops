@@ -548,8 +548,8 @@ class PersonItem:
     identity_type: str | None = None
 
 
-async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
-    """讀取指定 People，供審核人員提醒使用；沒有 Discord ID 的人只保留名稱。"""
+async def get_people_items_by_ids(page_ids: list[str]) -> list[PersonItem]:
+    """讀取指定 People；沒有 Discord ID 的人仍保留名稱供人工通知。"""
     if not page_ids:
         return []
     pages = await notion_api.query_data_source(config.DS_PEOPLE)
@@ -563,7 +563,14 @@ async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
         )
         for page in pages
         if page["id"] in wanted
-        and _read_select(page, "身份類型") == "公司成員"
+    ]
+
+
+async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
+    """讀取指定公司成員，供審核人員提醒使用。"""
+    return [
+        person for person in await get_people_items_by_ids(page_ids)
+        if person.identity_type == "公司成員"
     ]
 
 
@@ -1156,6 +1163,40 @@ async def acknowledge_task(
         return False
 
 
+def _build_formal_arrangement_task_props(
+    name: str,
+    task_type: str,
+    artist_page_ids: list[str],
+    description: str,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    course_category: str | None = None,
+    teacher_page_ids: list[str] | None = None,
+    project_page_ids: list[str] | None = None,
+    discord_visible: bool = True,
+) -> dict:
+    props = {
+        "任務名稱": _title(name),
+        "任務狀態": _select("尚未開始"),
+        "任務類型": _select(task_type),
+        "關聯藝人": _relation(artist_page_ids),
+        "任務說明": _rich_text(description),
+        "是否開放提交": _checkbox(False),
+        "Discord 顯示": _checkbox(discord_visible),
+    }
+    if course_category:
+        props["課程類別"] = _select(course_category)
+    if teacher_page_ids:
+        props["負責老師"] = _relation(teacher_page_ids)
+    if project_page_ids:
+        props["關聯專案"] = _relation(project_page_ids)
+    if start:
+        props["開始日"] = _date(start)
+    if end:
+        props["截止日"] = _date(end)
+    return props
+
+
 async def create_formal_arrangement_task(
     name: str,
     task_type: str,
@@ -1166,31 +1207,52 @@ async def create_formal_arrangement_task(
     course_category: str | None = None,
     teacher_page_ids: list[str] | None = None,
     project_page_ids: list[str] | None = None,
+    discord_visible: bool = True,
 ) -> TaskItem:
-    """建立由時間池確認出的正式／待確認安排 Task。
-
-    task_type 使用 Tasks 既有 select 選項；安排顯示名稱與候選說明放在任務說明，
-    因此不需要為「通告／其他」改 Notion schema。
-    """
-    props = {
-        "任務名稱": _title(name),
-        "任務狀態": _select("尚未開始"),
-        "任務類型": _select(task_type),
-        "關聯藝人": _relation(artist_page_ids),
-        "任務說明": _rich_text(description),
-        "是否開放提交": _checkbox(False),
-        "Discord 顯示": _checkbox(True),
-    }
-    if course_category:
-        props["課程類別"] = _select(course_category)
-    if teacher_page_ids:
-        props["負責老師"] = _relation(teacher_page_ids)
-    if project_page_ids:
-        props["關聯專案"] = _relation(project_page_ids)
-    if start:
-        props["開始日"] = _date(start, end)
+    """建立由時間池確認出的正式／待確認安排 Task。"""
+    props = _build_formal_arrangement_task_props(
+        name=name,
+        task_type=task_type,
+        artist_page_ids=artist_page_ids,
+        description=description,
+        start=start,
+        end=end,
+        course_category=course_category,
+        teacher_page_ids=teacher_page_ids,
+        project_page_ids=project_page_ids,
+        discord_visible=discord_visible,
+    )
     page = await notion_api.create_page(config.DS_TASKS, props)
     return _to_task(page)
+
+
+def is_publishable_formal_task(task: TaskItem) -> bool:
+    """正式通告候選必須是未結案、具精準時間的硬性安排。"""
+    return bool(task.artist_page_ids) and classify_task_time_impact(task) == "busy"
+
+
+def task_description_field(description: str, *field_names: str) -> str:
+    for line in description.splitlines():
+        stripped = line.strip()
+        for field_name in field_names:
+            prefix = f"{field_name}："
+            if stripped.startswith(prefix):
+                return stripped[len(prefix):].strip()
+    return ""
+
+
+async def mark_task_formally_published(
+    page_id: str,
+    notified_at: datetime | None = None,
+) -> None:
+    """正式發布後開放 Discord 顯示，並避免背景派發再送一次新任務通知。"""
+    await notion_api.update_page(
+        page_id,
+        {
+            "Discord 顯示": _checkbox(True),
+            "Discord 通知時間": _date(notified_at or datetime.now(config.TZ)),
+        },
+    )
 
 
 # ---------- P0-3 作業提交（Submissions & File Index） ----------

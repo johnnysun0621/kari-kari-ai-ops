@@ -11,7 +11,7 @@ import time
 from aiohttp import web as aioweb
 
 import config
-from services import teacher_confirm
+from services import scheduling_sla, teacher_confirm
 
 from web import pages
 
@@ -62,8 +62,15 @@ async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
     if action not in {"confirm", "none"} or (action == "confirm" and not choices):
         return _html_response(pages.result_html("invalid"), status=400)
 
-    teacher_confirm.mark_token_used(token, check.expires_at_ts)
     windows = [str(label) for label in payload.get("windows", [])]
+    selected: list[str] = []
+    if action == "confirm":
+        try:
+            selected = [windows[int(choice)] for choice in choices]
+        except (ValueError, IndexError):
+            return _html_response(pages.result_html("invalid"), status=400)
+    teacher_confirm.mark_token_used(token, check.expires_at_ts)
+    scheduling_sla.mark_teacher_responded(check.resource_page_id, int(time.time()))
     internal = client.get_channel(tenant.admin_notify_channel_id) if client else None
     if internal is not None:
         if action == "none":
@@ -73,11 +80,6 @@ async def handle_confirm_post(request: aioweb.Request) -> aioweb.Response:
                 "請重新比對或重新蒐集時段。"
             )
         else:
-            try:
-                selected = [windows[int(choice)] for choice in choices]
-            except (ValueError, IndexError):
-                teacher_confirm.unmark_token(token)
-                return _html_response(pages.result_html("invalid"), status=400)
             message = (
                 f"📩 **老師已回覆可行時段，請控方最後定案**\n"
                 f"課程 Task：{payload.get('task_name', '未命名')}\n"

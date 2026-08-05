@@ -9,7 +9,7 @@
 
 7/11 會議客戶對原型整體買單，提出補強清單；本計劃做完即正式交付 KariKari。
 
-1. **安排流程**：`/時間池比對` 只產生共同空檔候選；課程由 Bot 依控方選擇建立一筆 `Tasks` 的「課程與作業」，錄音／通告／其他則由控方手動在 Notion 建立 Project / Task。正式時間、老師與作業資訊集中在 Tasks。
+1. **安排流程**：`/時間池比對` 產生共同空檔；課程建立 `課程與作業` Task，錄音／通告／其他建立隱藏 Task 草稿；控方補齊後用 `/正式通告發布` 預覽確認。正式時間、老師與作業資訊集中在 Tasks。
 2. **洽談中藝人權限**：與已簽約相同；**未簽／暫停／封存無權限**（已完成收緊）
 3. **AI 問答進交付**：OpenAI 相容 adapter——DeepSeek（`https://api.deepseek.com`）／Ollama 本地（`http://localhost:11434/v1`）／其他便宜模型**同一介面**，TenantConfig 設定切換
 4. 分工：社群頁／性別年齡欄位＝Johnny 在 Notion 做；錄音→逐字稿自動化、Notion AI 授權＝寫進 DELIVERY.md「後續藍圖」，不實作
@@ -21,7 +21,7 @@
 | pending-attachment 等附件模式 | [cogs/submissions.py](cogs/submissions.py) `PendingFileSubmission`＋`on_message` listener | D1 批改檔回傳、D2 上傳驗證都復用此模式（Cog 實例 dict＋過期，非全域） |
 | Drive 歸檔路徑 | [services/drive_archive.py](services/drive_archive.py) 對應表＋`resolve_archive_target` | D1 加「老師回饋」資料夾、D2 資料夾連結 |
 | Drive API | [services/drive_api.py](services/drive_api.py) `upload_submission_file`／`_find_or_create_folder_sync`／`list_recent_files` | D2 驗證指定資料夾入口後新增檔案 |
-| 任務建立 | [services/repositories.py](services/repositories.py) `create_formal_arrangement_task` | 課程比對後建立 Tasks；其他類型由控方手動建立 |
+| 任務建立 | [services/repositories.py](services/repositories.py) `create_formal_arrangement_task` | 課程建立 Task；其他類型建立隱藏 Task 草稿 |
 | 時段去重/合併 | repositories `create_availability_slot_if_absent`（exact 已擋）＋`compact_availability_slots` | D3 重疊偵測沿用其語意（較寬窗勝出、性質無關——刻意設計勿改） |
 | 安全發送 | [cogs/channel_guard.py](cogs/channel_guard.py) `try_send` | 所有附帶通知 |
 | 權限 | [services/permissions.py](services/permissions.py) | D5／D6 身分判斷 |
@@ -51,7 +51,9 @@
 ### D4｜安排流程調整（會議 #12，已完成）
 - [x] `/時間池比對` 產生共同空檔候選；不直接發布正式通告
 - [x] 課程選擇課程類別、課程培訓 Project、老師後，直接建立 Tasks 的「課程與作業」
-- [x] 錄音／通告／其他維持控方手動建立 Project / Task
+- [x] 錄音／通告／其他建立 `Discord 顯示=false` 的 Task 草稿
+- [x] `/正式通告發布` 預覽後發公告、藝人／老師 DM，並以 Audit＋本機狀態防重複
+- [x] 持久化 24／48／72 小時 SLA 提醒
 - [x] `Schedule Requests`、`Course Sessions` 已移至 Notion 垃圾桶；殘留關聯欄位已移除
 - [x] 舊 `/排課*`、Schedule Request／Course Session repository、設定、token 分支與測試完整刪除
 
@@ -74,7 +76,7 @@
 - [x] 審核期限與修改期限；提交後預設 24 小時審核期限，需修改／退回後預設 48 小時修改期限，背景 loop 會提醒相關對象。
 - [x] Google Drive 任務資料夾改為 `YYYY.MM.DD_任務名稱`，無截止日則使用 Notion 建立日。
 - [x] 完全移除截圖佐證，保留文字回饋、批改檔與 Google Drive 連結。
-- [x] 課程專案先由控方在 Notion 建立；`/時間池比對` 只產生候選，課程任務才由 Bot 建立，錄音／通告／其他仍由控方手動建立 Project / Task。
+- [x] 課程專案先由控方在 Notion 建立；課程任務由 Bot 建立，錄音／通告／其他建立隱藏 Task 草稿。
 - [ ] 內部 TimeTree 與 Notion 的自動同步，列入後續評估，不阻塞目前交付。
 - [ ] 正式伺服器的頻道、身分組初始化與移轉驗收，仍屬 D7。
 

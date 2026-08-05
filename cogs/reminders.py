@@ -7,7 +7,7 @@ from discord.ext import commands, tasks
 
 import config
 from cogs import ui_text
-from services import audit, repositories, task_notifications, time_collection
+from services import audit, repositories, scheduling_sla, task_notifications, time_collection
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ class RemindersCog(commands.Cog):
     async def check_loop(self):
         try:
             await self._check_monthly_pool_deadlines()
+            await self._check_scheduling_sla()
             await self._check_task_dispatch_notifications()
             await self._check_unacknowledged_task_notifications()
             await self._check_review_deadlines()
@@ -71,6 +72,29 @@ class RemindersCog(commands.Cog):
             if page_id in artist_by_id
         ]
         return artists, missing, progress
+
+    async def _check_scheduling_sla(self):
+        channel = (
+            self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+        )
+        if channel is None:
+            return
+        for event in scheduling_sla.due_events(int(datetime.now(config.TZ).timestamp())):
+            try:
+                await channel.send(event.message)
+            except Exception:
+                logger.exception("排課 SLA 通知發送失敗（event=%s）", event.key)
+                continue
+            scheduling_sla.mark_event_sent(event.key)
+            await audit.log_event(
+                event_name=f"排課 SLA 提醒｜{event.key}",
+                action_type="提醒",
+                operator="System",
+                source="System",
+                target_db="Tasks",
+                after=event.message,
+            )
 
     async def _dm_monthly_pool_missing(
         self,

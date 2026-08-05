@@ -9,6 +9,7 @@ ADMIN_COMMANDS = [
     SchedulingAdminCog.create_availability_collection,
     SchedulingAdminCog.cleanup_availability_pool,
     SchedulingAdminCog.match_availability_pool,
+    SchedulingAdminCog.publish_formal_notice,
     TasksCog.task_overview,
 ]
 
