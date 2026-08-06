@@ -32,7 +32,8 @@ class TestDatePresetView:
         assert "整天可" in labels
         assert "指定時段" in labels
         assert "選全部日期" not in labels
-        assert "勾同一批日期" in view.prompt()
+        assert "本頁：8/1–8/25" in view.prompt()
+        assert "尚未選日期" in view.prompt()
 
     def test_last_day_button_page_shows_remaining_month_days(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
@@ -65,7 +66,7 @@ class TestDatePresetView:
             selected_day_values=["2026-08-01", "2026-08-30"],
         )
 
-        assert "已勾" in view.prompt()
+        assert "已選：8/1、8/30" in view.prompt()
         assert "2 天" in view.prompt()
 
     def test_apply_buttons_enable_after_dates_are_selected(self):

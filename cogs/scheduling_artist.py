@@ -748,14 +748,26 @@ class DatePresetView(InteractionDebugView):
 
     def prompt(self) -> str:
         page_count = len(self.day_pages)
-        page_days = "、".join(day.label for day in self.current_day_options)
+        page_start = self.current_day_options[0].label.split("（", 1)[0]
+        page_end = self.current_day_options[-1].label.split("（", 1)[0]
+        page_range = page_start if page_start == page_end else f"{page_start}–{page_end}"
+        selected_labels = {
+            option.value: option.label.split("（", 1)[0]
+            for page in self.day_pages
+            for option in page
+        }
+        selected_days = "、".join(
+            selected_labels[value]
+            for value in self.day_values
+            if value in selected_labels
+        )
         selected_hint = time_collection.availability_page_hint(len(self.day_values), self.mode)
+        selected_text = f"已選：{selected_days}" if selected_days else "尚未選日期"
         return (
-            f"勾同一批日期，套用同一個時段：\n"
-            f"日期頁：**{self.page_index + 1}/{page_count}**｜"
-            f"本頁：{page_days}\n"
-            f"已勾 **{len(self.day_values)} 天**。{selected_hint}\n"
-            "日期時間不同時，分批勾選；同一天有多段時間，就再勾同一天填下一段。"
+            f"請勾選要套用同一時段的日期。\n"
+            f"日期頁：**{self.page_index + 1}/{page_count}**｜本頁：{page_range}\n"
+            f"{selected_text}（共 {len(self.day_values)} 天）。{selected_hint}\n"
+            "不同時段請分批選；同一天可再次選。"
         )
 
     def page_view(self, page_index: int) -> "DatePresetView":
