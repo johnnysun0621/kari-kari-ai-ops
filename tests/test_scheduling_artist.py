@@ -34,6 +34,8 @@ class TestDatePresetView:
         assert "選全部日期" not in labels
         assert "本頁：8/1–8/16" in view.prompt()
         assert "尚未選日期" in view.prompt()
+        assert "填寫方式" in view.prompt()
+        assert "整天可：08:00–24:00" in view.prompt()
 
     def test_last_day_button_page_shows_remaining_month_days(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]

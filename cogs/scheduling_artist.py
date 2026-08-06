@@ -767,7 +767,8 @@ class DatePresetView(InteractionDebugView):
             f"請勾選要套用同一時段的日期。\n"
             f"日期頁：**{self.page_index + 1}/{page_count}**｜本頁：{page_range}\n"
             f"{selected_text}（共 {len(self.day_values)} 天）。{selected_hint}\n"
-            "不同時段請分批選；同一天可再次選。"
+            "不同時段請分批選；同一天可再次選。\n\n"
+            f"{time_collection.availability_selection_sop()}"
         )
 
     def page_view(self, page_index: int) -> "DatePresetView":
