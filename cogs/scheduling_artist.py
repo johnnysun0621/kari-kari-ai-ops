@@ -184,6 +184,74 @@ def _slot_note(base_parts: list[str], warnings: list[repositories.ScheduleWarnin
     return "｜".join(note_parts)
 
 
+def _schedule_item_overlaps_month(
+    start: datetime | None,
+    end: datetime | None,
+    month: str,
+) -> bool:
+    month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d").date()
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    month_end = next_month - timedelta(days=1)
+    item_start = (start or end).date() if (start or end) else None
+    item_end = (end or start).date() if (start or end) else None
+    return bool(item_start and item_end and item_start <= month_end and item_end >= month_start)
+
+
+def _schedule_period_text(
+    start: datetime | None,
+    end: datetime | None,
+    *,
+    show_time: bool,
+) -> str:
+    if not start and not end:
+        return "日期未設定"
+    first = start or end
+    last = end or start
+    if show_time and start and end:
+        if start.date() == end.date():
+            return f"{start.month}/{start.day} {start:%H:%M}–{end:%H:%M}"
+        return f"{start.month}/{start.day} {start:%H:%M}–{end.month}/{end.day} {end:%H:%M}"
+    if first.date() == last.date():
+        return f"{first.month}/{first.day}"
+    return f"{first.month}/{first.day}–{last.month}/{last.day}"
+
+
+def _artist_schedule_summary(
+    month: str,
+    context: repositories.ScheduleImpactContext,
+) -> str:
+    busy_lines: list[str] = []
+    warning_lines: list[str] = []
+    seen: set[str] = set()
+    for item in context.busy_intervals:
+        if item.source_id in seen or not _schedule_item_overlaps_month(item.start, item.end, month):
+            continue
+        seen.add(item.source_id)
+        busy_lines.append(
+            f"・{_schedule_period_text(item.start, item.end, show_time=True)}｜"
+            f"{('任務' if item.source_type == 'Task' else '專案')}：{item.source_name}"
+        )
+    for item in context.warnings:
+        if item.source_id in seen or not _schedule_item_overlaps_month(item.start, item.end, month):
+            continue
+        seen.add(item.source_id)
+        warning_lines.append(
+            f"・{_schedule_period_text(item.start, item.end, show_time=False)}｜"
+            f"{('任務' if item.source_type == 'Task' else '專案')}：{item.source_name}"
+        )
+    if not busy_lines and not warning_lines:
+        return "📌 本月目前沒有讀到既定安排。\n"
+    lines = [
+        f"📌 **你在 {month} 的既定安排**",
+        "以下資訊供你判斷可配合時間；仍可填寫其他時段。",
+    ]
+    if busy_lines:
+        lines.append("**已安排時段**\n" + "\n".join(busy_lines[:8]))
+    if warning_lines:
+        lines.append("**已有任務，時間未定**\n" + "\n".join(warning_lines[:8]))
+    return "\n".join(lines) + "\n"
+
+
 _sent_pool_artist_done_notices: set[str] = set()
 
 
@@ -939,9 +1007,18 @@ class PoolAvailabilityButton(
                 ephemeral=True,
             )
             return
+        try:
+            schedule_summary = _artist_schedule_summary(
+                self.month,
+                await _schedule_impact_context(artist),
+            )
+        except Exception:
+            logger.exception("讀取藝人既定安排摘要失敗")
+            schedule_summary = "⚠️ 目前讀不到既定安排，請先照可用時間填寫；送出時 Bot 會再檢查。\n"
         await interaction.response.send_message(
             f"回報 **{self.month} 可配合時間**。\n"
-            "直接勾選日期；日期會分頁，可按下一頁繼續選。\n\n"
+            + schedule_summary
+            + "直接勾選日期；日期會分頁，可按下一頁繼續選。\n\n"
             f"{time_collection.availability_selection_sop()}",
             view=DatePresetView(
                 self.month,
@@ -1073,10 +1150,19 @@ class SchedulingArtistCog(commands.Cog):
                 ephemeral=True,
             )
             return
+        try:
+            schedule_summary = _artist_schedule_summary(
+                normalized_month,
+                await _schedule_impact_context(artist),
+            )
+        except Exception:
+            logger.exception("讀取藝人既定安排摘要失敗")
+            schedule_summary = "⚠️ 目前讀不到既定安排，請先照可用時間填寫；送出時 Bot 會再檢查。\n"
         deadline_ts = int((datetime.now(config.TZ) + timedelta(days=3650)).timestamp())
         await interaction.response.send_message(
             f"補填 **{normalized_month} 可配合時間**。\n"
-            "不用找舊公告；如果要修改已填資料，請先用 `/我的時段` 刪除錯的時段，再從這裡重填。\n\n"
+            + schedule_summary
+            + "不用找舊公告；如果要修改已填資料，請先用 `/我的時段` 刪除錯的時段，再從這裡重填。\n\n"
             f"{time_collection.availability_selection_sop()}",
             view=DatePresetView(
                 normalized_month,

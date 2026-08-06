@@ -1,8 +1,11 @@
 """Discord artist scheduling UI helper tests."""
 
+from datetime import datetime
+
 from cogs import scheduling_artist
 import discord
 
+import config
 from cogs.scheduling_artist import DatePresetView, SchedulingArtistCog
 from services import repositories, time_collection
 
@@ -119,6 +122,35 @@ def artist(page_id: str, name: str):
 
 
 class TestPoolNotificationCopy:
+    def test_artist_schedule_summary_separates_fixed_and_date_only_items(self):
+        context = repositories.ScheduleImpactContext(
+            busy_intervals=[
+                repositories.BusyInterval(
+                    source_id="task-fixed",
+                    source_name="例會安排",
+                    source_type="Task",
+                    start=datetime(2026, 8, 6, 14, 0, tzinfo=config.TZ),
+                    end=datetime(2026, 8, 6, 17, 0, tzinfo=config.TZ),
+                )
+            ],
+            warnings=[
+                repositories.ScheduleWarning(
+                    source_id="task-date-only",
+                    source_name="測試任務0806",
+                    source_type="Task",
+                    start=datetime(2026, 8, 10, 0, 0, tzinfo=config.TZ),
+                    end=datetime(2026, 8, 12, 0, 0, tzinfo=config.TZ),
+                )
+            ],
+        )
+
+        summary = scheduling_artist._artist_schedule_summary("2026-08", context)
+
+        assert "已安排時段" in summary
+        assert "8/6 14:00–17:00｜任務：例會安排" in summary
+        assert "已有任務，時間未定" in summary
+        assert "8/10–8/12｜任務：測試任務0806" in summary
+
     def test_artist_done_notice_includes_progress_and_missing_artists(self):
         artists = [artist("artist-1", "Johnny"), artist("artist-2", "Chenhua")]
         progress = repositories.MonthlyPoolProgress(
