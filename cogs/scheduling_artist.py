@@ -220,35 +220,47 @@ def _artist_schedule_summary(
     month: str,
     context: repositories.ScheduleImpactContext,
 ) -> str:
-    busy_lines: list[str] = []
-    warning_lines: list[str] = []
+    entries: list[tuple[datetime, str]] = []
     seen: set[str] = set()
     for item in context.busy_intervals:
         if item.source_id in seen or not _schedule_item_overlaps_month(item.start, item.end, month):
             continue
         seen.add(item.source_id)
-        busy_lines.append(
-            f"・{_schedule_period_text(item.start, item.end, show_time=True)}｜"
-            f"{('任務' if item.source_type == 'Task' else '專案')}：{item.source_name}"
+        item_start = item.start or item.end
+        entries.append(
+            (
+                item_start,
+                f"・{_schedule_period_text(item.start, item.end, show_time=True)}｜"
+                f"{('任務' if item.source_type == 'Task' else '專案')}：{item.source_name}",
+            )
         )
     for item in context.warnings:
         if item.source_id in seen or not _schedule_item_overlaps_month(item.start, item.end, month):
             continue
         seen.add(item.source_id)
-        warning_lines.append(
-            f"・{_schedule_period_text(item.start, item.end, show_time=False)}｜"
-            f"{('任務' if item.source_type == 'Task' else '專案')}：{item.source_name}"
-        )
-    if not busy_lines and not warning_lines:
+        first = (item.start or item.end).date()
+        last = (item.end or item.start).date()
+        current = first
+        while current <= last:
+            current_dt = datetime.combine(current, datetime.min.time(), tzinfo=config.TZ)
+            entries.append(
+                (
+                    current_dt,
+                    f"・{current.month}/{current.day}｜"
+                    f"{('任務' if item.source_type == 'Task' else '專案')}：{item.source_name}（時間未定）",
+                )
+            )
+            current += timedelta(days=1)
+    if not entries:
         return "📌 本月目前沒有讀到既定安排。\n"
+    entries.sort(key=lambda entry: (entry[0], entry[1]))
     lines = [
         f"📌 **你在 {month} 的既定安排**",
         "以下資訊供你判斷可配合時間；仍可填寫其他時段。",
     ]
-    if busy_lines:
-        lines.append("**已安排時段**\n" + "\n".join(busy_lines[:8]))
-    if warning_lines:
-        lines.append("**已有任務，時間未定**\n" + "\n".join(warning_lines[:8]))
+    lines.append("\n".join(line for _, line in entries[:30]))
+    if len(entries) > 30:
+        lines.append(f"・另有 {len(entries) - 30} 筆既定安排")
     return "\n".join(lines) + "\n"
 
 

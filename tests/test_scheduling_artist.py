@@ -146,10 +146,11 @@ class TestPoolNotificationCopy:
 
         summary = scheduling_artist._artist_schedule_summary("2026-08", context)
 
-        assert "已安排時段" in summary
         assert "8/6 14:00–17:00｜任務：例會安排" in summary
-        assert "已有任務，時間未定" in summary
-        assert "8/10–8/12｜任務：測試任務0806" in summary
+        assert "8/10｜任務：測試任務0806（時間未定）" in summary
+        assert "8/11｜任務：測試任務0806（時間未定）" in summary
+        assert "8/12｜任務：測試任務0806（時間未定）" in summary
+        assert "8/10–8/12" not in summary
 
     def test_artist_done_notice_includes_progress_and_missing_artists(self):
         artists = [artist("artist-1", "Johnny"), artist("artist-2", "Chenhua")]
