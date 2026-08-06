@@ -1,7 +1,7 @@
 """藝人端：填寫可用時間按鈕（persistent）、時段 Modal、/我的時段。"""
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import discord
 from discord import app_commands
@@ -464,6 +464,7 @@ async def _submit_pool_slots(
     mode: str,
     start_text: str = "",
     end_text: str = "",
+    excluded_day_values: set[str] | None = None,
 ):
     await interaction.response.defer(ephemeral=True, thinking=True)
     artist = await repositories.find_artist_by_discord_id(interaction.user.id)
@@ -552,6 +553,7 @@ async def _submit_pool_slots(
         if len(duplicates) > 10:
             duplicate_text += f"\n・另有 {len(duplicates) - 10} 筆已存在"
     late_text = "\n⚠️ 已超過填寫截止時間，這些時段標記為逾期提交。" if is_late and created else ""
+    next_excluded_days = set(excluded_day_values or set()) | set(day_values)
     if not created:
         await interaction.followup.send(
             "⚠️ 沒有新增新的未來時段。"
@@ -560,7 +562,9 @@ async def _submit_pool_slots(
             + _conflict_text(conflicts)
             + _warning_text(warnings)
             + "\n\n若要修改，請用 `/我的時段` 刪除後，再用 `/補填時間` 重新填寫。",
-            view=PoolContinueView(month, deadline_ts, nature_code, week_values),
+            view=PoolContinueView(
+                month, deadline_ts, nature_code, week_values, next_excluded_days
+            ),
             ephemeral=True,
         )
         return
@@ -574,7 +578,9 @@ async def _submit_pool_slots(
         + late_text
         + "\n\n這不是正式行程；正式安排前營運仍會再確認。"
         + "\n可以繼續選下一批日期 / 可用模式，或按完成。",
-        view=PoolContinueView(month, deadline_ts, nature_code, week_values),
+        view=PoolContinueView(
+            month, deadline_ts, nature_code, week_values, next_excluded_days
+        ),
         ephemeral=True,
     )
 
@@ -682,16 +688,22 @@ class DatePresetView(InteractionDebugView):
         page_index: int = 0,
         selected_day_values: list[str] | None = None,
         selected_mode: str | None = None,
+        excluded_day_values: set[str] | None = None,
     ):
         super().__init__()
         self.month = month
         self.deadline_ts = deadline_ts
         self.week_values = week_values
         self.nature_code = nature_code
+        self.excluded_day_values = set(excluded_day_values or set())
+        excluded_dates = {
+            date.fromisoformat(value) for value in self.excluded_day_values
+        }
         # 讓月份平均分成兩頁，每頁約 15-16 天；仍低於 Discord 的 25 項限制。
         self.day_pages = time_collection.day_option_pages(
             week_values,
             page_size=time_collection.MONTH_DATE_PAGE_SIZE,
+            excluded_dates=excluded_dates,
         ) or [[]]
         self.page_index = max(0, min(page_index, len(self.day_pages) - 1))
         self.current_day_options = self.day_pages[self.page_index]
@@ -748,9 +760,12 @@ class DatePresetView(InteractionDebugView):
 
     def prompt(self) -> str:
         page_count = len(self.day_pages)
-        page_start = self.current_day_options[0].label.split("（", 1)[0]
-        page_end = self.current_day_options[-1].label.split("（", 1)[0]
-        page_range = page_start if page_start == page_end else f"{page_start}–{page_end}"
+        if self.current_day_options:
+            page_start = self.current_day_options[0].label.split("（", 1)[0]
+            page_end = self.current_day_options[-1].label.split("（", 1)[0]
+            page_range = page_start if page_start == page_end else f"{page_start}–{page_end}"
+        else:
+            page_range = "無剩餘日期"
         selected_labels = {
             option.value: option.label.split("（", 1)[0]
             for page in self.day_pages
@@ -767,7 +782,7 @@ class DatePresetView(InteractionDebugView):
             f"請勾選要套用同一時段的日期。\n"
             f"日期頁：**{self.page_index + 1}/{page_count}**｜本頁：{page_range}\n"
             f"{selected_text}（共 {len(self.day_values)} 天）。{selected_hint}\n"
-            "不同時段請分批選；同一天可再次選。\n\n"
+            "不同時段請分批選；同一天要填不同時段，請用 `/補填時間`。\n\n"
             f"{time_collection.availability_selection_sop()}"
         )
 
@@ -780,6 +795,7 @@ class DatePresetView(InteractionDebugView):
             page_index=page_index,
             selected_day_values=self.day_values,
             selected_mode=self.mode,
+            excluded_day_values=self.excluded_day_values,
         )
 
     async def previous_page(self, interaction: discord.Interaction):
@@ -817,21 +833,35 @@ class PoolContinueView(InteractionDebugView):
         deadline_ts: int,
         nature_code: str,
         week_values: list[str] | None = None,
+        excluded_day_values: set[str] | None = None,
     ):
         super().__init__()
         self.month = month
         self.deadline_ts = deadline_ts
         self.nature_code = nature_code
         self.week_values = week_values
+        self.excluded_day_values = set(excluded_day_values or set())
 
     @discord.ui.button(label="繼續選下一組日期", style=discord.ButtonStyle.primary, emoji="➕")
     async def continue_selecting(self, interaction: discord.Interaction, _: discord.ui.Button):
         if self.week_values:
+            all_day_values = [
+                option.value
+                for page in time_collection.day_option_pages(self.week_values)
+                for option in page
+            ]
+            if set(all_day_values) <= self.excluded_day_values:
+                await interaction.response.edit_message(
+                    content="✅ 這個月份的日期都已填寫完成。若要補填或修改，請使用 `/補填時間`。",
+                    view=PoolAfterSubmitView(self.month, self.deadline_ts, self.nature_code),
+                )
+                return
             view = DatePresetView(
                 self.month,
                 self.deadline_ts,
                 self.week_values,
                 self.nature_code,
+                excluded_day_values=self.excluded_day_values,
             )
             await interaction.response.edit_message(
                 content=view.prompt(),

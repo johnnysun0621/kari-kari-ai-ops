@@ -65,6 +65,27 @@ class TestDatePresetView:
         assert "已選：8/1、8/30" in view.prompt()
         assert "2 天" in view.prompt()
 
+    def test_submitted_days_are_removed_from_next_batch(self):
+        week_values = [week.value for week in time_collection.month_week_options("2026-08")]
+        view = DatePresetView(
+            "2026-08",
+            deadline_ts=1785600000,
+            week_values=week_values,
+            nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
+            excluded_day_values={"2026-08-01", "2026-08-02", "2026-08-08"},
+        )
+
+        visible_values = [
+            option.value
+            for page in view.day_pages
+            for option in page
+        ]
+        assert len(visible_values) == 28
+        assert "2026-08-01" not in visible_values
+        assert "2026-08-02" not in visible_values
+        assert "2026-08-08" not in visible_values
+        assert "本頁：8/3–8/17" in view.prompt()
+
     def test_apply_buttons_enable_after_dates_are_selected(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
         empty_view = DatePresetView(
