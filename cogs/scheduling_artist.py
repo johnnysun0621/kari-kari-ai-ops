@@ -905,7 +905,7 @@ class PoolAvailabilityButton(
             return
         await interaction.response.send_message(
             f"回報 **{self.month} 可配合時間**。\n"
-            "直接勾選日期；每頁最多顯示 25 天，可按下一頁繼續選。送出時會自動檢查已安排任務，若有衝突只排除衝突時段。\n\n"
+            "直接勾選日期；每頁最多顯示 25 天，可按下一頁繼續選。\n\n"
             f"{time_collection.availability_selection_sop()}",
             view=DatePresetView(
                 self.month,

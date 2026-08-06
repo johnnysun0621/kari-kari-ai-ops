@@ -29,8 +29,8 @@ class TestAvailabilitySelectionSop:
         sop = time_collection.availability_selection_sop()
 
         assert "每頁最多 25 天" in sop
-        assert "一次" in sop
-        assert "重複勾同一天" in sop
+        assert "下一頁" in sop
+        assert "不同時間就分批選" in sop
         assert len(sop) < 220
 
     def test_page_hint_changes_by_selection_state(self):

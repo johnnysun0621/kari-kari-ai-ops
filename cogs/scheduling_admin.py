@@ -926,7 +926,6 @@ class SchedulingAdminCog(commands.Cog):
         description = (
             f"{time_collection.availability_announcement_copy(month)}\n\n"
             f"{time_collection.availability_selection_sop()}\n\n"
-            "送出時會自動檢查已安排任務；若有衝突，只排除衝突時段。\n"
             f"⏰ **填寫截止：{deadline_str}**"
         )
         if 說明:
@@ -954,7 +953,6 @@ class SchedulingAdminCog(commands.Cog):
                     f"👋 {artist.name}，請回報 **{month} 可配合時間**。\n"
                     f"{time_collection.availability_announcement_copy(month)}\n"
                     f"{time_collection.availability_selection_sop()}\n"
-                    "送出時會自動檢查已安排任務；若有衝突，只排除衝突時段。\n"
                     f"⏰ 截止：{deadline_str}\n"
                     + (
                         f"請到伺服器公告填寫：{announce_msg.jump_url}"
