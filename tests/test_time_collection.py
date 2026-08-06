@@ -3,7 +3,7 @@
 from datetime import date, datetime
 
 import config
-from services import time_collection
+from services import time_collection, timeparse
 
 
 class TestCollectionNature:
@@ -28,9 +28,10 @@ class TestAvailabilitySelectionSop:
     def test_sop_is_short_and_user_oriented(self):
         sop = time_collection.availability_selection_sop()
 
-        assert "每頁最多 25 天" in sop
+        assert "每頁約一半月份" in sop
         assert "下一頁" in sop
         assert "不同時間就分批選" in sop
+        assert "整天可：08:00–24:00" in sop
         assert len(sop) < 220
 
     def test_page_hint_changes_by_selection_state(self):
@@ -127,14 +128,26 @@ class TestWeekDayOptions:
 
         pages = time_collection.day_option_pages(weeks)
 
-        assert [len(page) for page in pages] == [25, 6]
+        assert [len(page) for page in pages] == [16, 15]
         assert pages[0][0].value == "2026-08-01"
-        assert pages[0][-1].value == "2026-08-25"
-        assert pages[1][0].value == "2026-08-26"
+        assert pages[0][-1].value == "2026-08-16"
+        assert pages[1][0].value == "2026-08-17"
         assert pages[1][-1].value == "2026-08-31"
+
+    def test_month_pages_are_balanced_for_different_month_lengths(self):
+        for month, expected in (("2026-02", [14, 14]), ("2026-04", [15, 15]), ("2026-08", [16, 15])):
+            weeks = [week.value for week in time_collection.month_week_options(month)]
+            assert [len(page) for page in time_collection.day_option_pages(weeks)] == expected
 
 
 class TestBuildSlot:
+    def test_all_day_uses_0800_to_midnight(self):
+        start, end = time_collection.build_mode_slot("2026-08-05", "all_day")
+
+        assert start == datetime(2026, 8, 5, 8, 0, tzinfo=config.TZ)
+        assert end == datetime(2026, 8, 6, 0, 0, tzinfo=config.TZ)
+        assert timeparse.humanize(start, end) == "8/5（週三）08:00–24:00"
+
     def test_builds_datetime_from_day_and_preset(self):
         start, end = time_collection.build_slot("2026-08-05", "14:00-18:00")
 
@@ -144,17 +157,17 @@ class TestBuildSlot:
     def test_builds_cross_product_for_multiple_days_and_presets(self):
         slots = time_collection.build_slots(
             ["2026-08-05", "2026-08-06"],
-            ["10:00-12:00", "19:00-22:00"],
+            ["08:00-12:00", "19:00-24:00"],
         )
 
         assert len(slots) == 4
         assert slots[0] == (
-            datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ),
+            datetime(2026, 8, 5, 8, 0, tzinfo=config.TZ),
             datetime(2026, 8, 5, 12, 0, tzinfo=config.TZ),
         )
         assert slots[-1] == (
             datetime(2026, 8, 6, 19, 0, tzinfo=config.TZ),
-            datetime(2026, 8, 6, 22, 0, tzinfo=config.TZ),
+            datetime(2026, 8, 7, 0, 0, tzinfo=config.TZ),
         )
 
 
@@ -162,19 +175,19 @@ class TestBuildModeSlot:
     def test_all_day_uses_operating_window(self):
         start, end = time_collection.build_mode_slot("2026-08-05", "all_day")
 
-        assert start == datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ)
-        assert end == datetime(2026, 8, 5, 22, 0, tzinfo=config.TZ)
+        assert start == datetime(2026, 8, 5, 8, 0, tzinfo=config.TZ)
+        assert end == datetime(2026, 8, 6, 0, 0, tzinfo=config.TZ)
 
     def test_after_uses_custom_start_and_default_end(self):
         start, end = time_collection.build_mode_slot("2026-08-05", "after", start_text="13:30")
 
         assert start == datetime(2026, 8, 5, 13, 30, tzinfo=config.TZ)
-        assert end == datetime(2026, 8, 5, 22, 0, tzinfo=config.TZ)
+        assert end == datetime(2026, 8, 6, 0, 0, tzinfo=config.TZ)
 
     def test_before_uses_default_start_and_custom_end(self):
         start, end = time_collection.build_mode_slot("2026-08-05", "before", end_text="17:00")
 
-        assert start == datetime(2026, 8, 5, 10, 0, tzinfo=config.TZ)
+        assert start == datetime(2026, 8, 5, 8, 0, tzinfo=config.TZ)
         assert end == datetime(2026, 8, 5, 17, 0, tzinfo=config.TZ)
 
     def test_specific_uses_custom_range(self):

@@ -60,23 +60,24 @@ class ActiveCollection:
     artist_page_ids: tuple[str, ...]
 
 
-DEFAULT_DAY_START = time(10, 0)
-DEFAULT_DAY_END = time(22, 0)
+DEFAULT_DAY_START = time(8, 0)
+DEFAULT_DAY_END = time(0, 0)  # 次日 00:00，對使用者顯示為當日 24:00
 DEFAULT_COLLECTION_NATURE = "monthly_reference"
 DISCORD_SELECT_OPTION_LIMIT = 25
+MONTH_DATE_PAGE_SIZE = 16
 MONTHLY_REFERENCE_LABEL = "月度可配合時段"
 LEGACY_COLLECTION_NATURE_VALUES = {"direct", "confirm"}
 LEGACY_COLLECTION_NATURE_LABELS = {"可直接安排", "待確認"}
 
 PRESET_WINDOWS = [
-    PresetWindow("上午 10:00-12:00", "10:00-12:00", time(10, 0), time(12, 0)),
+    PresetWindow("上午 08:00-12:00", "08:00-12:00", time(8, 0), time(12, 0)),
     PresetWindow("下午 14:00-18:00", "14:00-18:00", time(14, 0), time(18, 0)),
-    PresetWindow("晚上 19:00-22:00", "19:00-22:00", time(19, 0), time(22, 0)),
-    PresetWindow("全天 10:00-22:00", "10:00-22:00", time(10, 0), time(22, 0)),
+    PresetWindow("晚上 19:00-24:00", "19:00-24:00", time(19, 0), time(0, 0)),
+    PresetWindow("整段 08:00-24:00", "08:00-24:00", time(8, 0), time(0, 0)),
 ]
 
 AVAILABILITY_MODES = [
-    AvailabilityMode("整天可", "all_day", "10:00-22:00 都可安排"),
+    AvailabilityMode("整天可", "all_day", "08:00-24:00 都可安排"),
     AvailabilityMode("某時間後可", "after", "例：13:30 後都可安排"),
     AvailabilityMode("某時間前可", "before", "例：17:00 前都可安排"),
     AvailabilityMode("指定時段", "specific", "例：14:00-18:00"),
@@ -228,8 +229,12 @@ def availability_announcement_copy(month: str) -> str:
 def availability_selection_sop() -> str:
     return (
         "**填寫方式**\n"
-        "1. 勾選日期（每頁最多 25 天）；需要時按「下一頁」。\n"
-        "2. 按一個時間按鈕，套用到已選日期。\n"
+        "1. 勾選日期（每頁約一半月份）；需要時按「下一頁」。\n"
+        "2. 選時間方式，會套用到已選日期。\n"
+        "   ・整天可：08:00–24:00\n"
+        "   ・某時間後：輸入開始時間\n"
+        "   ・某時間前：輸入結束時間\n"
+        "   ・指定時段：輸入開始與結束時間\n"
         "3. 不同時間就分批選；填完按「完成」。"
     )
 
@@ -352,14 +357,21 @@ def week_values_day_options(
 
 def day_option_pages(
     week_values: list[str],
-    page_size: int = DISCORD_SELECT_OPTION_LIMIT,
+    page_size: int = MONTH_DATE_PAGE_SIZE,
     excluded_dates: set[date] | None = None,
 ) -> list[list[DayOption]]:
     options = week_values_day_options(week_values, excluded_dates=excluded_dates)
-    return [
-        options[index:index + page_size]
-        for index in range(0, len(options), page_size)
-    ]
+    if not options:
+        return []
+    page_count = max(1, (len(options) + page_size - 1) // page_size)
+    base_size, extra = divmod(len(options), page_count)
+    pages: list[list[DayOption]] = []
+    cursor = 0
+    for page_index in range(page_count):
+        current_size = base_size + (1 if page_index < extra else 0)
+        pages.append(options[cursor:cursor + current_size])
+        cursor += current_size
+    return pages
 
 
 def preset_window(value: str) -> PresetWindow:

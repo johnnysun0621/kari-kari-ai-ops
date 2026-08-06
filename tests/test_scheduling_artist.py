@@ -22,17 +22,17 @@ class TestDatePresetView:
         )
 
         assert len(view.all_day_values) == 31
-        assert [len(page) for page in view.day_pages] == [25, 6]
+        assert [len(page) for page in view.day_pages] == [16, 15]
         selects = [child for child in view.children if isinstance(child, discord.ui.Select)]
         assert len(selects) == 1
-        assert selects[0].max_values == 25
+        assert selects[0].max_values == 16
         assert [option.label for option in selects[0].options][:2] == ["8/1（週六）", "8/2（週日）"]
         labels = child_labels(view)
         assert "下一頁" in labels
-        assert "整天可" in labels
+        assert "整天可（08:00–24:00）" in labels
         assert "指定時段" in labels
         assert "選全部日期" not in labels
-        assert "本頁：8/1–8/25" in view.prompt()
+        assert "本頁：8/1–8/16" in view.prompt()
         assert "尚未選日期" in view.prompt()
 
     def test_last_day_button_page_shows_remaining_month_days(self):
@@ -46,14 +46,8 @@ class TestDatePresetView:
         )
 
         selects = [child for child in view.children if isinstance(child, discord.ui.Select)]
-        assert [option.label for option in selects[0].options] == [
-            "8/26（週三）",
-            "8/27（週四）",
-            "8/28（週五）",
-            "8/29（週六）",
-            "8/30（週日）",
-            "8/31（週一）",
-        ]
+        assert [option.label for option in selects[0].options][0] == "8/17（週一）"
+        assert [option.label for option in selects[0].options][-1] == "8/31（週一）"
         assert "日期頁：**2/2**" in view.prompt()
 
     def test_selected_days_persist_across_date_pages(self):
@@ -87,11 +81,11 @@ class TestDatePresetView:
 
         empty_apply_buttons = [
             child for child in empty_view.children
-            if getattr(child, "label", None) in {"整天可", "某時間後", "某時間前", "指定時段"}
+            if getattr(child, "label", None) in {"整天可（08:00–24:00）", "某時間後", "某時間前", "指定時段"}
         ]
         selected_apply_buttons = [
             child for child in selected_view.children
-            if getattr(child, "label", None) in {"整天可", "某時間後", "某時間前", "指定時段"}
+            if getattr(child, "label", None) in {"整天可（08:00–24:00）", "某時間後", "某時間前", "指定時段"}
         ]
         assert all(button.disabled for button in empty_apply_buttons)
         assert all(not button.disabled for button in selected_apply_buttons)

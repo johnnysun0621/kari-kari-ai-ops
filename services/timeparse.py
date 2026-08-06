@@ -1,6 +1,6 @@
 """Modal 輸入的日期時間解析與候選時段文字格式。"""
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 import config
 
@@ -115,6 +115,8 @@ WEEKDAY_ZH = "一二三四五六日"
 def humanize(start: datetime, end: datetime) -> str:
     """人類可讀格式：7/15（週二）14:00–18:00"""
     wd = WEEKDAY_ZH[start.weekday()]
+    if end.date() == start.date() + timedelta(days=1) and end.time() == time(0, 0):
+        return f"{start.month}/{start.day}（週{wd}）{start.strftime('%H:%M')}–24:00"
     if start.date() == end.date():
         return f"{start.month}/{start.day}（週{wd}）{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
     wd2 = WEEKDAY_ZH[end.weekday()]

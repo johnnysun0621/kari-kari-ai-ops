@@ -688,10 +688,10 @@ class DatePresetView(InteractionDebugView):
         self.deadline_ts = deadline_ts
         self.week_values = week_values
         self.nature_code = nature_code
-        # Discord Select 最多 25 個選項；整個月份仍需完整顯示，因此用 25 天分頁。
+        # 讓月份平均分成兩頁，每頁約 15-16 天；仍低於 Discord 的 25 項限制。
         self.day_pages = time_collection.day_option_pages(
             week_values,
-            page_size=time_collection.DISCORD_SELECT_OPTION_LIMIT,
+            page_size=time_collection.MONTH_DATE_PAGE_SIZE,
         ) or [[]]
         self.page_index = max(0, min(page_index, len(self.day_pages) - 1))
         self.current_day_options = self.day_pages[self.page_index]
@@ -705,7 +705,7 @@ class DatePresetView(InteractionDebugView):
         self.add_item(
             ApplyModeButton(
                 self,
-                "整天可",
+                "整天可（08:00–24:00）",
                 "all_day",
                 style=discord.ButtonStyle.primary,
             )
