@@ -888,25 +888,28 @@ class SchedulingAdminCog(commands.Cog):
     ):
         if not await channel_guard.ensure_schedule_channel(interaction):
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        # 先立即確認 Discord interaction，後續 Notion、公告與 DM 操作完成後
+        # 直接更新同一則回覆，避免長流程超過 Discord 的初始回應期限。
+        await interaction.response.send_message(
+            "⏳ 正在建立時間資訊蒐集，請稍候…",
+            ephemeral=True,
+        )
         month = time_collection.normalize_month(月份)
         if month is None:
-            await interaction.followup.send("❌ 月份格式請用 `2026-08`。", ephemeral=True)
+            await interaction.edit_original_response(content="❌ 月份格式請用 `2026-08`。")
             return
         nature = time_collection.collection_nature(time_collection.DEFAULT_COLLECTION_NATURE)
         try:
             artists = await repositories.get_active_artists()
         except Exception:
             logger.exception("讀取藝人清單失敗")
-            await interaction.followup.send(
-                "❌ 讀不到 Notion 藝人資料，請確認 NOTION_TOKEN 與資料庫已 share 給 integration。",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content="❌ 讀不到 Notion 藝人資料，請確認 NOTION_TOKEN 與資料庫已 share 給 integration。"
             )
             return
         if not artists:
-            await interaction.followup.send(
-                "❌ Artists 裡沒有可排課藝人，請先到 Notion 補 Discord User ID。",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content="❌ Artists 裡沒有可排課藝人，請先到 Notion 補 Discord User ID。"
             )
             return
 
@@ -977,9 +980,8 @@ class SchedulingAdminCog(commands.Cog):
             if announce_msg else
             "⚠️ 公告未發出：找不到公告頻道，或 bot 在公告頻道沒有「檢視頻道 / 傳送訊息 / 嵌入連結」權限。"
         )
-        await interaction.followup.send(
-            f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}",
-            ephemeral=True,
+        await interaction.edit_original_response(
+            content=f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}"
         )
 
     # ---------- /任務建立與安排 ----------

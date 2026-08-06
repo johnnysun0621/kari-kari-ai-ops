@@ -42,8 +42,11 @@ class TestAvailabilitySelectionSop:
     def test_announcement_copy_is_concise(self):
         message = time_collection.availability_announcement_copy("2026-08")
 
-        assert "2026-08 可配合時間" in message
-        assert "不是正式預約" in message
+        assert "Kari 行政安排課程、錄音或通告" in message
+        assert "Kari 行政會再向你確認" in message
+        assert "填寫方式" not in message
+        assert "整天可" not in message
+        assert "選擇可配合時段" in message
         assert len(message) < 500
 
 

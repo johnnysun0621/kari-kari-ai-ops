@@ -116,6 +116,23 @@ class TestDatePresetView:
         assert all(button.disabled for button in empty_apply_buttons)
         assert all(not button.disabled for button in selected_apply_buttons)
 
+    def test_schedule_summary_stays_visible_across_date_interactions(self):
+        week_values = [week.value for week in time_collection.month_week_options("2026-08")]
+        summary = "📌 **你在 2026-08 的既定安排**\n・8/6｜任務：測試任務0806（時間未定）"
+        view = DatePresetView(
+            "2026-08",
+            deadline_ts=1785600000,
+            week_values=week_values,
+            nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
+            schedule_summary=summary,
+        )
+
+        assert view.prompt().startswith(summary)
+        assert summary in view.page_view(1).prompt()
+
+        view.update_day_values(["2026-08-01"])
+        assert summary in view.prompt()
+
 
 def artist(page_id: str, name: str):
     return repositories.Artist(page_id=page_id, name=name, discord_user_id="123")
@@ -147,10 +164,8 @@ class TestPoolNotificationCopy:
         summary = scheduling_artist._artist_schedule_summary("2026-08", context)
 
         assert "8/6 14:00–17:00｜任務：例會安排" in summary
-        assert "8/10｜任務：測試任務0806（時間未定）" in summary
-        assert "8/11｜任務：測試任務0806（時間未定）" in summary
-        assert "8/12｜任務：測試任務0806（時間未定）" in summary
-        assert "8/10–8/12" not in summary
+        assert "8/10–8/12｜任務：測試任務0806" in summary
+        assert "時間未定" not in summary
 
     def test_artist_done_notice_includes_progress_and_missing_artists(self):
         artists = [artist("artist-1", "Johnny"), artist("artist-2", "Chenhua")]

@@ -238,19 +238,14 @@ def _artist_schedule_summary(
         if item.source_id in seen or not _schedule_item_overlaps_month(item.start, item.end, month):
             continue
         seen.add(item.source_id)
-        first = (item.start or item.end).date()
-        last = (item.end or item.start).date()
-        current = first
-        while current <= last:
-            current_dt = datetime.combine(current, datetime.min.time(), tzinfo=config.TZ)
-            entries.append(
-                (
-                    current_dt,
-                    f"・{current.month}/{current.day}｜"
-                    f"{('任務' if item.source_type == 'Task' else '專案')}：{item.source_name}（時間未定）",
-                )
+        item_start = item.start or item.end
+        entries.append(
+            (
+                item_start,
+                f"・{_schedule_period_text(item.start, item.end, show_time=False)}｜"
+                f"{('任務' if item.source_type == 'Task' else '專案')}：{item.source_name}",
             )
-            current += timedelta(days=1)
+        )
     if not entries:
         return "📌 本月目前沒有讀到既定安排。\n"
     entries.sort(key=lambda entry: (entry[0], entry[1]))
@@ -545,6 +540,7 @@ async def _submit_pool_slots(
     start_text: str = "",
     end_text: str = "",
     excluded_day_values: set[str] | None = None,
+    schedule_summary: str = "",
 ):
     await interaction.response.defer(ephemeral=True, thinking=True)
     artist = await repositories.find_artist_by_discord_id(interaction.user.id)
@@ -643,7 +639,12 @@ async def _submit_pool_slots(
             + _warning_text(warnings)
             + "\n\n若要修改，請用 `/我的時段` 刪除後，再用 `/補填時間` 重新填寫。",
             view=PoolContinueView(
-                month, deadline_ts, nature_code, week_values, next_excluded_days
+                month,
+                deadline_ts,
+                nature_code,
+                week_values,
+                next_excluded_days,
+                schedule_summary=schedule_summary,
             ),
             ephemeral=True,
         )
@@ -659,7 +660,12 @@ async def _submit_pool_slots(
         + "\n\n這不是正式行程；正式安排前營運仍會再確認。"
         + "\n可以繼續選下一批日期 / 可用模式，或按完成。",
         view=PoolContinueView(
-            month, deadline_ts, nature_code, week_values, next_excluded_days
+            month,
+            deadline_ts,
+            nature_code,
+            week_values,
+            next_excluded_days,
+            schedule_summary=schedule_summary,
         ),
         ephemeral=True,
     )
@@ -675,6 +681,7 @@ class ModeTimeModal(discord.ui.Modal):
         day_values: list[str],
         mode: str,
         excluded_day_values: set[str] | None = None,
+        schedule_summary: str = "",
     ):
         super().__init__(title="補充可用時間")
         self.month = month
@@ -684,6 +691,7 @@ class ModeTimeModal(discord.ui.Modal):
         self.day_values = day_values
         self.mode = mode
         self.excluded_day_values = set(excluded_day_values or set())
+        self.schedule_summary = schedule_summary
         self.start_input: discord.ui.TextInput | None = None
         self.end_input: discord.ui.TextInput | None = None
         if mode in {"after", "specific"}:
@@ -713,6 +721,7 @@ class ModeTimeModal(discord.ui.Modal):
             start_text=self.start_input.value if self.start_input else "",
             end_text=self.end_input.value if self.end_input else "",
             excluded_day_values=self.excluded_day_values,
+            schedule_summary=self.schedule_summary,
         )
 
 
@@ -748,6 +757,7 @@ class ApplyModeButton(discord.ui.Button):
                 self.parent_view.day_values,
                 self.mode,
                 excluded_day_values=self.parent_view.excluded_day_values,
+                schedule_summary=self.parent_view.schedule_summary,
             )
             return
         await interaction.response.send_modal(
@@ -759,6 +769,7 @@ class ApplyModeButton(discord.ui.Button):
                 self.parent_view.day_values,
                 self.mode,
                 excluded_day_values=self.parent_view.excluded_day_values,
+                schedule_summary=self.parent_view.schedule_summary,
             )
         )
 
@@ -774,6 +785,7 @@ class DatePresetView(InteractionDebugView):
         selected_day_values: list[str] | None = None,
         selected_mode: str | None = None,
         excluded_day_values: set[str] | None = None,
+        schedule_summary: str = "",
     ):
         super().__init__()
         self.month = month
@@ -797,6 +809,7 @@ class DatePresetView(InteractionDebugView):
         ]
         self.day_values = self._sort_day_values(selected_day_values or [])
         self.mode = selected_mode
+        self.schedule_summary = schedule_summary
         if self.current_day_options:
             self.add_item(DaySelect(self))
         self.add_item(
@@ -863,7 +876,8 @@ class DatePresetView(InteractionDebugView):
         )
         selected_hint = time_collection.availability_page_hint(len(self.day_values), self.mode)
         selected_text = f"已選：{selected_days}" if selected_days else "尚未選日期"
-        return (
+        persistent_context = f"{self.schedule_summary}\n" if self.schedule_summary else ""
+        return persistent_context + (
             f"請勾選要套用同一時段的日期。\n"
             f"日期頁：**{self.page_index + 1}/{page_count}**｜本頁：{page_range}\n"
             f"{selected_text}（共 {len(self.day_values)} 天）。{selected_hint}\n"
@@ -881,6 +895,7 @@ class DatePresetView(InteractionDebugView):
             selected_day_values=self.day_values,
             selected_mode=self.mode,
             excluded_day_values=self.excluded_day_values,
+            schedule_summary=self.schedule_summary,
         )
 
     async def previous_page(self, interaction: discord.Interaction):
@@ -919,6 +934,7 @@ class PoolContinueView(InteractionDebugView):
         nature_code: str,
         week_values: list[str] | None = None,
         excluded_day_values: set[str] | None = None,
+        schedule_summary: str = "",
     ):
         super().__init__()
         self.month = month
@@ -926,6 +942,7 @@ class PoolContinueView(InteractionDebugView):
         self.nature_code = nature_code
         self.week_values = week_values
         self.excluded_day_values = set(excluded_day_values or set())
+        self.schedule_summary = schedule_summary
 
     @discord.ui.button(label="繼續選下一組日期", style=discord.ButtonStyle.primary, emoji="➕")
     async def continue_selecting(self, interaction: discord.Interaction, _: discord.ui.Button):
@@ -947,6 +964,7 @@ class PoolContinueView(InteractionDebugView):
                 self.week_values,
                 self.nature_code,
                 excluded_day_values=self.excluded_day_values,
+                schedule_summary=self.schedule_summary,
             )
             await interaction.response.edit_message(
                 content=view.prompt(),
@@ -960,6 +978,7 @@ class PoolContinueView(InteractionDebugView):
                 self.deadline_ts,
                 [week.value for week in time_collection.month_week_options(self.month)],
                 self.nature_code,
+                schedule_summary=self.schedule_summary,
             ),
         )
 
@@ -1012,9 +1031,12 @@ class PoolAvailabilityButton(
         return cls(match["month"], int(match["deadline_ts"]), nature_code)
 
     async def callback(self, interaction: discord.Interaction):
+        # 先確認 Discord interaction，再查 Notion 的藝人與既定安排，
+        # 避免外部查詢較慢時按鈕被判定為未及時回應。
+        await interaction.response.defer(ephemeral=True, thinking=True)
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if artist is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
                 ephemeral=True,
             )
@@ -1027,7 +1049,7 @@ class PoolAvailabilityButton(
         except Exception:
             logger.exception("讀取藝人既定安排摘要失敗")
             schedule_summary = "⚠️ 目前讀不到既定安排，請先照可用時間填寫；送出時 Bot 會再檢查。\n"
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"回報 **{self.month} 可配合時間**。\n"
             + schedule_summary
             + "直接勾選日期；日期會分頁，可按下一頁繼續選。\n\n"
@@ -1037,6 +1059,7 @@ class PoolAvailabilityButton(
                 self.deadline_ts,
                 [week.value for week in time_collection.month_week_options(self.month)],
                 self.nature_code,
+                schedule_summary=schedule_summary,
             ),
             ephemeral=True,
         )
@@ -1181,6 +1204,7 @@ class SchedulingArtistCog(commands.Cog):
                 deadline_ts,
                 [week.value for week in time_collection.month_week_options(normalized_month)],
                 time_collection.DEFAULT_COLLECTION_NATURE,
+                schedule_summary=schedule_summary,
             ),
             ephemeral=True,
         )
