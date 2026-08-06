@@ -12,7 +12,7 @@ def child_labels(view):
 
 
 class TestDatePresetView:
-    def test_month_dates_are_shown_as_seven_day_select_pages(self):
+    def test_month_dates_are_shown_as_discord_sized_select_pages(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
         view = DatePresetView(
             "2026-08",
@@ -22,10 +22,10 @@ class TestDatePresetView:
         )
 
         assert len(view.all_day_values) == 31
-        assert [len(page) for page in view.day_pages] == [7, 7, 7, 7, 3]
+        assert [len(page) for page in view.day_pages] == [25, 6]
         selects = [child for child in view.children if isinstance(child, discord.ui.Select)]
         assert len(selects) == 1
-        assert selects[0].max_values == 7
+        assert selects[0].max_values == 25
         assert [option.label for option in selects[0].options][:2] == ["8/1（週六）", "8/2（週日）"]
         labels = child_labels(view)
         assert "下一頁" in labels
@@ -41,16 +41,19 @@ class TestDatePresetView:
             deadline_ts=1785600000,
             week_values=week_values,
             nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
-            page_index=4,
+            page_index=1,
         )
 
         selects = [child for child in view.children if isinstance(child, discord.ui.Select)]
         assert [option.label for option in selects[0].options] == [
+            "8/26（週三）",
+            "8/27（週四）",
+            "8/28（週五）",
             "8/29（週六）",
             "8/30（週日）",
             "8/31（週一）",
         ]
-        assert "日期頁：**5/5**" in view.prompt()
+        assert "日期頁：**2/2**" in view.prompt()
 
     def test_selected_days_persist_across_date_pages(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]

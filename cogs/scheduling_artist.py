@@ -429,77 +429,6 @@ class PoolAfterSubmitView(InteractionDebugView):
         )
 
 
-class WeekSelect(discord.ui.Select):
-    def __init__(
-        self,
-        month: str,
-        deadline_ts: int,
-        nature_code: str,
-    ):
-        self.month = month
-        self.deadline_ts = deadline_ts
-        self.nature_code = nature_code
-        self.week_options = time_collection.month_week_options(month)
-        options = [
-            discord.SelectOption(label=week.label, value=week.value)
-            for week in self.week_options
-        ]
-        super().__init__(
-            placeholder="先選週次（可多選）…",
-            min_values=1,
-            max_values=len(options),
-            options=options,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        day_options = time_collection.week_values_day_options(list(self.values))
-        week_label_by_value = {week.value: week.label for week in self.week_options}
-        selected_week_labels = "、".join(week_label_by_value[value] for value in self.values)
-        if not day_options:
-            await interaction.response.edit_message(
-                content=(
-                    f"已選週次：**{selected_week_labels}**\n"
-                    "這些週次沒有可選日期，請改選其他週次。"
-                ),
-                view=WeekSelectView(self.month, self.deadline_ts, self.nature_code),
-            )
-            return
-        view = DatePresetView(
-            self.month,
-            self.deadline_ts,
-            list(self.values),
-            self.nature_code,
-        )
-        await interaction.response.edit_message(
-            content=(
-                f"已選週次：**{selected_week_labels}**\n"
-                f"可回報 **{len(day_options)} 天**。\n"
-                f"{view.prompt()}"
-            ),
-            view=view,
-        )
-
-
-class WeekSelectView(InteractionDebugView):
-    def __init__(
-        self,
-        month: str,
-        deadline_ts: int,
-        nature_code: str,
-    ):
-        super().__init__()
-        self.month = month
-        self.deadline_ts = deadline_ts
-        self.nature_code = nature_code
-        self.add_item(WeekSelect(month, deadline_ts, nature_code))
-
-    @discord.ui.button(label="自訂時間 / 備註", style=discord.ButtonStyle.secondary, emoji="✏️")
-    async def custom_time(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.send_modal(
-            PoolAvailabilityModal(self.month, self.deadline_ts, self.nature_code)
-        )
-
-
 class DaySelect(discord.ui.Select):
     def __init__(self, parent_view: "DatePresetView"):
         self.parent_view = parent_view
@@ -759,8 +688,11 @@ class DatePresetView(InteractionDebugView):
         self.deadline_ts = deadline_ts
         self.week_values = week_values
         self.nature_code = nature_code
-        # 正常流程 week_values 必非空；每頁 7 天，避免 Discord Select 25 個選項上限造成誤導。
-        self.day_pages = time_collection.day_option_pages(week_values, page_size=7) or [[]]
+        # Discord Select 最多 25 個選項；整個月份仍需完整顯示，因此用 25 天分頁。
+        self.day_pages = time_collection.day_option_pages(
+            week_values,
+            page_size=time_collection.DISCORD_SELECT_OPTION_LIMIT,
+        ) or [[]]
         self.page_index = max(0, min(page_index, len(self.day_pages) - 1))
         self.current_day_options = self.day_pages[self.page_index]
         self.all_day_values = [
@@ -851,11 +783,11 @@ class DatePresetView(InteractionDebugView):
             view=view,
         )
 
-    @discord.ui.button(label="改選週次", style=discord.ButtonStyle.secondary, emoji="↩️", row=4)
+    @discord.ui.button(label="重新選日期", style=discord.ButtonStyle.secondary, emoji="↩️", row=4)
     async def back(self, interaction: discord.Interaction, _: discord.ui.Button):
         await interaction.response.edit_message(
-            content=f"請先選擇 **{self.month}** 要填寫的週次：",
-            view=WeekSelectView(self.month, self.deadline_ts, self.nature_code),
+            content=self.prompt(),
+            view=self.page_view(0),
         )
 
     @discord.ui.button(label="自訂時間 / 備註", style=discord.ButtonStyle.secondary, emoji="✏️", row=4)
@@ -894,8 +826,13 @@ class PoolContinueView(InteractionDebugView):
             )
             return
         await interaction.response.edit_message(
-            content=f"請選擇 **{self.month}** 下一批要填寫的週次：",
-            view=WeekSelectView(self.month, self.deadline_ts, self.nature_code),
+            content=f"請繼續選擇 **{self.month}** 下一批日期：",
+            view=DatePresetView(
+                self.month,
+                self.deadline_ts,
+                [week.value for week in time_collection.month_week_options(self.month)],
+                self.nature_code,
+            ),
         )
 
     @discord.ui.button(label="自訂時間 / 備註", style=discord.ButtonStyle.secondary, emoji="✏️")
@@ -956,9 +893,14 @@ class PoolAvailabilityButton(
             return
         await interaction.response.send_message(
             f"回報 **{self.month} 可配合時間**。\n"
-            "先選週次，再勾同一批日期套用同一段時間；送出時會自動檢查已安排任務，若有衝突只排除衝突時段。\n\n"
+            "直接勾選日期；每頁最多顯示 25 天，可按下一頁繼續選。送出時會自動檢查已安排任務，若有衝突只排除衝突時段。\n\n"
             f"{time_collection.availability_selection_sop()}",
-            view=WeekSelectView(self.month, self.deadline_ts, self.nature_code),
+            view=DatePresetView(
+                self.month,
+                self.deadline_ts,
+                [week.value for week in time_collection.month_week_options(self.month)],
+                self.nature_code,
+            ),
             ephemeral=True,
         )
 
@@ -1088,9 +1030,10 @@ class SchedulingArtistCog(commands.Cog):
             f"補填 **{normalized_month} 可配合時間**。\n"
             "不用找舊公告；如果要修改已填資料，請先用 `/我的時段` 刪除錯的時段，再從這裡重填。\n\n"
             f"{time_collection.availability_selection_sop()}",
-            view=WeekSelectView(
+            view=DatePresetView(
                 normalized_month,
                 deadline_ts,
+                [week.value for week in time_collection.month_week_options(normalized_month)],
                 time_collection.DEFAULT_COLLECTION_NATURE,
             ),
             ephemeral=True,
