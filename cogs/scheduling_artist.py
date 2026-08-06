@@ -594,6 +594,7 @@ class ModeTimeModal(discord.ui.Modal):
         week_values: list[str],
         day_values: list[str],
         mode: str,
+        excluded_day_values: set[str] | None = None,
     ):
         super().__init__(title="補充可用時間")
         self.month = month
@@ -602,6 +603,7 @@ class ModeTimeModal(discord.ui.Modal):
         self.week_values = week_values
         self.day_values = day_values
         self.mode = mode
+        self.excluded_day_values = set(excluded_day_values or set())
         self.start_input: discord.ui.TextInput | None = None
         self.end_input: discord.ui.TextInput | None = None
         if mode in {"after", "specific"}:
@@ -630,6 +632,7 @@ class ModeTimeModal(discord.ui.Modal):
             self.mode,
             start_text=self.start_input.value if self.start_input else "",
             end_text=self.end_input.value if self.end_input else "",
+            excluded_day_values=self.excluded_day_values,
         )
 
 
@@ -664,6 +667,7 @@ class ApplyModeButton(discord.ui.Button):
                 self.parent_view.week_values,
                 self.parent_view.day_values,
                 self.mode,
+                excluded_day_values=self.parent_view.excluded_day_values,
             )
             return
         await interaction.response.send_modal(
@@ -674,6 +678,7 @@ class ApplyModeButton(discord.ui.Button):
                 self.parent_view.week_values,
                 self.parent_view.day_values,
                 self.mode,
+                excluded_day_values=self.parent_view.excluded_day_values,
             )
         )
 
@@ -936,7 +941,7 @@ class PoolAvailabilityButton(
             return
         await interaction.response.send_message(
             f"回報 **{self.month} 可配合時間**。\n"
-            "直接勾選日期；每頁最多顯示 25 天，可按下一頁繼續選。\n\n"
+            "直接勾選日期；日期會分頁，可按下一頁繼續選。\n\n"
             f"{time_collection.availability_selection_sop()}",
             view=DatePresetView(
                 self.month,
