@@ -599,6 +599,14 @@ async def get_teacher_options() -> list[tuple[str, str]]:
     return sorted({option for option in options if option[1]}, key=lambda option: option[1])
 
 
+async def get_task_type_options() -> list[str]:
+    """讀取 Tasks 的「任務類型」select 選項，避免把租戶分類寫死在 Bot。"""
+    schema = await notion_api.retrieve_data_source(config.DS_TASKS)
+    property_schema = schema.get("properties", {}).get("任務類型", {})
+    options = property_schema.get("select", {}).get("options", [])
+    return [option["name"].strip() for option in options if option.get("name", "").strip()]
+
+
 @dataclass(frozen=True)
 class PersonItem:
     page_id: str
@@ -1232,6 +1240,35 @@ async def acknowledge_task(
         return False
 
 
+async def record_task_response(
+    page_id: str,
+    responded_at: datetime | None = None,
+) -> bool:
+    """記錄藝人已回應任務；不改變任務狀態，供有問題回饋使用。"""
+    responded_at = responded_at or datetime.now(config.TZ)
+    try:
+        await notion_api.update_page(page_id, {"Discord 收到時間": _date(responded_at)})
+        return True
+    except NotionAPIError as exc:
+        if "Discord 收到時間" not in str(exc):
+            raise
+        return False
+
+
+async def append_task_feedback(page_id: str, entry: str) -> TaskItem:
+    """將藝人回饋追加到既有的 Task 任務說明，不新增 Notion 欄位。"""
+    task = await get_task(page_id)
+    if task is None:
+        raise ValueError(f"Task not found: {page_id}")
+    description = f"{task.description.strip()}\n\n{entry.strip()}".strip()
+    await notion_api.update_page(page_id, {"任務說明": _rich_text(description)})
+    return await get_task(page_id) or task
+
+
+# Backward-compatible alias for internal callers and older integrations.
+append_task_note = append_task_feedback
+
+
 def _build_formal_arrangement_task_props(
     name: str,
     task_type: str,
@@ -1296,8 +1333,20 @@ async def create_formal_arrangement_task(
 
 
 def is_publishable_formal_task(task: TaskItem) -> bool:
-    """正式通告候選必須是未結案、具精準時間的硬性安排。"""
-    return bool(task.artist_page_ids) and classify_task_time_impact(task) == "busy"
+    """正式通告候選必須是未結案、具精準時間且已關聯藝人的 Task。
+
+    任務類型由租戶的 Tasks schema 決定；拍攝、行政或其他自訂分類也可能
+    是控方要發布的正式通告，因此這裡不再硬編碼只接受硬性佔用類型。
+    """
+    return bool(
+        task.artist_page_ids
+        and _is_active_task(task)
+        and task.start
+        and task.end
+        and task.start_has_time
+        and task.end_has_time
+        and task.end > task.start
+    )
 
 
 def task_description_field(description: str, *field_names: str) -> str:

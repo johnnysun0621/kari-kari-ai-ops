@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class RemindersCog(commands.Cog):
-    TASK_ACK_REMINDER_HOURS = 6
+    TASK_ACK_REMINDER_HOURS = 2
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -143,7 +143,7 @@ class RemindersCog(commands.Cog):
                     await admin_channel.send(
                         f"✅ **{collection.month} 月度時間池已收齊**\n"
                         f"已填藝人：{names}\n"
-                        f"可以開始使用 `/任務建立與安排 月份:{collection.month} 時長分鐘:60` 查看共同空檔。"
+                        f"可以開始使用 `/從時間池建立任務 月份:{collection.month} 時長分鐘:60` 查看共同空檔。"
                     )
                 # 終態：之後不再對這個收集做每輪查詢
                 time_collection.deregister_collection(collection.month, collection.deadline_ts)
@@ -238,8 +238,9 @@ class RemindersCog(commands.Cog):
                 try:
                     user = await self.bot.fetch_user(int(artist.discord_user_id))
                     view = discord.ui.View(timeout=None)
-                    from cogs.tasks_artist import TaskReceiptButton
+                    from cogs.tasks_artist import TaskConcernButton, TaskReceiptButton
                     view.add_item(TaskReceiptButton(task.page_id))
+                    view.add_item(TaskConcernButton(task.page_id))
                     if task.url:
                         view.add_item(
                             discord.ui.Button(
@@ -281,7 +282,7 @@ class RemindersCog(commands.Cog):
                 )
 
     async def _check_unacknowledged_task_notifications(self):
-        """每 6 小時掃描一次，重新推送所有尚未確認的任務。"""
+        """每 2 小時掃描一次，重新推送所有尚未確認的任務。"""
         now = datetime.now(config.get_tenant().tz)
         if not task_notifications.should_run_acknowledgement_scan(
             self._last_unacknowledged_scan_at,
@@ -315,10 +316,11 @@ class RemindersCog(commands.Cog):
             try:
                 user = await self.bot.fetch_user(int(artist.discord_user_id))
                 await user.send(task_notifications.acknowledgement_reminder_message(artist_tasks))
-                from cogs.tasks_artist import TaskReceiptButton
+                from cogs.tasks_artist import TaskConcernButton, TaskReceiptButton
                 for task in artist_tasks:
                     view = discord.ui.View(timeout=None)
                     view.add_item(TaskReceiptButton(task.page_id))
+                    view.add_item(TaskConcernButton(task.page_id))
                     if task.url:
                         view.add_item(
                             discord.ui.Button(

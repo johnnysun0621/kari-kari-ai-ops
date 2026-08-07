@@ -83,6 +83,93 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
             content += f"\n\n📄 查看完整任務：{task.url}"
         await interaction.followup.send(content, ephemeral=True)
 
+
+class TaskConcernButton(discord.ui.DynamicItem[discord.ui.Button], template=r"task_concern:(?P<task_id>[\w-]+)"):
+    """任務通知中的持久化問題／無法配合按鈕。"""
+
+    def __init__(self, task_id: str):
+        super().__init__(
+            discord.ui.Button(
+                label="有問題／無法配合",
+                style=discord.ButtonStyle.secondary,
+                emoji="💬",
+                custom_id=f"task_concern:{task_id}",
+            )
+        )
+        self.task_id = task_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match.group("task_id"))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(TaskConcernModal(self.task_id))
+
+
+class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
+    def __init__(self, task_id: str):
+        super().__init__()
+        self.task_id = task_id
+        self.reason = discord.ui.TextInput(
+            label="請說明原因或需要調整的地方",
+            placeholder="例如：時間無法配合、任務內容不清楚、需要改提交方式…",
+            style=discord.TextStyle.paragraph,
+            max_length=1000,
+        )
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        task = await repositories.get_task(self.task_id)
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if task is None or artist is None or artist.page_id not in task.artist_page_ids:
+            await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
+            return
+        reason = self.reason.value.strip()
+        if not reason:
+            await interaction.followup.send("❌ 請填寫原因或需要調整的地方。", ephemeral=True)
+            return
+        now = datetime.now(config.get_tenant().tz)
+        entry = (
+            f"【Discord 任務回饋｜{now:%Y-%m-%d %H:%M}】\n"
+            f"藝人：{artist.name}\n"
+            f"回饋：{reason}"
+        )
+        try:
+            # 先保存回饋，再記錄已回應；避免前者失敗時錯誤停止未確認提醒。
+            await repositories.append_task_feedback(self.task_id, entry)
+            await audit.log_event(
+                event_name=f"藝人回報任務問題｜{task.name}",
+                action_type="更新",
+                operator=artist.name,
+                discord_user_id=str(interaction.user.id),
+                target_db="Tasks",
+                target_url=task.url,
+                after=reason,
+            )
+        except Exception:
+            logger.exception("任務問題回饋寫入失敗：%s", self.task_id)
+            await interaction.followup.send("❌ 回饋寫入失敗，請稍後再試。", ephemeral=True)
+            return
+
+        admin_channel = (
+            interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+            or interaction.client.get_channel(config.TASK_CHANNEL_ID)
+        )
+        if admin_channel:
+            link = f"\n🔗 [開啟 Notion Task]({task.url})" if task.url else ""
+            await admin_channel.send(
+                f"⚠️ **藝人回報任務問題**\n"
+                f"任務：**{task.name}**\n"
+                f"藝人：{artist.name}\n"
+                f"回饋：{reason}{link}"
+            )
+        await interaction.followup.send(
+            "✅ 已把你的回饋寫入任務說明，控方已收到通知；這項任務仍會保留在重送清單。\n"
+            "控方調整任務後會再通知你。",
+            ephemeral=True,
+        )
+
 # 顯示順序：藝人要行動的在前，資訊性的在後
 SECTION_ORDER = [
     ("overdue", "🔴 已逾期"),
@@ -235,7 +322,7 @@ class TasksCog(commands.Cog):
         try:
             tasks = [
                 task for task in await repositories.get_active_tasks()
-                if task.discord_visible
+                if task_notifications.is_resendable_task(task)
             ]
         except Exception:
             logger.exception("讀取可重送任務失敗")

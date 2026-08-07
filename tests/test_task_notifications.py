@@ -11,6 +11,7 @@ def make_task(
     submit_method: str | None = "檔案",
     end: datetime | None = None,
     discord_notified_at: datetime | None = None,
+    discord_acknowledged_at: datetime | None = None,
 ) -> repositories.TaskItem:
     return repositories.TaskItem(
         page_id=page_id,
@@ -23,6 +24,7 @@ def make_task(
         artist_page_ids=["artist-1"],
         discord_visible=True,
         discord_notified_at=discord_notified_at,
+        discord_acknowledged_at=discord_acknowledged_at,
     )
 
 
@@ -49,8 +51,21 @@ def test_acknowledgement_reminder_lists_each_unconfirmed_task():
     assert "重新送出任務通知" in message
 
 
-def test_acknowledgement_scan_runs_on_fixed_six_hour_interval():
-    now = datetime(2026, 8, 2, 18, 0, tzinfo=config.TZ)
+def test_resend_list_excludes_received_tasks_but_keeps_unconfirmed_tasks():
+    pending = make_task(page_id="pending")
+    concern = make_task(page_id="concern")
+    received = make_task(
+        page_id="received",
+        discord_acknowledged_at=datetime(2026, 8, 2, 12, 0, tzinfo=config.TZ),
+    )
+
+    assert task_notifications.is_resendable_task(pending)
+    assert task_notifications.is_resendable_task(concern)
+    assert not task_notifications.is_resendable_task(received)
+
+
+def test_acknowledgement_scan_runs_on_fixed_two_hour_interval():
+    now = datetime(2026, 8, 2, 14, 0, tzinfo=config.TZ)
 
     assert not task_notifications.should_run_acknowledgement_scan(
         datetime(2026, 8, 2, 12, 1, tzinfo=config.TZ), now

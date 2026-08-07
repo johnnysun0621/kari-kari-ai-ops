@@ -1,7 +1,7 @@
 """管理者端：月度時間收集與 Task 版正式安排。"""
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import discord
 from discord import app_commands
@@ -10,14 +10,13 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, ui_text
 from cogs.scheduling_artist import make_pool_availability_view
-from services import arrangement, audit, formal_notice, overlap, repositories, scheduling_flow, scheduling_sla, teacher_confirm, time_collection, timeparse
+from services import audit, formal_notice, overlap, repositories, scheduling_flow, scheduling_sla, teacher_confirm, time_collection, timeparse
 from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
 
 AVAILABILITY_CLEANUP_PREVIEW_LIMIT = 20
-MONTHLY_POOL_RESULT_LIMIT = 10
-MONTHLY_POOL_START_TIME_LIMIT = 14
+MONTHLY_POOL_CANDIDATE_LIMIT = 25
 
 
 def _admin_slot_line(slot: repositories.AvailabilitySlot) -> str:
@@ -34,14 +33,40 @@ def _pool_window_text(start: datetime, end: datetime) -> str:
     return f"{start.month}/{start.day} {start:%H:%M}-{end.month}/{end.day} {end:%H:%M}"
 
 
-def _format_start_times(starts: list[datetime]) -> str:
-    if not starts:
-        return "無"
-    labels = [start.strftime("%H:%M") for start in starts]
-    if len(labels) <= MONTHLY_POOL_START_TIME_LIMIT:
-        return "、".join(labels)
-    shown = "、".join(labels[:MONTHLY_POOL_START_TIME_LIMIT])
-    return f"{shown}、...（共 {len(labels)} 個）"
+def _duration_candidates(
+    windows: list[overlap.Interval],
+    duration_minutes: int,
+    limit: int = MONTHLY_POOL_CANDIDATE_LIMIT,
+) -> list[overlap.Interval]:
+    """把寬的共同空檔切成實際需求時長的候選時段。"""
+    candidates: list[overlap.Interval] = []
+    seen: set[tuple[datetime, datetime]] = set()
+    for start, end in windows:
+        for candidate_start in repositories.candidate_start_times(start, end, duration_minutes):
+            candidate_end = candidate_start + timedelta(minutes=duration_minutes)
+            key = (candidate_start, candidate_end)
+            if key not in seen:
+                seen.add(key)
+                candidates.append(key)
+                if len(candidates) >= limit:
+                    return candidates
+    return candidates
+
+
+def _format_candidate_groups(candidates: list[overlap.Interval]) -> list[str]:
+    """依日期分組候選時段，讓 Discord 訊息保持短而容易掃讀。"""
+    weekday_names = ("一", "二", "三", "四", "五", "六", "日")
+    grouped: dict[date, list[str]] = {}
+    for start, end in candidates:
+        grouped.setdefault(start.date(), []).append(f"{start:%H:%M}–{end:%H:%M}")
+
+    lines: list[str] = []
+    for candidate_date, times in grouped.items():
+        weekday = weekday_names[candidate_date.weekday()]
+        lines.append(f"**{candidate_date.month}/{candidate_date.day}（週{weekday}）**")
+        for index in range(0, len(times), 3):
+            lines.append("　" + "　".join(times[index:index + 3]))
+    return lines
 
 
 def _monthly_pool_result_text(
@@ -70,17 +95,16 @@ def _monthly_pool_result_text(
             lines.append("可以改選較少藝人、縮短需要時長，或請藝人補填更多時段。")
         return ui_text.trim_message("\n".join(lines))
 
+    candidates = _duration_candidates(result.windows, duration_minutes)
     lines.append("")
-    lines.append("共同空檔：")
-    for index, (start, end) in enumerate(result.windows[:MONTHLY_POOL_RESULT_LIMIT], start=1):
-        window_minutes = int((end - start).total_seconds() // 60)
-        starts = repositories.candidate_start_times(start, end, duration_minutes)
-        lines.append(
-            f"`{index}.` {_pool_window_text(start, end)}｜可排 {repositories.format_duration_hours(window_minutes)}\n"
-            f"　可開始：{_format_start_times(starts)}"
-        )
-    if len(result.windows) > MONTHLY_POOL_RESULT_LIMIT:
-        lines.append(f"另有 {len(result.windows) - MONTHLY_POOL_RESULT_LIMIT} 個共同空檔未顯示。")
+    lines.append(f"符合 {repositories.format_duration_hours(duration_minutes)} 的候選時段：")
+    lines.extend(_format_candidate_groups(candidates))
+    total_candidates = sum(
+        len(repositories.candidate_start_times(start, end, duration_minutes))
+        for start, end in result.windows
+    )
+    if total_candidates > len(candidates):
+        lines.append(f"另有 {total_candidates - len(candidates)} 個候選時段未顯示。")
     lines.append("")
     lines.append("這裡只列候選，不會建立 Notion Project / Task。正式安排請由營運判斷後建立。")
     return ui_text.trim_message("\n".join(lines))
@@ -188,7 +212,7 @@ class AvailabilityCleanupPreviewView(discord.ui.View):
 
 
 class MonthlyPoolArtistSelectView(discord.ui.View):
-    """/任務建立與安排 的第二步：手動選擇要比對共同空檔的藝人。"""
+    """/從時間池建立任務 的第二步：手動選擇要比對共同空檔的藝人。"""
 
     def __init__(
         self,
@@ -266,10 +290,10 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
         result_text = _monthly_pool_result_text(self.month, self.duration_minutes, chosen, result)
         if result.windows:
             await interaction.followup.send(
-                result_text + "\n\n⬇️ 先勾選要安排的候選時段，再選擇安排類型：",
+            result_text + "\n\n⬇️ 先勾選要安排的候選時段，再選擇安排類型：",
                 view=MonthlyPoolCandidateSelectView(
                     self.month, self.duration_minutes, chosen,
-                    result.windows[:25], self.operator,
+                    _duration_candidates(result.windows, self.duration_minutes), self.operator,
                 ),
                 ephemeral=True,
             )
@@ -279,7 +303,7 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
 
 
 class MonthlyPoolCandidateSelectView(discord.ui.View):
-    """時間池比對結果：先勾選候選，再決定正式安排類型。"""
+    """時間池比對結果：先勾選候選，再直接選 Notion 任務類型。"""
 
     def __init__(
         self,
@@ -321,77 +345,29 @@ class MonthlyPoolCandidateSelectView(discord.ui.View):
         chosen = [self.windows[int(v)] for v in sorted(self.select.values, key=int)]
         scheduling_sla.mark_pool_matched(self.month, int(time.time()))
         lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in chosen)
+        try:
+            task_types = await repositories.get_task_type_options()
+        except Exception:
+            logger.exception("讀取 Tasks 任務類型選項失敗")
+            await interaction.followup.send(
+                "❌ 讀取 Notion Tasks 的任務類型失敗，請確認 Bot 有讀取 Tasks schema 的權限。",
+                ephemeral=True,
+            )
+            return
+        if not task_types:
+            await interaction.followup.send(
+                "❌ Notion Tasks 的「任務類型」目前沒有可用選項。",
+                ephemeral=True,
+            )
+            return
         await interaction.followup.send(
-            f"已選候選時段：\n{lines}\n\n⬇️ 請選擇這次要安排的類型：",
-            view=MonthlyPoolArrangementView(
-                self.month,
-                self.duration_minutes,
-                self.chosen_artists,
-                chosen,
-                interaction.user,
-                teacher="",
+            f"已選候選時段：\n{lines}\n\n⬇️ 請直接選擇 Notion 的任務類型：",
+            view=TaskTypeView(
+                self.month, self.duration_minutes, self.chosen_artists,
+                chosen, interaction.user, task_types,
             ),
             ephemeral=True,
         )
-        self.stop()
-
-
-class MonthlyPoolArrangementView(discord.ui.View):
-    """候選時段選定後的控方安排類型分流。"""
-
-    def __init__(
-        self,
-        month: str,
-        duration_minutes: int,
-        artists: list[repositories.Artist],
-        windows: list[overlap.Interval],
-        operator: discord.abc.User,
-        teacher: str = "",
-    ):
-        super().__init__(timeout=600)
-        self.month = month
-        self.duration_minutes = duration_minutes
-        self.chosen_artists = artists
-        self.windows = windows
-        self.operator_id = operator.id
-        self.teacher = teacher
-        self.select = discord.ui.Select(
-            placeholder="選擇安排類型…",
-            options=[
-                discord.SelectOption(label="課程", value="課程", description="建立確認單，請老師選時段"),
-                discord.SelectOption(label="錄音", value="錄音", description="先建立不通知藝人的 Task 草稿"),
-                discord.SelectOption(label="通告", value="通告", description="先建立不通知藝人的 Task 草稿"),
-                discord.SelectOption(label="其他", value="其他", description="先建立不通知藝人的 Task 草稿"),
-            ],
-        )
-        self.select.callback = self.on_select
-        self.add_item(self.select)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.operator_id:
-            return True
-        await interaction.response.send_message("❌ 這個選單只能由原本執行比對的人操作。", ephemeral=True)
-        return False
-
-    async def on_select(self, interaction: discord.Interaction):
-        arrangement_type = self.select.values[0]
-        if arrangement_type == "課程":
-            await interaction.response.send_message(
-                content="請選擇具體課程類型：",
-                view=CourseTypeView(
-                    self.month, self.duration_minutes, self.chosen_artists,
-                    self.windows, interaction.user,
-                ), ephemeral=True,
-            )
-        else:
-            await interaction.response.send_message(
-                content=f"請選擇 **{arrangement_type}** 要寫入 Task 草稿的候選時段：",
-                view=DirectArrangementCandidateView(
-                    arrangement_type, self.month, self.duration_minutes,
-                    self.chosen_artists, self.windows, interaction.user,
-                ),
-                ephemeral=True,
-            )
         self.stop()
 
 
@@ -562,7 +538,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
         names = "、".join(a.name for a in self.artists)
         candidates_text = "\n".join(timeparse.format_candidate(s, e) for s, e in teacher_windows)
         description = (
-            f"安排來源：/任務建立與安排\n"
+            f"安排來源：/從時間池建立任務\n"
             f"課程類別：{self.course_type}\n"
             f"負責老師：{self.teacher_name}\n"
             f"需要時長：{repositories.format_duration_hours(self.duration_minutes)}\n"
@@ -579,6 +555,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
                 course_category=self.course_type,
                 teacher_page_ids=[self.teacher_page_id],
                 project_page_ids=[self.project_page_id],
+                discord_visible=False,
             )
         except Exception:
             logger.exception("建立課程 Task 失敗")
@@ -621,18 +598,65 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
             f"✅ 已建立課程 Task「**{request_name}**」。\n"
             f"課程類別：{self.course_type}｜老師：{self.teacher_name}\n"
             f"候選時段：\n{lines}\n\n"
-            "請到 Notion 的 Task 頁面最後確認正式開始／結束時間；課程作業也在同一筆 Task 管理。"
+            "目前不會通知藝人；請到 Notion 的 Task 頁面填正式開始／結束時間，之後使用 `/正式通告發布`。課程作業也在同一筆 Task 管理。"
             f"{teacher_link}",
             ephemeral=True,
         )
 
 
+class TaskTypeView(discord.ui.View):
+    """直接從 Notion Tasks schema 選擇正式任務類型。"""
+
+    def __init__(self, month, duration_minutes, artists, windows, operator, task_types):
+        super().__init__(timeout=600)
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.artists = artists
+        self.windows = windows
+        self.operator_id = operator.id
+        self.select = discord.ui.Select(
+            placeholder="選擇 Notion 任務類型…",
+            options=[discord.SelectOption(label=task_type[:100], value=task_type) for task_type in task_types[:25]],
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個選單只能由原本執行比對的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction):
+        task_type = self.select.values[0]
+        if task_type == "課程與作業":
+            await interaction.response.send_message(
+                content="請選擇具體課程類型：",
+                view=CourseTypeView(
+                    self.month, self.duration_minutes, self.artists,
+                    self.windows, interaction.user,
+                ), ephemeral=True,
+            )
+            self.stop()
+            return
+        await interaction.response.send_message(
+            content=f"請選擇 **{task_type}** 要定案的候選時段：",
+            view=DirectArrangementCandidateView(
+                task_type, task_type, self.month, self.duration_minutes,
+                self.artists, self.windows, interaction.user,
+            ),
+            ephemeral=True,
+        )
+        self.stop()
+
+
 class DirectArrangementCandidateView(discord.ui.View):
     """非課程分流：由控方選候選窗後建立尚未發布的 Task 草稿。"""
 
-    def __init__(self, arrangement_type, month, duration_minutes, artists, windows, operator):
+    def __init__(self, arrangement_type, task_type, month, duration_minutes, artists, windows, operator):
         super().__init__(timeout=600)
         self.arrangement_type = arrangement_type
+        self.task_type = task_type
         self.month = month
         self.duration_minutes = duration_minutes
         self.artists = artists
@@ -658,7 +682,7 @@ class DirectArrangementCandidateView(discord.ui.View):
         window = self.windows[int(self.select.values[0])]
         await interaction.response.send_modal(
             DirectArrangementModal(
-                self.arrangement_type,
+                self.arrangement_type, self.task_type,
                 self.month,
                 self.duration_minutes,
                 self.artists,
@@ -669,9 +693,10 @@ class DirectArrangementCandidateView(discord.ui.View):
 
 
 class DirectArrangementModal(discord.ui.Modal, title="建立安排 Task 草稿"):
-    def __init__(self, arrangement_type, month, duration_minutes, artists, window):
+    def __init__(self, arrangement_type, task_type, month, duration_minutes, artists, window):
         super().__init__()
         self.arrangement_type = arrangement_type
+        self.task_type = task_type
         self.month = month
         self.duration_minutes = duration_minutes
         self.artists = artists
@@ -707,15 +732,16 @@ class DirectArrangementModal(discord.ui.Modal, title="建立安排 Task 草稿")
             return
         location = self.location_input.value.strip()
         description = (
-            f"安排來源：/任務建立與安排\n"
+            f"安排來源：/從時間池建立任務\n"
             f"安排類型：{self.arrangement_type}\n"
+            f"任務類型：{self.task_type}\n"
             f"地點／連結：{location or '待補'}\n"
             "此為控方草稿；補齊內容後使用 /正式通告發布。"
         )
         try:
             task = await repositories.create_formal_arrangement_task(
                 name=task_name,
-                task_type=arrangement.task_type_for_arrangement(self.arrangement_type) or "行政",
+                task_type=self.task_type,
                 artist_page_ids=[a.page_id for a in self.artists],
                 description=description,
                 start=start,
@@ -739,6 +765,8 @@ class DirectArrangementModal(discord.ui.Modal, title="建立安排 Task 草稿")
         await interaction.followup.send(
             f"✅ 已建立 **{self.arrangement_type}** Task 草稿，尚未通知藝人。\n"
             f"**{task.name}**｜{timeparse.humanize(start, end)}\n"
+            f"任務類型：{self.task_type}\n"
+            f"🔗 [開啟 Notion Task，補齊內容]({task.url})\n"
             "請先在 Notion 補齊任務內容，再使用 `/正式通告發布` 預覽並發布。",
             ephemeral=True,
         )
@@ -984,8 +1012,8 @@ class SchedulingAdminCog(commands.Cog):
             content=f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}"
         )
 
-    # ---------- /任務建立與安排 ----------
-    @app_commands.command(name="任務建立與安排", description="從月度時間池找共同空檔並建立安排")
+    # ---------- /從時間池建立任務 ----------
+    @app_commands.command(name="從時間池建立任務", description="從月度時間池找共同空檔並建立安排")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         月份="要比對的月份，例：2026-08",

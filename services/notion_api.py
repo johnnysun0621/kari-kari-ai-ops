@@ -126,6 +126,11 @@ async def retrieve_page(page_id: str) -> dict:
     return await _request("GET", f"/pages/{page_id}")
 
 
+async def retrieve_data_source(data_source_id: str) -> dict:
+    """讀取 data source schema，供 UI 取得租戶目前的 select 選項。"""
+    return await _request("GET", f"/data_sources/{data_source_id}")
+
+
 async def retrieve_block_children(block_id: str) -> list[dict]:
     """讀取 Notion page/block 內容，供布告欄同步顯示摘要。"""
     results: list[dict] = []

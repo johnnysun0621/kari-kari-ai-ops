@@ -20,11 +20,10 @@ def _task(**overrides):
     return repositories.TaskItem(**values)
 
 
-def test_publishable_task_requires_precise_hard_blocking_time():
+def test_publishable_task_requires_precise_time_and_artist():
     assert repositories.is_publishable_formal_task(_task())
-    assert not repositories.is_publishable_formal_task(
-        _task(task_type="行政")
-    )
+    assert repositories.is_publishable_formal_task(_task(task_type="拍攝"))
+    assert not repositories.is_publishable_formal_task(_task(artist_page_ids=[]))
     assert not repositories.is_publishable_formal_task(
         _task(start_has_time=False, end_has_time=False)
     )
@@ -37,7 +36,7 @@ def test_course_task_is_publishable_when_course_category_exists():
 
 
 def test_description_field_extracts_location():
-    description = "安排來源：/任務建立與安排\n地點／連結：https://example.com\n內容：錄音"
+    description = "安排來源：/從時間池建立任務\n地點／連結：https://example.com\n內容：錄音"
 
     assert repositories.task_description_field(
         description, "地點", "地點／連結"
@@ -64,6 +63,22 @@ def test_task_draft_writes_separate_start_end_and_stays_hidden():
     assert props["開始日"]["date"]["start"] == start.isoformat()
     assert "end" not in props["開始日"]["date"]
     assert props["截止日"]["date"]["start"] == end.isoformat()
+
+
+def test_course_task_draft_stays_hidden_until_formal_notice():
+    props = repositories._build_formal_arrangement_task_props(
+        name="八月歌唱課",
+        task_type="課程與作業",
+        artist_page_ids=["artist-1"],
+        description="候選時段",
+        course_category="歌唱課",
+        teacher_page_ids=["teacher-1"],
+        project_page_ids=["project-1"],
+        discord_visible=False,
+    )
+
+    assert props["Discord 顯示"]["checkbox"] is False
+    assert props["任務類型"]["select"]["name"] == "課程與作業"
 
 
 def test_formal_notice_state_prevents_duplicate_after_reload(tmp_path):

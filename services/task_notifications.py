@@ -42,10 +42,19 @@ def acknowledgement_reminder_message(tasks: list[TaskItem]) -> str:
     return "\n".join(lines)
 
 
+def is_resendable_task(task: TaskItem) -> bool:
+    """管理端重送清單：只列仍未按「收到任務」的可見任務。"""
+    return (
+        task.discord_visible
+        and task.discord_acknowledged_at is None
+        and task.status not in {"已完成", "已取消", "已封存"}
+    )
+
+
 def should_run_acknowledgement_scan(
     last_scan_at: datetime | None,
     now: datetime,
-    interval_hours: float = 6,
+    interval_hours: float = 2,
 ) -> bool:
     """判斷是否到了固定週期的未確認任務掃描時間。"""
     return last_scan_at is None or now - last_scan_at >= timedelta(hours=interval_hours)

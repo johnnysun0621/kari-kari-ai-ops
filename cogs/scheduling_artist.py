@@ -289,7 +289,7 @@ def pool_all_done_notice(month: str, artists: list[repositories.Artist]) -> str:
     return (
         f"✅ **{month} 月度時間池已收齊**\n"
         f"已填藝人：{names}\n"
-        f"可以開始使用 `/任務建立與安排 月份:{month} 時長分鐘:60` 查看共同空檔。"
+        f"可以開始使用 `/從時間池建立任務 月份:{month} 時長分鐘:60` 查看共同空檔。"
     )
 
 
