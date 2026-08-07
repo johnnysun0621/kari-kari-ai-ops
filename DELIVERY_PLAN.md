@@ -38,7 +38,7 @@
 - [x] 老師回傳批改檔：審核選結果後加「附批改檔」→ 復用 pending-attachment（10MB 同標準）→ 歸檔 `藝人專區/老師回饋/YYYY-MM/`（drive_archive 對應表加項）→ DM 藝人（回饋文字＋批改檔連結）；連結併入 Submissions `回饋` 文字（不動 schema）；>10MB 引導控方貼連結
 
 ### D2｜大檔 Drive 資料夾流（會議 #4，~1 天）
-- [x] 附件 >10MB 或任務提交方式=Drive 連結時，提供指定 Drive 資料夾與「我已上傳到 Drive」按鈕
+- [x] 附件 >10MB 或任務提交方式=Drive 連結時，提供指定 Drive 資料夾與「我已上傳到 Drive」按鈕；首次提交時自動回寫單一藝人 Task 的 `Google Drive Folder`，多人任務則把各藝人連結寫入任務說明索引
 - [x] find-or-create `專區/類型夾/YYYY-MM/`，回傳資料夾連結（專區已分享給藝人）
 - [x] 驗證按鈕只讀取入口建立後新增檔案，寫入 Submissions（資料夾、File ID、檔名、大小）並將任務轉待審核；驗不到時提示重試
 - [x] 審核管理補強：Tasks 支援 `審核人員`、`修改期限`；提交滿 24 小時未審核後，背景 loop 催辦指定審核人員與控方
