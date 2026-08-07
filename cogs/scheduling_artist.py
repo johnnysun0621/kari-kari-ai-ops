@@ -444,7 +444,7 @@ class PoolAvailabilityModal(discord.ui.Modal):
                 + "\n".join(duplicate_lines)
                 + _conflict_text(conflicts)
                 + _warning_text(warnings)
-                + "\n\n若要修改，請用 `/我的時段` 刪除後，再用 `/補填時間` 重新填寫。",
+                + "\n\n若要修改，請使用 `/管理可配合時間`。",
                 view=PoolAfterSubmitView(self.month, self.deadline_ts, self.nature_code),
                 ephemeral=True,
             )
@@ -637,7 +637,7 @@ async def _submit_pool_slots(
             + skipped_text
             + _conflict_text(conflicts)
             + _warning_text(warnings)
-            + "\n\n若要修改，請用 `/我的時段` 刪除後，再用 `/補填時間` 重新填寫。",
+                + "\n\n若要修改，請使用 `/管理可配合時間`。",
             view=PoolContinueView(
                 month,
                 deadline_ts,
@@ -881,7 +881,7 @@ class DatePresetView(InteractionDebugView):
             f"請勾選要套用同一時段的日期。\n"
             f"日期頁：**{self.page_index + 1}/{page_count}**｜本頁：{page_range}\n"
             f"{selected_text}（共 {len(self.day_values)} 天）。{selected_hint}\n"
-            "不同時段請分批選；同一天要填不同時段，請用 `/補填時間`。\n\n"
+            "不同時段請分批選；同一天要填不同時段，請用 `/管理可配合時間`。\n\n"
             f"{time_collection.availability_selection_sop()}"
         )
 
@@ -954,7 +954,7 @@ class PoolContinueView(InteractionDebugView):
             ]
             if set(all_day_values) <= self.excluded_day_values:
                 await interaction.response.edit_message(
-                    content="✅ 這個月份的日期都已填寫完成。若要補填或修改，請使用 `/補填時間`。",
+                    content="✅ 這個月份的日期都已填寫完成。若要補填或修改，請使用 `/管理可配合時間`。",
                     view=PoolAfterSubmitView(self.month, self.deadline_ts, self.nature_code),
                 )
                 return
@@ -1095,6 +1095,17 @@ def _slot_line(slot: repositories.AvailabilitySlot) -> str:
     return line
 
 
+def _management_slot_line(slot: repositories.AvailabilitySlot) -> str:
+    if not slot.start or not slot.end:
+        return slot.name or "（未命名時段）"
+    return time_collection.format_slot_summary(
+        slot.start,
+        slot.end,
+        slot.note,
+        include_nature=False,
+    )
+
+
 def _slot_delete_label(slot: repositories.AvailabilitySlot) -> str:
     if slot.start and slot.end:
         return time_collection.format_slot_summary(slot.start, slot.end, slot.note)[:100]
@@ -1157,30 +1168,129 @@ class MySlotsDeleteView(InteractionDebugView):
         await interaction.followup.send(
             "🗑️ 已刪除以下時段，Notion 端也會同步移除：\n"
             + "\n".join(f"・{label}" for label in labels)
-            + "\n\n可直接使用 `/補填時間` 重新填寫，不需要回去找舊公告。",
+            + "\n\n可直接使用 `/管理可配合時間` 重新填寫，不需要回去找舊公告。",
             ephemeral=True,
         )
+
+
+class ManageAvailabilityView(InteractionDebugView):
+    """單一入口：刪除既有時段，或直接進入同月份補填流程。"""
+
+    def __init__(
+        self,
+        month: str,
+        deadline_ts: int,
+        nature_code: str,
+        artist: repositories.Artist,
+        slots: list[repositories.AvailabilitySlot],
+        schedule_summary: str,
+    ):
+        super().__init__()
+        self.month = month
+        self.deadline_ts = deadline_ts
+        self.nature_code = nature_code
+        self.artist = artist
+        self.slot_by_id = {slot.page_id: slot for slot in slots[:25]}
+        self.schedule_summary = schedule_summary
+        if self.slot_by_id:
+            options = [
+                discord.SelectOption(
+                    label=_slot_delete_label(slot),
+                    value=slot.page_id,
+                    description="選取後可刪除，再重新填寫"[:100],
+                )
+                for slot in self.slot_by_id.values()
+            ]
+            self.select = discord.ui.Select(
+                placeholder="選擇要刪除的既有時段（可多選）…",
+                min_values=1,
+                max_values=min(25, len(options)),
+                options=options,
+            )
+            # 下拉選單本身也會觸發 Discord interaction；先確認選取，
+            # 等使用者按「刪除選取時段」才真正 archive Notion 資料。
+            self.select.callback = self.selection_changed
+            self.add_item(self.select)
+            delete_button = discord.ui.Button(
+                label="刪除選取時段",
+                style=discord.ButtonStyle.danger,
+                emoji="🗑️",
+            )
+            delete_button.callback = self.delete_selected
+            self.add_item(delete_button)
+        fill_button = discord.ui.Button(
+            label="新增／補填日期",
+            style=discord.ButtonStyle.success,
+            emoji="➕",
+        )
+        fill_button.callback = self.open_fill_flow
+        self.add_item(fill_button)
+
+    async def selection_changed(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+    async def delete_selected(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        page_ids = list(self.select.values)
+        labels = [
+            _slot_delete_label(self.slot_by_id[page_id])
+            for page_id in page_ids
+            if page_id in self.slot_by_id
+        ]
+        try:
+            for page_id in page_ids:
+                await repositories.archive_slot(page_id)
+            await audit.log_event(
+                event_name=f"刪除可用時段｜{self.artist.name}",
+                action_type="更新",
+                operator=self.artist.name,
+                discord_user_id=str(interaction.user.id),
+                target_db="Availability Slots",
+                before=f"{len(page_ids)} 筆",
+                after="（已刪除，等待重新填寫）",
+            )
+        except Exception:
+            logger.exception("管理入口刪除時段失敗")
+            await interaction.followup.send("❌ 刪除失敗，請稍後再試。", ephemeral=True)
+            return
+        await interaction.followup.send(
+            "🗑️ 已刪除以下時段；請按原訊息的「新增／補填日期」重新填寫：\n"
+            + "\n".join(f"・{label}" for label in labels),
+            ephemeral=True,
+        )
+
+    async def open_fill_flow(self, interaction: discord.Interaction):
+        view = DatePresetView(
+            self.month,
+            self.deadline_ts,
+            [week.value for week in time_collection.month_week_options(self.month)],
+            self.nature_code,
+            schedule_summary=self.schedule_summary,
+        )
+        await interaction.response.edit_message(content=view.prompt(), view=view)
 
 
 class SchedulingArtistCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="補填時間", description="不用找舊公告，直接補填指定月份的月度可配合時間")
+    @app_commands.command(name="管理可配合時間", description="查詢、修改及補填指定月份的月度可配合時間")
     @app_commands.describe(月份="要補填的月份，例如 2026-08")
     async def refill_time(self, interaction: discord.Interaction, 月份: str):
         if not await channel_guard.ensure_schedule_channel(interaction):
             return
+        # 讀取 Tasks / Projects / Course Sessions 可能超過 Discord 3 秒期限。
+        await interaction.response.defer(ephemeral=True, thinking=True)
         normalized_month = time_collection.normalize_month(月份)
         if normalized_month is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ 月份格式不正確，請輸入像 `2026-08` 這樣的格式。",
                 ephemeral=True,
             )
             return
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if artist is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 設定。",
                 ephemeral=True,
             )
@@ -1194,17 +1304,35 @@ class SchedulingArtistCog(commands.Cog):
             logger.exception("讀取藝人既定安排摘要失敗")
             schedule_summary = "⚠️ 目前讀不到既定安排，請先照可用時間填寫；送出時 Bot 會再檢查。\n"
         deadline_ts = int((datetime.now(config.TZ) + timedelta(days=3650)).timestamp())
-        await interaction.response.send_message(
-            f"補填 **{normalized_month} 可配合時間**。\n"
+        now = datetime.now(config.TZ)
+        current_slots = sorted(
+            [
+                slot for slot in await repositories.get_slots_for_artist(artist.page_id)
+                if slot.end and slot.end > now and _slot_month_label(slot) == normalized_month
+            ],
+            key=_slot_sort_key,
+        )
+        current_text = "目前尚未填寫這個月份的時段。"
+        if current_slots:
+            current_text = "目前已填時段：\n" + "\n".join(
+                f"・{_management_slot_line(slot)}" for slot in current_slots[:25]
+            )
+        management_text = (
+            f"管理 **{normalized_month} 可配合時間**。\n"
             + schedule_summary
-            + "不用找舊公告；如果要修改已填資料，請先用 `/我的時段` 刪除錯的時段，再從這裡重填。\n\n"
-            f"{time_collection.availability_selection_sop()}",
-            view=DatePresetView(
+            + current_text
+            + "\n\n選擇既有時段可刪除；要補填或重填請按「新增／補填日期」。\n\n"
+            + time_collection.availability_selection_sop()
+        )
+        await interaction.followup.send(
+            _trim_discord_message(management_text),
+            view=ManageAvailabilityView(
                 normalized_month,
                 deadline_ts,
-                [week.value for week in time_collection.month_week_options(normalized_month)],
                 time_collection.DEFAULT_COLLECTION_NATURE,
-                schedule_summary=schedule_summary,
+                artist,
+                current_slots,
+                schedule_summary,
             ),
             ephemeral=True,
         )
@@ -1270,7 +1398,7 @@ class SchedulingArtistCog(commands.Cog):
                     if cleanup_count else ""
                 )
                 + "\n\n月度可配合時段只供營運初步排程參考，不是正式行程。"
-                + "\n要取消或改時間：在下方選單勾選要刪除的時段，再用 `/補填時間` 重新填寫。"
+                + "\n要取消或改時間：使用 `/管理可配合時間`。"
             ),
             view=MySlotsDeleteView(my_slots, artist),
             ephemeral=True,

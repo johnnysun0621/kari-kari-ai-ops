@@ -193,5 +193,5 @@ class TestPoolNotificationCopy:
 def test_refill_time_command_is_artist_visible():
     command = SchedulingArtistCog.refill_time
 
-    assert command.name == "補填時間"
+    assert command.name == "管理可配合時間"
     assert command.default_permissions is None

@@ -75,6 +75,16 @@ class TestSlotDisplay:
 
         assert summary == "8/5（週三） 14:00-18:00｜月度可配合時段"
 
+    def test_formats_midnight_end_as_same_day_24_hours(self):
+        summary = time_collection.format_slot_summary(
+            datetime(2026, 8, 10, 8, 0, tzinfo=config.TZ),
+            datetime(2026, 8, 11, 0, 0, tzinfo=config.TZ),
+            note="收集性質：月度可配合時段",
+            include_nature=False,
+        )
+
+        assert summary == "8/10（週一） 08:00-24:00"
+
 
 class TestNormalizeMonth:
     def test_accepts_short_month(self):

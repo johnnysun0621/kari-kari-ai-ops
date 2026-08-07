@@ -255,14 +255,23 @@ def note_field(note: str, field_name: str) -> str | None:
     return None
 
 
-def format_slot_summary(start: datetime, end: datetime, note: str = "") -> str:
+def format_slot_summary(
+    start: datetime,
+    end: datetime,
+    note: str = "",
+    *,
+    include_nature: bool = True,
+) -> str:
     weekday = WEEKDAY_ZH[start.weekday()]
     same_day = start.date() == end.date()
+    ends_at_midnight = end.time() == time(0, 0) and end.date() == start.date() + timedelta(days=1)
     if same_day:
         time_text = f"{start:%H:%M}-{end:%H:%M}"
+    elif ends_at_midnight:
+        time_text = f"{start:%H:%M}-24:00"
     else:
         time_text = f"{start:%H:%M}-{end.month}/{end.day} {end:%H:%M}"
-    nature = normalize_collection_nature_label(note_field(note, "收集性質"))
+    nature = normalize_collection_nature_label(note_field(note, "收集性質")) if include_nature else None
     suffix = f"｜{nature}" if nature else ""
     return f"{start.month}/{start.day}（週{weekday}） {time_text}{suffix}"
 
