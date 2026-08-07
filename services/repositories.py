@@ -695,7 +695,6 @@ class TaskItem:
     # 任務派發通知／收件確認
     discord_notified_at: datetime | None = None
     discord_acknowledged_at: datetime | None = None
-    review_deadline: datetime | None = None
     revision_deadline: datetime | None = None
 
 
@@ -804,7 +803,6 @@ def _to_task(page: dict) -> TaskItem:
         created_at=created_at,
         discord_notified_at=_read_date_start(page, "Discord 通知時間"),
         discord_acknowledged_at=_read_date_start(page, "Discord 收到時間"),
-        review_deadline=_read_date_start(page, "審核期限"),
         revision_deadline=_read_date_start(page, "修改期限"),
     )
 
@@ -1197,6 +1195,49 @@ async def update_task_status(page_id: str, status: str) -> None:
     await notion_api.update_page(page_id, {"任務狀態": _select(status)})
 
 
+async def set_task_drive_folder(page_id: str, folder_url: str) -> None:
+    """回寫單一藝人任務的專用 Drive 資料夾連結。"""
+    if not folder_url:
+        return
+    await notion_api.update_page(page_id, {"Google Drive Folder": _url(folder_url)})
+
+
+def append_drive_folder_link_to_description(
+    description: str,
+    artist_name: str,
+    folder_url: str,
+) -> str:
+    """在任務說明追加多人任務的藝人 Drive 資料夾索引，並保持冪等。"""
+    if not artist_name or not folder_url:
+        return description
+    entry = f"・{artist_name}：{folder_url}"
+    if entry in description:
+        return description
+    marker = "Drive 資料夾索引："
+    if marker in description:
+        return f"{description.rstrip()}\n{entry}"
+    return f"{description.rstrip()}\n\n{marker}\n{entry}".strip()
+
+
+async def append_task_drive_folder_link(
+    page_id: str,
+    artist_name: str,
+    folder_url: str,
+) -> None:
+    """將多人任務的藝人 Drive 資料夾連結寫入任務說明。"""
+    if not artist_name or not folder_url:
+        return
+    task = await get_task(page_id)
+    if task is None:
+        raise ValueError(f"Task not found: {page_id}")
+    description = append_drive_folder_link_to_description(
+        task.description, artist_name, folder_url
+    )
+    if description == task.description:
+        return
+    await notion_api.update_page(page_id, {"任務說明": _rich_text(description)})
+
+
 async def mark_task_discord_notified(
     page_id: str,
     notified_at: datetime | None = None,
@@ -1449,15 +1490,7 @@ async def set_task_under_review(task_page_id: str, latest_url: str) -> None:
     props: dict = {"任務狀態": _select("待審核")}
     if latest_url:
         props["最新提交 URL"] = _url(latest_url)
-    # 審核期限是提交後 24 小時；舊租戶尚未建欄位時保留原本提交流程。
-    props["審核期限"] = _date(datetime.now(config.TZ) + timedelta(hours=24))
-    try:
-        await notion_api.update_page(task_page_id, props)
-    except NotionAPIError as exc:
-        if "審核期限" not in str(exc):
-            raise
-        props.pop("審核期限", None)
-        await notion_api.update_page(task_page_id, props)
+    await notion_api.update_page(task_page_id, props)
 
 
 async def set_task_revision_deadline(
@@ -1473,17 +1506,6 @@ async def set_task_revision_deadline(
     except NotionAPIError as exc:
         if "修改期限" not in str(exc):
             raise
-
-
-def compute_review_deadline_stage(task: TaskItem, now: datetime) -> str | None:
-    """回傳審核期限提醒階段；只處理尚未完成的待審核任務。"""
-    if task.status != "待審核" or not task.review_deadline:
-        return None
-    if task.review_deadline <= now:
-        return "審核逾時"
-    if task.review_deadline - now <= timedelta(hours=6):
-        return "審核期限將到"
-    return None
 
 
 def compute_revision_deadline_stage(task: TaskItem, now: datetime) -> str | None:

@@ -77,6 +77,32 @@ def test_missing_submit_method_shows_task_description_instead_of_placeholder():
     assert "請完成舞蹈練習，並於課後提交錄影。" in message
 
 
+def test_assignment_notification_requires_open_submission_and_has_assignment_copy():
+    task = make_task(submit_method="Drive 連結")
+    task.description = "請上傳課後練習錄影。"
+
+    assert not task_notifications.is_assignment_dispatchable(task)
+    task.open_for_submission = True
+    assert task_notifications.is_assignment_dispatchable(task)
+    message = task_notifications.assignment_notification_message(task)
+    assert "課後作業通知" in message
+    assert "請上傳課後練習錄影。" in message
+    assert "Drive 連結" in message
+
+
+def test_assignment_notification_state_survives_round_trip(tmp_path):
+    path = tmp_path / "assignment_notifications.json"
+    state = task_notifications.load_assignment_state(path)
+    assert not task_notifications.was_assignment_notified("task-1", state)
+
+    state = task_notifications.mark_assignment_notified("task-1", state)
+    task_notifications.save_assignment_state(state, path)
+
+    assert task_notifications.was_assignment_notified(
+        "task-1", task_notifications.load_assignment_state(path)
+    )
+
+
 def test_public_announcement_uses_configured_task_types():
     course = make_task()
     public = make_task(name="八月拍攝")

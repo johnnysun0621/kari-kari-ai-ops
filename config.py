@@ -80,6 +80,10 @@ class TenantConfig:
     remind_before_deadline_hours: int
     # 背景提醒 loop 間隔（分鐘）
     reminder_interval_minutes: float
+    # 待審核提交的持續提醒間隔（小時）
+    review_reminder_interval_hours: float
+    # 待審核提交首次催辦門檻（小時）
+    review_reminder_after_hours: float
     # 預設填寫截止時間（小時，從建立起算）
     default_fill_deadline_hours: int
     # Notion 布告欄背景同步間隔（分鐘）
@@ -153,6 +157,8 @@ def _load_karikari_from_env() -> TenantConfig:
         sla_hard_limit_hours=72,
         remind_before_deadline_hours=6,
         reminder_interval_minutes=_env_float("REMINDER_INTERVAL_MINUTES", 30),
+        review_reminder_interval_hours=_env_float("REVIEW_REMINDER_INTERVAL_HOURS", 12),
+        review_reminder_after_hours=_env_float("REVIEW_REMINDER_AFTER_HOURS", 24),
         default_fill_deadline_hours=24,
         bulletin_sync_interval_minutes=_env_int("BULLETIN_SYNC_INTERVAL_MINUTES", 5),
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
@@ -212,6 +218,7 @@ SLA_HOURS = TENANT.sla_hours
 SLA_HARD_LIMIT_HOURS = TENANT.sla_hard_limit_hours
 REMIND_BEFORE_DEADLINE_HOURS = TENANT.remind_before_deadline_hours
 REMINDER_INTERVAL_MINUTES = TENANT.reminder_interval_minutes
+REVIEW_REMINDER_INTERVAL_HOURS = TENANT.review_reminder_interval_hours
 DEFAULT_FILL_DEADLINE_HOURS = TENANT.default_fill_deadline_hours
 DRIVE_ROOT_FOLDER_ID = TENANT.drive_root_folder_id
 BULLETIN_SYNC_INTERVAL_MINUTES = TENANT.bulletin_sync_interval_minutes

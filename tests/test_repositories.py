@@ -1,5 +1,6 @@
 """repositories.py pure helper tests."""
 
+import asyncio
 from datetime import datetime
 
 import config
@@ -56,6 +57,45 @@ class TestAvailabilitySlotProps:
         assert props["身份"]["select"]["name"] == "藝人"
         assert props["來源"]["select"]["name"] == "Discord"
         assert props["備註"]["rich_text"][0]["text"]["content"] == "收集月份：2026-08"
+
+
+class TestTaskDriveFolder:
+    def test_appends_labeled_link_for_multi_artist_task(self):
+        description = repositories.append_drive_folder_link_to_description(
+            "任務內容", "Johnny", "https://drive.google.com/drive/folders/johnny"
+        )
+
+        assert description.endswith(
+            "Drive 資料夾索引：\n・Johnny：https://drive.google.com/drive/folders/johnny"
+        )
+
+    def test_drive_folder_link_append_is_idempotent(self):
+        description = "任務內容\n\nDrive 資料夾索引：\n・Johnny：https://drive.google.com/drive/folders/johnny"
+
+        assert repositories.append_drive_folder_link_to_description(
+            description, "Johnny", "https://drive.google.com/drive/folders/johnny"
+        ) == description
+
+    def test_writes_task_drive_folder_url(self, monkeypatch):
+        calls = []
+
+        async def fake_update_page(page_id, properties):
+            calls.append((page_id, properties))
+
+        monkeypatch.setattr(repositories.notion_api, "update_page", fake_update_page)
+
+        asyncio.run(repositories.set_task_drive_folder("task-1", "https://drive.google.com/drive/folders/task"))
+
+        assert calls == [
+            ("task-1", {"Google Drive Folder": {"url": "https://drive.google.com/drive/folders/task"}})
+        ]
+
+    def test_does_not_write_empty_folder_url(self, monkeypatch):
+        async def fail_update_page(*args, **kwargs):
+            raise AssertionError("empty folder URL should not be written")
+
+        monkeypatch.setattr(repositories.notion_api, "update_page", fail_update_page)
+        asyncio.run(repositories.set_task_drive_folder("task-1", ""))
 
 def slot(
     *,
@@ -922,13 +962,6 @@ class TestComputeDueReminderStages:
 
 
 class TestReviewDeadlines:
-    def test_review_deadline_warns_six_hours_before_and_after(self):
-        task = display_task(status="待審核")
-        task.review_deadline = NOW + repositories.timedelta(hours=5)
-        assert repositories.compute_review_deadline_stage(task, NOW) == "審核期限將到"
-        task.review_deadline = NOW - repositories.timedelta(minutes=1)
-        assert repositories.compute_review_deadline_stage(task, NOW) == "審核逾時"
-
     def test_revision_deadline_only_applies_to_needs_fix(self):
         task = display_task(status="需修改")
         task.revision_deadline = NOW + repositories.timedelta(hours=12)

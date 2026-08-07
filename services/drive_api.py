@@ -10,7 +10,7 @@ googleapiclient 是 blocking 的——所有呼叫都包 asyncio.to_thread，
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -127,18 +127,24 @@ async def ensure_folder_path(
 
 
 def _list_recent_files_sync(service, folder_id: str, since: datetime) -> list[dict]:
-    since_utc = since.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    # Drive 的上傳／同步時間偶爾會比 Discord 建立入口晚幾秒，或在
+    # 移入資料夾時保留原始 createdTime；保留小幅容錯，並用 modifiedTime
+    # 覆蓋這類合法上傳情境。
+    search_since = since - timedelta(minutes=10)
+    since_utc = search_since.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     query = (
         f"'{_escape_query_value(folder_id)}' in parents"
         " and trashed = false"
         " and mimeType != 'application/vnd.google-apps.folder'"
-        f" and createdTime > '{since_utc}'"
+        f" and (createdTime >= '{since_utc}' or modifiedTime >= '{since_utc}')"
     )
     result = service.files().list(
         q=query,
         orderBy="createdTime desc",
         pageSize=100,
-        fields="files(id,name,size,webViewLink,createdTime,mimeType)",
+        fields="files(id,name,size,webViewLink,createdTime,modifiedTime,mimeType)",
+        includeItemsFromAllDrives=True,
+        supportsAllDrives=True,
     ).execute()
     return result.get("files", [])
 

@@ -72,15 +72,14 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
             logger.exception("任務收到確認寫入失敗：%s", self.task_id)
             await interaction.followup.send("❌ 收到確認寫入失敗，請稍後再試。", ephemeral=True)
             return
-        description = task.description.strip() or "Notion 尚未填寫任務說明。"
-        if len(description) > 900:
-            description = description[:897].rstrip() + "..."
+        # 原始任務通知已經包含完整內容；確認後只回覆狀態，避免重複洗版。
         content = (
-            "✅ 已記錄你收到這項任務，狀態已更新為「進行中」。\n\n"
-            f"**任務內容**\n{description}"
+            f"✅ 已收到「{task.name}」\n"
+            "狀態：進行中\n"
+            "請依原任務通知完成；需要查看詳細內容，請按原通知的「查看任務內容」。"
         )
         if task.url:
-            content += f"\n\n📄 查看完整任務：{task.url}"
+            content += f"\n📄 {task.url}"
         await interaction.followup.send(content, ephemeral=True)
 
 

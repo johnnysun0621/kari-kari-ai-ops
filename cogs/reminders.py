@@ -12,6 +12,21 @@ from services import audit, repositories, scheduling_sla, task_notifications, ti
 logger = logging.getLogger(__name__)
 
 
+def review_reminder_due(
+    created_at: datetime | None,
+    now: datetime,
+    after_hours: float,
+) -> bool:
+    """判斷待審核提交是否已達首次催辦門檻。"""
+    if created_at is None:
+        return False
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=config.TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=config.TZ)
+    return now >= created_at.astimezone(config.TZ) + timedelta(hours=after_hours)
+
+
 class RemindersCog(commands.Cog):
     TASK_ACK_REMINDER_HOURS = 2
 
@@ -20,7 +35,9 @@ class RemindersCog(commands.Cog):
         # 每筆需求已送過的提醒階段（in-memory，重啟後最多重發一次，可接受）
         self._sent: dict[str, set[str]] = {}
         self._task_dispatch_state = task_notifications.load_state()
+        self._assignment_notification_state = task_notifications.load_assignment_state()
         self._dispatch_warning_sent: set[str] = set()
+        self._review_reminder_sent_at: dict[str, datetime] = {}
         # 啟動時先建立掃描基準，避免啟動 Bot 的同一輪重複派送初始通知。
         self._last_unacknowledged_scan_at = datetime.now(config.get_tenant().tz)
         self.check_loop.start()
@@ -42,8 +59,9 @@ class RemindersCog(commands.Cog):
             await self._check_monthly_pool_deadlines()
             await self._check_scheduling_sla()
             await self._check_task_dispatch_notifications()
+            await self._check_task_assignment_notifications()
             await self._check_unacknowledged_task_notifications()
-            await self._check_review_deadlines()
+            await self._check_review_reminders()
             await self._check_revision_deadlines()
             await self._check_task_reminders()
         except Exception:
@@ -302,6 +320,58 @@ class RemindersCog(commands.Cog):
                     len(notifyable_artists),
                 )
 
+    async def _check_task_assignment_notifications(self):
+        """通知已開放提交的課後作業；每筆 Task 只通知一次。"""
+        tasks_to_notify = [
+            task for task in await repositories.get_active_tasks()
+            if task_notifications.is_assignment_dispatchable(task)
+            and not task_notifications.was_assignment_notified(
+                task.page_id, self._assignment_notification_state
+            )
+        ]
+        for task in tasks_to_notify:
+            artists = await repositories.get_artists_by_ids(task.artist_page_ids)
+            notifyable_artists = [artist for artist in artists if artist.discord_user_id]
+            if not notifyable_artists:
+                continue
+            sent = 0
+            for artist in notifyable_artists:
+                try:
+                    user = await self.bot.fetch_user(int(artist.discord_user_id))
+                    view = discord.ui.View(timeout=None)
+                    from cogs.tasks_artist import TaskConcernButton, TaskReceiptButton
+                    view.add_item(TaskReceiptButton(task.page_id))
+                    view.add_item(TaskConcernButton(task.page_id))
+                    if task.url:
+                        view.add_item(
+                            discord.ui.Button(
+                                label="查看任務內容",
+                                style=discord.ButtonStyle.link,
+                                url=task.url,
+                                emoji="📄",
+                            )
+                        )
+                    await user.send(
+                        task_notifications.assignment_notification_message(task),
+                        view=view,
+                    )
+                    sent += 1
+                except Exception:
+                    logger.exception("課後作業通知失敗：%s／%s", task.name, artist.name)
+            if sent == len(notifyable_artists):
+                self._assignment_notification_state = task_notifications.mark_assignment_notified(
+                    task.page_id, self._assignment_notification_state
+                )
+                task_notifications.save_assignment_state(self._assignment_notification_state)
+                await audit.log_event(
+                    event_name=f"課後作業通知｜{task.name}",
+                    action_type="提醒",
+                    operator="System",
+                    target_db="Tasks",
+                    target_url=task.url,
+                    after=f"通知 {sent} 位藝人",
+                )
+
     async def _check_unacknowledged_task_notifications(self):
         """每 2 小時掃描一次，重新推送所有尚未確認的任務。"""
         now = datetime.now(config.get_tenant().tz)
@@ -368,11 +438,13 @@ class RemindersCog(commands.Cog):
             except Exception:
                 logger.exception("任務未確認提醒失敗：%s", artist.name)
 
-    async def _check_review_deadlines(self):
-        """審核期限前提醒指定審核人員，逾時升級控方。"""
+    async def _check_review_reminders(self):
+        """待審核期間定期提醒控方與指定審核人員。"""
         submissions = await repositories.get_submissions_by_review_status(["待審核"])
         if not submissions:
             return
+        now = datetime.now(config.TZ)
+        reminder_interval = timedelta(hours=config.REVIEW_REMINDER_INTERVAL_HOURS)
         tasks = {task.page_id: task for task in await repositories.get_active_tasks()}
         admin_channel = (
             self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
@@ -380,20 +452,21 @@ class RemindersCog(commands.Cog):
             or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
         )
         for submission in submissions:
+            if not review_reminder_due(
+                submission.created_at,
+                now,
+                config.get_tenant().review_reminder_after_hours,
+            ):
+                continue
+            last_sent = self._review_reminder_sent_at.get(submission.page_id)
+            if last_sent and now - last_sent < reminder_interval:
+                continue
             related = [tasks[pid] for pid in submission.task_page_ids if pid in tasks]
-            stages = {stage for stage in (repositories.compute_review_deadline_stage(task, datetime.now(config.TZ)) for task in related) if stage}
-            if not stages:
-                continue
-            stage = "審核逾時" if "審核逾時" in stages else "審核期限將到"
-            if not self._once(f"review:{submission.page_id}", stage):
-                continue
             reviewer_ids = sorted({pid for task in related for pid in task.reviewer_page_ids})
             reviewers = await repositories.get_people_by_ids(reviewer_ids)
-            deadline = next((task.review_deadline for task in related if task.review_deadline), None)
-            deadline_text = deadline.strftime("%m/%d %H:%M") if deadline else "未設定"
             message = (
-                f"⏰ 提交待審核：**{submission.name}**\n"
-                f"審核期限：{deadline_text}\n"
+                f"⏰ **提交待審核催辦**：{submission.name}\n"
+                f"提交已超過 {config.get_tenant().review_reminder_after_hours:g} 小時仍未完成審核，"
                 "請完成審核並回填結果。"
             )
             sent_reviewers = 0
@@ -406,16 +479,17 @@ class RemindersCog(commands.Cog):
                     sent_reviewers += 1
                 except Exception:
                     logger.exception("審核人員提醒失敗：%s", reviewer.name)
-            if admin_channel and stage == "審核逾時":
+            if admin_channel:
                 await admin_channel.send(
-                    f"🚨 **審核逾時**｜{submission.name}\n"
-                    f"期限：{deadline_text}｜已通知指定審核人員：{sent_reviewers} 位"
+                    f"⏰ **待審核提醒**｜{submission.name}\n"
+                    f"已通知指定審核人員：{sent_reviewers} 位｜請控方確認審核進度。"
                 )
+            self._review_reminder_sent_at[submission.page_id] = now
             await audit.log_event(
-                event_name=f"審核期限提醒｜{submission.name}",
+                event_name=f"待審核持續提醒｜{submission.name}",
                 action_type="提醒", operator="System", source="System",
                 target_db="Submissions & Tasks", target_url=submission.url,
-                after=f"{stage}｜指定審核人員通知 {sent_reviewers} 位",
+                after=f"指定審核人員通知 {sent_reviewers} 位｜控方頻道已通知",
             )
 
     async def _check_revision_deadlines(self):

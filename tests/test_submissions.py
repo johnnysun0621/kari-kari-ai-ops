@@ -32,6 +32,7 @@ from cogs.submissions import (
     task_links_text,
     submit_hint_for_task,
     submit_method_label,
+    parse_revision_days,
 )
 from services import repositories
 
@@ -71,6 +72,16 @@ class TestIsTaskSubmittable:
     def test_reviewing_or_finished_tasks_are_not_submittable(self):
         for status in ("待審核", "已完成", "已取消", "已封存"):
             assert not repositories.is_task_submittable(task(status=status)), status
+
+
+class TestRevisionDays:
+    def test_accepts_one_to_seven_days(self):
+        assert parse_revision_days("1") == 1
+        assert parse_revision_days("7") == 7
+
+    def test_rejects_empty_non_integer_and_out_of_range(self):
+        for value in ("", "0", "8", "兩天", "1.5"):
+            assert parse_revision_days(value) is None
 
 
 class TestSubmissionTypeForInput:
@@ -159,9 +170,9 @@ class TestReviewUpdateProps:
 
 
 class TestSubmitHint:
-    def test_file_method_points_to_same_channel_upload(self):
+    def test_file_method_points_to_drive_upload(self):
         hint = submit_hint_for_task(task(submit_method="檔案"))
-        assert "同一個頻道" in hint
+        assert "Google Drive" in hint
         assert "私訊" not in hint
         assert "尚未開通" not in hint  # 舊文案不得復活
 
@@ -291,7 +302,7 @@ class TestLargeFileDriveInstruction:
         )
 
         assert "編曲作業" in text
-        assert "指定上傳資料夾" in text
+        assert "資料夾" in text
         assert "https://drive.google.com/drive/folders/abc" in text
         assert "貼 Drive 連結" in text
         assert "截圖佐證" not in text
@@ -300,7 +311,7 @@ class TestLargeFileDriveInstruction:
         text = large_file_drive_instruction(task_name="編曲作業", folder_url=None)
 
         assert "無法自動產生指定資料夾" in text
-        assert "貼 Drive 連結完成提交" in text
+        assert "貼 Drive 連結" in text
 
     def test_drive_folder_submission_summary_collects_names_ids_and_size(self):
         names, ids, size_mb = drive_folder_submission_summary([

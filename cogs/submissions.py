@@ -1,6 +1,7 @@
 """P0-3 作業提交：/提交任務（檔案自動歸檔 Drive；連結／文字走表單）。"""
 import logging
 import re
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -11,7 +12,7 @@ from discord.ext import commands, tasks
 import config
 from cogs import channel_guard, ui_text
 from services.permissions import is_admin
-from services import audit, drive_api, drive_archive, repositories
+from services import audit, drive_api, drive_archive, repositories, task_notifications
 from services.notion_api import NotionAPIError
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,15 @@ def submission_type_for_input(link_url: str, content: str) -> str | None:
     return None
 
 
+def parse_revision_days(value: str) -> int | None:
+    """審核人設定修改期限：只接受 1～7 個完整天數。"""
+    try:
+        days = int(value.strip())
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return days if 1 <= days <= 7 else None
+
+
 def is_valid_link(link_url: str) -> bool:
     return link_url.startswith(LINK_PREFIXES) and " " not in link_url
 
@@ -102,8 +112,7 @@ def direct_upload_size_error(size_bytes: int) -> str | None:
         return None
     return (
         f"❌ 檔案超過 {MAX_UPLOAD_MB}MB。標準流程假設藝人使用 Discord 免費方案，"
-        "10MB 以上請先上傳到公司指定 Google Drive / 自己的雲端，"
-        "再用 `/提交任務` 貼 Drive 連結。"
+        "請改上傳到 Bot 已建立的指定 Google Drive 資料夾。"
     )
 
 
@@ -188,16 +197,101 @@ def large_file_drive_instruction(
     *,
     task_name: str,
     folder_url: str | None,
+    drive_setup_error: bool = False,
 ) -> str:
-    lines = [
-        f"大檔案請先上傳到 Google Drive，再用下方按鈕完成 **{task_name}** 的提交。",
-    ]
+    lines: list[str] = []
     if folder_url:
-        lines.append(f"指定上傳資料夾：{folder_url}")
-        lines.append("上傳完成後，請按「我已上傳到 Drive」；若驗證失敗，也可按「貼 Drive 連結完成提交」。")
+        lines.append(f"請將 **{task_name}** 的檔案上傳至指定 Google Drive 資料夾。")
+        lines.append(f"資料夾：{folder_url}")
+        lines.append("完成後按「我已上傳到 Drive」；無法驗證時可按「貼 Drive 連結」。")
+    elif drive_setup_error:
+        lines.append("⚠️ 公司 Drive 授權已失效或權限不足，請聯絡控方重新授權 Google Drive。")
     else:
-        lines.append("目前無法自動產生指定資料夾連結，請先把檔案上傳到你的雲端，再按「貼 Drive 連結完成提交」。")
+        lines.append("目前無法自動產生指定資料夾連結，請先把檔案上傳到你的雲端，再按「貼 Drive 連結」。")
     return "\n".join(lines)
+
+
+async def _resolve_submission_target(
+    task: repositories.TaskItem,
+    artist: repositories.Artist,
+    now: datetime,
+) -> tuple[tuple[str, list[str]] | None, str]:
+    """Resolve an artist task archive target, creating the artist zone from the company root when needed."""
+    target = drive_archive.resolve_archive_target(task, artist.drive_folder_url, now)
+    if target is not None:
+        base_folder_id, path_segments = target
+        if path_segments and not task.drive_folder_url:
+            try:
+                task_folder = await drive_api.ensure_folder_path(
+                    base_folder_id=base_folder_id,
+                    path_segments=path_segments,
+                )
+                task_folder_url = str(task_folder.get("webViewLink") or "")
+                # A Task has one Google Drive Folder field. Only write it when
+                # the task belongs to one artist; multi-artist tasks have one
+                # separate task folder under each artist's Drive zone.
+                if task_folder_url and len(task.artist_page_ids) == 1:
+                    try:
+                        await repositories.set_task_drive_folder(
+                            task.page_id, task_folder_url
+                        )
+                        task.drive_folder_url = task_folder_url
+                    except Exception:
+                        logger.exception(
+                            "回寫 Task Google Drive Folder 失敗：%s", task.page_id
+                        )
+                elif task_folder_url:
+                    try:
+                        await repositories.append_task_drive_folder_link(
+                            task.page_id, artist.name, task_folder_url
+                        )
+                    except Exception:
+                        logger.exception(
+                            "回寫多人 Task Drive 資料夾索引失敗：%s", task.page_id
+                        )
+                return target, task_folder_url
+            except Exception:
+                logger.exception("建立任務 Drive 資料夾失敗：%s", task.page_id)
+        return target, artist.drive_folder_url
+    root_id = config.get_tenant().drive_root_folder_id
+    if not root_id or not drive_api.is_configured():
+        return None, ""
+    try:
+        zone = await drive_api.ensure_folder_path(
+            base_folder_id=root_id,
+            path_segments=[artist.name.strip()],
+        )
+    except Exception:
+        logger.exception("建立藝人 Drive 專區失敗：%s", artist.name)
+        return None, ""
+    zone_id = str(zone.get("id") or "")
+    zone_url = str(zone.get("webViewLink") or "")
+    if not zone_id:
+        return None, ""
+    task_path = drive_archive.archive_path_for_submission(task, now)
+    try:
+        task_folder = await drive_api.ensure_folder_path(
+            base_folder_id=zone_id,
+            path_segments=task_path,
+        )
+        task_folder_url = str(task_folder.get("webViewLink") or "")
+    except Exception:
+        logger.exception("建立任務 Drive 資料夾失敗：%s", task.page_id)
+        task_folder_url = ""
+    if task_folder_url and len(task.artist_page_ids) == 1:
+        try:
+            await repositories.set_task_drive_folder(task.page_id, task_folder_url)
+            task.drive_folder_url = task_folder_url
+        except Exception:
+            logger.exception("回寫 Task Google Drive Folder 失敗：%s", task.page_id)
+    elif task_folder_url:
+        try:
+            await repositories.append_task_drive_folder_link(
+                task.page_id, artist.name, task_folder_url
+            )
+        except Exception:
+            logger.exception("回寫多人 Task Drive 資料夾索引失敗：%s", task.page_id)
+    return ((zone_id, task_path), task_folder_url or zone_url)
 
 
 def drive_folder_submission_summary(files: list[dict]) -> tuple[str, str, float]:
@@ -337,11 +431,11 @@ def submit_task_option_description(task: repositories.TaskItem, now: datetime) -
 
 
 def _teacher_requirement_text(task: repositories.TaskItem) -> str:
-    description = _clip(task.description, 80)
+    description = _clip(task_notifications._artist_facing_description(task.description), 120)
     if description:
-        return f"\n  老師要求：{description}"
+        return f"\n  任務說明：{description}"
     if task.submit_method == "檔案":
-        return f"\n  老師要求：依 Notion 任務說明上傳指定檔案；超過 {MAX_UPLOAD_MB}MB 請改貼 Drive 連結。"
+        return "\n  老師要求：依 Notion 任務說明上傳指定檔案至 Drive。"
     return ""
 
 
@@ -364,8 +458,11 @@ def submit_task_intro_text(
         )
     if len(tasks) > 10:
         lines.append(f"...另 {len(tasks) - 10} 筆請用下方選單查看")
-    lines.append("")
-    lines.append("檔案任務：選任務後直接在這個頻道上傳附件；10MB 以上請用 Drive 連結。")
+    if any(task.submit_method in ("檔案", "混合") for task in tasks):
+        lines.append("")
+        lines.append(
+            "檔案／混合任務：選定後 Bot 會自動建立你的任務 Drive 資料夾。"
+        )
     return ui_text.trim_message("\n".join(lines))
 
 
@@ -399,10 +496,7 @@ def submit_hint_for_task(task: repositories.TaskItem) -> str:
     """Modal 開頭給藝人的提示：依任務的提交方式引導。"""
     method = task.submit_method
     if method == "檔案":
-        return (
-            f"此任務要求交檔案：選定後請直接在同一個頻道上傳附件。"
-            f"標準直接上傳上限為 {MAX_UPLOAD_MB}MB；大檔請貼 Drive 連結。"
-        )
+        return "此任務要求交檔案：請上傳至 Bot 指定的 Google Drive 資料夾。"
     if method == "Drive 連結":
         return "請貼上作品的雲端連結（記得開啟共用權限）。"
     if method == "文字":
@@ -718,11 +812,11 @@ async def _archive_file_submission_batch(
             return False, size_error
     now = datetime.now(config.get_tenant().tz)
     if not base_folder_id:
-        target = drive_archive.resolve_archive_target(task, artist.drive_folder_url, now)
+        target, _ = await _resolve_submission_target(task, artist, now)
         if target is None:
             return False, (
-                "❌ 你的藝人專區資料夾還沒設定（Notion Artists 的「Google Drive 資料夾」），\n"
-                "請聯絡營運；或改用 `/提交任務` 貼雲端連結。"
+                "❌ 無法建立公司的指定 Drive 資料夾，請聯絡營運確認 Drive 設定；"
+                "或改用 `/提交任務` 貼雲端連結。"
             )
         base_folder_id, task_path = target
         folder_path = [*task_path, submission_folder_name(now)]
@@ -883,15 +977,18 @@ class SubmitTaskSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         task = self.task_by_id[self.values[0]]
+        if self.attachment is not None:
+            await interaction.response.send_message(
+                "此系統不接收 Discord 附件，請改上傳至指定 Google Drive 資料夾。",
+                ephemeral=True,
+            )
+            return
         conflict = submission_method_conflict(task, self.attachment is not None)
         if conflict:
             await interaction.response.send_message(conflict, ephemeral=True)
             return
-        if self.attachment is not None:
-            await _handle_file_submission(interaction, task, self.attachment)
-            return
         if task.submit_method == "檔案":
-            await self.cog.start_file_upload_wait(interaction, task)
+            await self.cog.start_file_upload_wait(interaction, task, drive_only=True)
             return
         if task.submit_method == "Drive 連結":
             await self.cog.start_file_upload_wait(interaction, task, drive_only=True)
@@ -925,9 +1022,9 @@ class MixedSubmissionChoiceView(discord.ui.View):
         self.cog = cog
         self.task = task
 
-    @discord.ui.button(label="上傳檔案", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="使用 Drive 提交", style=discord.ButtonStyle.primary)
     async def upload_file(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.start_file_upload_wait(interaction, self.task)
+        await self.cog.start_file_upload_wait(interaction, self.task, drive_only=True)
 
     @discord.ui.button(label="貼連結／文字", style=discord.ButtonStyle.secondary)
     async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -950,14 +1047,6 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
         self.folder_url = folder_url
         self.target = target
         self.owner_id = owner_id
-        if drive_only:
-            for child in self.children:
-                if isinstance(child, discord.ui.Button) and child.label == "完成提交":
-                    child.disabled = True
-
-    @discord.ui.button(label="貼 Drive 連結完成提交", style=discord.ButtonStyle.primary)
-    async def submit_drive_link(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(DriveLinkSubmissionModal(self.cog, self.task, self.folder_url))
 
     @discord.ui.button(label="我已上傳到 Drive", style=discord.ButtonStyle.success)
     async def verify_drive_upload(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -966,30 +1055,9 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
             return
         await self.cog.complete_drive_folder_submission(interaction)
 
-    @discord.ui.button(label="完成提交", style=discord.ButtonStyle.success)
-    async def finish_submission(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.owner_id is not None and interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ 這個提交入口只給原本操作的人使用。", ephemeral=True)
-            return
-        pending = self.cog.pending_file_submissions.get(interaction.user.id)
-        if pending is None or not pending.attachments:
-            await interaction.response.send_message("請先上傳至少一個檔案，再按「完成提交」。", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        self.cog.pending_file_submissions.pop(interaction.user.id, None)
-        await interaction.followup.send("收到全部檔案，正在歸檔到 Google Drive 並寫入 Notion...", ephemeral=True)
-        _ok, result_message = await _archive_file_submission_batch(
-            client=interaction.client,
-            task=pending.task,
-            artist=pending.artist,
-            attachments=pending.attachments,
-            discord_user_id=interaction.user.id,
-            base_folder_id=pending.folder_base_id,
-            folder_path=pending.folder_path,
-            folder_url=pending.folder_url,
-        )
-        await interaction.followup.send(result_message, ephemeral=True)
-
+    @discord.ui.button(label="貼 Drive 連結", style=discord.ButtonStyle.primary)
+    async def submit_drive_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(DriveLinkSubmissionModal(self.cog, self.task, self.folder_url))
 
 class ReviewFeedbackLargeFileChoiceView(discord.ui.View):
     def __init__(
@@ -1134,6 +1202,17 @@ class PostReviewAttachmentView(discord.ui.View):
             reviewer=self.reviewer,
         )
 
+    @discord.ui.button(label="不需補批改檔", style=discord.ButtonStyle.success)
+    async def no_feedback_file(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.reviewer_id:
+            await interaction.response.send_message("❌ 這個按鈕只給原本審核的人使用。", ephemeral=True)
+            return
+        button.disabled = True
+        await interaction.response.edit_message(
+            content="✅ 已確認不需補批改檔。審核流程完成。",
+            view=self,
+        )
+
 
 class SubmissionReviewModal(discord.ui.Modal):
     def __init__(self, cog: "SubmissionsCog", submission: repositories.SubmissionItem, result: str):
@@ -1149,14 +1228,33 @@ class SubmissionReviewModal(discord.ui.Modal):
             placeholder="例如：這次節奏很穩；或請重修副歌音準。",
         )
         self.add_item(self.feedback_input)
+        self.revision_days_input: discord.ui.TextInput | None = None
+        if result in ("需修改", "退回"):
+            self.revision_days_input = discord.ui.TextInput(
+                label="修改期限（天數，1～7）",
+                required=True,
+                max_length=1,
+                placeholder="例如：2",
+            )
+            self.add_item(self.revision_days_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
+        revision_days = None
+        if self.revision_days_input is not None:
+            revision_days = parse_revision_days(self.revision_days_input.value)
+            if revision_days is None:
+                await interaction.followup.send(
+                    "❌ 修改期限只能填 1～7 的整數天數，請重新操作審核。",
+                    ephemeral=True,
+                )
+                return
         await self.cog.complete_discord_review(
             interaction,
             self.submission,
             self.result,
             (self.feedback_input.value or "").strip(),
+            revision_days=revision_days,
         )
 
 
@@ -1192,7 +1290,7 @@ class SubmissionsCog(commands.Cog):
         folder_url = ""
         folder_base_id = ""
         folder_path: list[str] = []
-        target = drive_archive.resolve_archive_target(task, artist.drive_folder_url, now)
+        target, _ = await _resolve_submission_target(task, artist, now)
         if target is not None and drive_api.is_configured():
             base_folder_id, path_segments = target
             folder_base_id = base_folder_id
@@ -1217,21 +1315,33 @@ class SubmissionsCog(commands.Cog):
         )
 
         upload_intro = (
-            f"📁 請先把 **{task.name}** 的檔案上傳到指定 Google Drive 資料夾，"
-            "完成後按「我已上傳到 Drive」。\n"
+            f"📁 **{task.name}**\n請將檔案上傳至下方指定資料夾。\n\n"
             if drive_only
-            else f"📎 請直接在這個頻道上傳 **{task.name}** 的檔案。\n"
+            else f"📁 **{task.name}**\n請將檔案上傳至下方指定資料夾。\n\n"
         )
         upload_controls = (
-            "上傳完成後按「我已上傳到 Drive」；若驗證失敗，也可改按「貼 Drive 連結完成提交」。\n"
+            "提交方式：\n"
+            "・我已上傳到 Drive：檔案放入指定資料夾後按。\n"
+            "・貼 Drive 連結：上傳到自己的雲端，並貼 Drive 連結提交。\n"
+            "\n"
             if drive_only
-            else "你可以連續上傳多個檔案；全部上傳後按「完成提交」。\n"
+            else (
+                "提交方式：\n"
+                "・我已上傳到 Drive：檔案放入指定資料夾後按。\n"
+                "・貼 Drive 連結：上傳到自己的雲端，並貼 Drive 連結提交。\n"
+                "\n"
+            )
         )
         await interaction.followup.send(
             upload_intro
             + upload_controls
-            + f"每個檔案請在 **{MAX_UPLOAD_MB}MB 以下**；入口 **{file_upload_wait_label()}**後失效。\n\n"
-            + large_file_drive_instruction(task_name=task.name, folder_url=folder_url),
+            + f"入口有效 {file_upload_wait_label()}。\n\n"
+            + large_file_drive_instruction(
+                task_name=task.name,
+                folder_url=folder_url,
+                drive_setup_error=bool(config.get_tenant().drive_root_folder_id)
+                and drive_api.is_configured(),
+            ),
             view=LargeFileSubmissionChoiceView(
                 self, task, folder_url=folder_url, target=target,
                 owner_id=interaction.user.id, drive_only=drive_only,
@@ -1254,7 +1364,14 @@ class SubmissionsCog(commands.Cog):
             await interaction.followup.send("❌ 找不到指定 Drive 資料夾，請改貼 Drive 連結提交。", ephemeral=True)
             return
         try:
-            files = await drive_api.list_recent_files(folder_id, pending.created_at)
+            # Drive 的檔案索引不是立即一致；短暫重試避免藝人已上傳但剛好
+            # 在 Drive API 尚未列出檔案時按下驗證。
+            files: list[dict] = []
+            for attempt in range(3):
+                files = await drive_api.list_recent_files(folder_id, pending.created_at)
+                if files or attempt == 2:
+                    break
+                await asyncio.sleep(2)
         except Exception:
             logger.exception("驗證 Drive 資料夾檔案失敗")
             await interaction.followup.send("❌ 讀取 Drive 資料夾失敗，請稍後再按一次。", ephemeral=True)
@@ -1442,29 +1559,16 @@ class SubmissionsCog(commands.Cog):
             self.pending_file_submissions.pop(message.author.id, None)
             await message.channel.send("❌ 這次檔案上傳入口已過期，請重新執行 `/提交任務`。")
             return
-        if not message.attachments:
+        if message.attachments:
+            folder_hint = (
+                f"\n指定資料夾：{pending.folder_url}" if pending.folder_url else ""
+            )
             await message.channel.send(
-                "我目前沒有讀到附件。請直接上傳一個檔案附件；如果你剛剛已經上傳圖片但我仍讀不到，"
-                "代表 Discord Bot 的 Message Content Intent 尚未開啟，請通知控方處理。"
+                "此系統不接收 Discord 附件，請改上傳至指定 Google Drive 資料夾，"
+                "再按「我已上傳到 Drive」完成驗證。"
+                + folder_hint
             )
             return
-        if not drive_api.is_configured():
-            await message.channel.send("❌ Drive 歸檔尚未設定，請先改用 Drive 連結提交。")
-            return
-        for attachment in message.attachments:
-            size_error = direct_upload_size_error(attachment.size)
-            if size_error:
-                await message.channel.send(
-                    f"❌ `{attachment.filename}`：{size_error}\n"
-                    "請回到剛才的操作訊息，按「我已上傳到 Drive」完成驗證。"
-                )
-                continue
-            pending.attachments.append(attachment)
-        count = len(pending.attachments)
-        await message.channel.send(
-            f"✅ 已收到 {len(message.attachments)} 個檔案，目前共 {count} 個。"
-            "可以繼續上傳；全部完成後按原本訊息的「完成提交」。"
-        )
 
     async def _handle_pending_review_feedback_message(
         self,
@@ -1671,19 +1775,25 @@ class SubmissionsCog(commands.Cog):
             discord_user_id=discord_user_id,
         )
 
-    async def _update_review_task_status(self, submission: repositories.SubmissionItem, result: str) -> None:
+    async def _update_review_task_status(
+        self,
+        submission: repositories.SubmissionItem,
+        result: str,
+        *,
+        revision_days: int | None = None,
+    ) -> None:
         task_status = review_task_status_for_result(result)
         if not task_status:
             return
         for task_page_id in submission.task_page_ids:
             await repositories.update_task_status(task_page_id, task_status)
-            # 修改期限以 48 小時為預設；控方仍可直接在 Notion 調整日期。
-            deadline = (
-                datetime.now(config.get_tenant().tz) + timedelta(hours=48)
-                if result in ("需修改", "退回")
-                else None
-            )
-            await repositories.set_task_revision_deadline(task_page_id, deadline)
+            if result in ("需修改", "退回"):
+                # Discord 審核由審核人輸入 1～7 天；Notion 手動審核則保留既有欄位值。
+                if revision_days is not None:
+                    deadline = datetime.now(config.get_tenant().tz) + timedelta(days=revision_days)
+                    await repositories.set_task_revision_deadline(task_page_id, deadline)
+            else:
+                await repositories.set_task_revision_deadline(task_page_id, None)
 
     async def complete_discord_review(
         self,
@@ -1691,6 +1801,8 @@ class SubmissionsCog(commands.Cog):
         submission: repositories.SubmissionItem,
         result: str,
         feedback: str,
+        *,
+        revision_days: int | None = None,
     ) -> None:
         now = datetime.now(config.get_tenant().tz)
         reviewer = f"{interaction.user.display_name}｜{interaction.user.id}"
@@ -1703,7 +1815,11 @@ class SubmissionsCog(commands.Cog):
                 source="Discord",
                 notified_at=now,
             )
-            await self._update_review_task_status(submission, result)
+            await self._update_review_task_status(
+                submission,
+                result,
+                revision_days=revision_days,
+            )
         except NotionAPIError:
             logger.exception("審核寫入 Notion 失敗")
             await interaction.followup.send(
@@ -1729,7 +1845,7 @@ class SubmissionsCog(commands.Cog):
         await interaction.followup.send(
             f"✅ 已審核：**{submission.name}** → {result}\n"
             f"已通知藝人：{sent} 位\n"
-            "若要補批改檔，可按下方按鈕後直接在這個頻道上傳附件。",
+            "若需要，可按「附批改檔」；不需要時按「不需補批改檔」完成流程。",
             view=PostReviewAttachmentView(
                 self,
                 submission,

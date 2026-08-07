@@ -7,6 +7,7 @@ from pathlib import Path
 from services.repositories import TaskItem
 
 STATE_PATH = Path(".state/task_dispatch_notifications.json")
+ASSIGNMENT_STATE_PATH = Path(".state/task_assignment_notifications.json")
 
 
 def notification_message(task: TaskItem) -> str:
@@ -49,6 +50,35 @@ def notification_message(task: TaskItem) -> str:
         f"{extra_text}\n"
         f"{submit_text}{description_block}\n\n"
         f"請先按「收到任務」確認你已看到這項任務；完成後再依指定方式提交。"
+    )
+
+
+def is_assignment_dispatchable(task: TaskItem) -> bool:
+    """課後作業已由控方開放，且仍需通知關聯藝人。"""
+    return bool(
+        task.discord_visible
+        and task.open_for_submission
+        and task.artist_page_ids
+        and task.status not in {"已完成", "已取消", "已封存"}
+    )
+
+
+def assignment_notification_message(task: TaskItem) -> str:
+    """課後作業通知；只呈現作業要求，不呈現課程排程候選。"""
+    description = _artist_facing_description(task.description) or "Notion 尚未填寫作業要求。"
+    if len(description) > 900:
+        description = description[:897].rstrip() + "..."
+    deadline = "未設定"
+    if task.end:
+        deadline = task.end.strftime("%m/%d %H:%M" if task.end_has_time else "%m/%d")
+    submit_method = task.submit_method or "請依任務說明"
+    return (
+        f"📚 **課後作業通知**\n"
+        f"任務：**{task.name}**\n"
+        f"截止：{deadline}\n"
+        f"提交方式：{submit_method}\n\n"
+        f"**作業要求**\n{description}\n\n"
+        f"請先按「收到任務」確認你已看到這項作業；完成後再依指定方式提交。"
     )
 
 
@@ -177,6 +207,25 @@ def load_state(path: Path = STATE_PATH) -> dict:
 def save_state(state: dict, path: Path = STATE_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_assignment_state(path: Path = ASSIGNMENT_STATE_PATH) -> dict:
+    return load_state(path)
+
+
+def save_assignment_state(state: dict, path: Path = ASSIGNMENT_STATE_PATH) -> None:
+    save_state(state, path)
+
+
+def was_assignment_notified(task_id: str, state: dict) -> bool:
+    return str(task_id) in {str(value) for value in state.get("notified_task_ids", [])}
+
+
+def mark_assignment_notified(task_id: str, state: dict) -> dict:
+    notified = [str(value) for value in state.get("notified_task_ids", [])]
+    if str(task_id) not in notified:
+        notified.append(str(task_id))
+    return {**state, "notified_task_ids": notified}
 
 
 def forget_task(task_id: str, state: dict) -> dict:
