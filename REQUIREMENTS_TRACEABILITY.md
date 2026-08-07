@@ -6,13 +6,13 @@
 |---|---|---|---|---|---|---|---|
 | 2026-06-29 | 排課從一週縮短到兩天 | 月度時間池＋Task 正式安排；TimeTree 人工補登 | 收集、整理、比對、SLA | Availability、Tasks、Audit | `/時間資訊蒐集`、`/從時間池建立任務` | overlap、提醒與 SLA tests | 已完成 |
 | 2026-06-29 | 藝人主動回填多天多時段 | Discord 分頁批次，同時允許不同日期不同時段 | 月度可配合時間 | Availability | `/管理可配合時間`、`/我的時段` | availability UI / repository tests | 已完成 |
-| 2026-06-29 | 正式事項與可配合時間分開 | Availability 不是承諾；Tasks 是唯一正式來源 | Task-first 安排 | Availability、Tasks、Projects | `/正式通告發布` | formal notice tests | 已完成 |
+| 2026-06-29 | 正式事項與可配合時間分開 | Availability 不是承諾；Tasks 是唯一正式來源 | Task-first 安排 | Availability、Tasks、Projects | `/從時間池建立任務`、勾選 `Discord 顯示=true` | task dispatch tests | 已完成 |
 | 2026-06-29 | 未填與逾時要催收 | 24h 藝人期限、老師 24h、48h 升級、72h 失效警告 | Scheduling SLA | Audit、Availability、Tasks | 控方頻道＋DM | scheduling SLA tests | 已完成 |
 | 2026-06-29 | 任務查詢、提交、審核 | 提交方式由 Notion 指定，Drive 儲存 | 任務完整生命週期 | Tasks、Submissions、People | `/我的任務`、`/提交任務`、`/審核提交` | submissions / review tests | 已完成 |
 | 2026-06-29 | 合約、財務、NAS、分析 | 需先核准新資料模型，不硬塞進定稿 schema | 長期 Roadmap | 待設計 | 待設計 | 待規格化 | 保留，未取消 |
 | 2026-07-11 | 例會後建立課程／錄音／通告 | 課程直接建 Task；其他先建隱藏草稿 | Task 草稿建立 | Tasks、Projects、People | `/從時間池建立任務` | availability matching / task draft tests | 已完成 |
 | 2026-07-11 | 老師可複選候選，控方最後定案 | Task token 表單；老師回覆不直接發通告 | 老師確認頁 | Tasks、Audit | Web 表單＋控方確認 | teacher confirmation tests | 已完成 |
-| 2026-07-11 | 正式通告不能誤發 | 控方預覽後確認；Audit 防重複 | 正式通告 | Tasks、Audit | `/正式通告發布` | formal notice dedupe tests | 已完成 |
+| 2026-07-11 | 正式安排不能誤發 | 控方補齊正式時間後才勾選 `Discord 顯示=true`；通知流程以 Notion 通知時間防重複 | 自動任務通知 | Tasks、Audit | Notion 勾選 `Discord 顯示=true` | task dispatch tests | 已完成 |
 | 2026-07-11 | 藝人不可看到營運機密 | 不開放 Notion；Discord 依 ID、角色與頻道限制 | 權限層 | Artists、People | 個人 ephemeral／DM／私人 Thread | permissions tests | 已完成 |
 | 2026-07-11 | 課程助教可查本人紀錄 | 開放式 RAG；每次同步，失敗用快取 | 課程 AI | Course Meetings、Tasks、Projects | 課程助教自然對話 | course QA / attachment tests | 已完成 |
 | 2026-07-24 | 新任務要確認收到 | 每筆獨立確認；未確認每 6 小時重送原通知 | 任務派發 | Tasks、Audit | 「收到任務」按鈕 | task dispatch tests | 已完成 |

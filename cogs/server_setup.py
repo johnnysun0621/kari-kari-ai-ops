@@ -23,7 +23,7 @@ class ChannelSpec:
 
 def channel_specs() -> tuple[ChannelSpec, ...]:
     return (
-        ChannelSpec("公告區", "ANNOUNCE_CHANNEL_ID", "正式通告、時間收集與 Notion 布告欄", read_only=True),
+        ChannelSpec("公告區", "ANNOUNCE_CHANNEL_ID", "公開類型 Task、時間收集與 Notion 布告欄", read_only=True),
         ChannelSpec("時間資訊彙整", "SCHEDULE_CHANNEL_ID", "月度可配合時間與任務安排比對"),
         ChannelSpec("任務查詢入口", "TASK_CHANNEL_ID", "任務查詢、提交與審核"),
         ChannelSpec("課程助教", "AI_CHANNEL_ID", "藝人私人課程 AI 問答"),

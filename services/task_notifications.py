@@ -1,5 +1,6 @@
 """任務派發通知的純邏輯與本機去重狀態。"""
 import json
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -9,25 +10,100 @@ STATE_PATH = Path(".state/task_dispatch_notifications.json")
 
 
 def notification_message(task: TaskItem) -> str:
-    if task.end is None:
-        deadline = "未設定"
+    is_formal_event = bool(
+        task.start and task.end and task.start_has_time and task.end_has_time
+    )
+    if is_formal_event:
+        deadline_line = f"時間：{task.start:%m/%d %H:%M}–{task.end:%H:%M}\n"
+    elif task.end is None:
+        deadline_line = "截止：未設定\n"
     elif task.end_has_time:
-        deadline = task.end.strftime("%m/%d %H:%M")
+        deadline_line = f"截止：{task.end:%m/%d %H:%M}\n"
     else:
-        deadline = task.end.strftime("%m/%d")
-    submit_method = task.submit_method or "請依任務說明"
-    description = task.description.strip() or "Notion 尚未填寫任務說明。"
+        deadline_line = f"截止：{task.end:%m/%d}\n"
+    description = _artist_facing_description(task.description)
+    if not description:
+        description = "Notion 尚未填寫任務說明。"
     if len(description) > 900:
         description = description[:897].rstrip() + "..."
+    extra_lines = []
+    for label, value in (
+        ("課程類別", task.course_category),
+        ("負責老師", _description_value(task.description, "負責老師")),
+    ):
+        if value:
+            extra_lines.append(f"{label}：{value}")
+    extra_text = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
+    submit_text = (
+        f"提交方式：{task.submit_method}"
+        if task.submit_method
+        else "提交方式／任務說明\n"
+        f"{description}"
+    )
+    description_block = "" if not task.submit_method else f"\n\n**任務內容**\n{description}"
     return (
         f"📌 **新任務通知**\n"
         f"任務：**{task.name}**\n"
         f"類型：{task.task_type or '任務'}\n"
-        f"截止：{deadline}\n"
-        f"提交方式：{submit_method}\n\n"
-        f"**任務內容**\n{description}\n\n"
+        f"{deadline_line}"
+        f"{extra_text}\n"
+        f"{submit_text}{description_block}\n\n"
         f"請先按「收到任務」確認你已看到這項任務；完成後再依指定方式提交。"
     )
+
+
+_INTERNAL_DESCRIPTION_PREFIXES = (
+    "安排來源：",
+    "安排類型：",
+    "任務類型：",
+    "課程類別：",
+    "負責老師：",
+    "需要時長：",
+    "候選時段",
+    "此 Task 同時管理",
+    "正式時間請由營運",
+)
+
+
+def _description_value(description: str, field_name: str) -> str:
+    prefix = f"{field_name}："
+    for line in description.splitlines():
+        if line.strip().startswith(prefix):
+            return line.strip()[len(prefix):].strip()
+    return ""
+
+
+def _artist_facing_description(description: str) -> str:
+    """移除控方排程欄位，保留真正給藝人的任務說明。"""
+    kept: list[str] = []
+    for line in description.splitlines():
+        stripped = line.strip()
+        if (
+            not stripped
+            or any(stripped.startswith(prefix) for prefix in _INTERNAL_DESCRIPTION_PREFIXES)
+            or re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s*[~〜–-]\s*\d{2}:\d{2}$", stripped)
+        ):
+            continue
+        kept.append(stripped)
+    return "\n".join(kept).strip()
+
+
+def is_public_announcement_task(task: TaskItem, public_task_types: tuple[str, ...]) -> bool:
+    """判斷 Task 是否需要額外發到公開公告頻道。"""
+    return (task.task_type or "").strip() in {value.strip() for value in public_task_types}
+
+
+def public_announcement_message(task: TaskItem) -> str:
+    """產生公開公告；不放入藝人私訊用的提交按鈕與私人內容。"""
+    time_text = "時間待定"
+    if task.start and task.end:
+        time_text = f"{task.start:%m/%d %H:%M}–{task.end:%H:%M}"
+    return (
+        f"📢 **{task.task_type or '正式安排'}公告**\n"
+        f"任務：**{task.name}**\n"
+        f"時間：{time_text}\n"
+        f"{task.url or ''}"
+    ).strip()
 
 
 def acknowledgement_reminder_message(tasks: list[TaskItem]) -> str:

@@ -256,6 +256,27 @@ class RemindersCog(commands.Cog):
                     logger.exception("任務派發通知失敗：%s／%s", task.name, artist.name)
             if notifyable_artists and sent == len(notifyable_artists):
                 logger.info("任務派發通知成功：%s，已通知 %s 位藝人", task.name, sent)
+                if task_notifications.is_public_announcement_task(
+                    task, config.get_tenant().public_task_types
+                ):
+                    announce_channel = self.bot.get_channel(
+                        config.get_tenant().resolved_announce_channel_id
+                    )
+                    if announce_channel is not None:
+                        try:
+                            await announce_channel.send(
+                                task_notifications.public_announcement_message(task)
+                            )
+                            await audit.log_event(
+                                event_name=f"任務公開通知｜{task.name}",
+                                action_type="建立",
+                                operator="System",
+                                target_db="Tasks",
+                                target_url=task.url,
+                                after=f"公告頻道 {announce_channel.id}",
+                            )
+                        except Exception:
+                            logger.exception("任務公開公告發送失敗：%s", task.name)
                 try:
                     await repositories.mark_task_discord_notified(task.page_id)
                 except Exception:

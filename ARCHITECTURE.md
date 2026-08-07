@@ -9,7 +9,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 目前主流程：
 
-`/時間資訊蒐集` → 藝人填月度可配合時段 → `/從時間池建立任務` → 控方選安排類型 → 課程走老師確認；錄音／通告／其他建立隱藏 Task 草稿 → `/正式通告發布`
+`/時間資訊蒐集` → 藝人填月度可配合時段 → `/從時間池建立任務` → 控方選安排類型 → 課程走老師確認；錄音／通告／其他建立隱藏 Task 草稿 → 控方填正式時間並勾選 `Discord 顯示=true` → Bot 自動通知
 
 老師確認表單是課程 Task 流程的一部分：
 
@@ -292,10 +292,6 @@ Audit Log 寫入。
 - 24 小時有效期。
 - 成功確認後一次性使用，狀態寫入 `.state/teacher_confirm.json`。
 - 依 `TenantConfig.teacher_link_secret` / `teacher_link_base_url` 判斷功能是否啟用。
-
-### `services/scheduling_flow.py`
-
-Task 正式安排的 Discord 通知積木。`/正式通告發布` 預覽確認後呼叫，負責公告、藝人／老師 DM、Task 通知狀態與 Audit Log。
 
 ## Web
 

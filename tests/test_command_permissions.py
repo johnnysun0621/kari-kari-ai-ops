@@ -10,7 +10,6 @@ from cogs.server_setup import ServerSetupCog
 ADMIN_COMMANDS = [
     SchedulingAdminCog.create_availability_collection,
     SchedulingAdminCog.match_availability_pool,
-    SchedulingAdminCog.publish_formal_notice,
     TasksCog.task_overview,
     OperationsQACog.operations_query,
     ServerSetupCog.initialize_server,
@@ -39,6 +38,7 @@ def test_legacy_scheduling_commands_removed_from_tree():
     assert not ({"排課建立", "排課比對", "排課確認", "排課狀態"} & names)
     assert "從時間池建立任務" in names
     assert "時間池整理" not in names
+    assert "正式通告發布" not in names
 
 
 def test_time_collection_command_uses_task_focused_name():

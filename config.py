@@ -47,7 +47,7 @@ class TenantConfig:
     admin_role_id: int
     admin_notify_channel_id: int
     task_channel_id: int
-    # 公告區（唯讀建議）：正式通告與收集/排課公告；未設定時 fallback 排課頻道
+    # 公告區（唯讀建議）：公開類型 Task 與收集/排課公告；未設定時 fallback 排課頻道
     announce_channel_id: int
     # Notion 營運布告欄同步到 Discord 的頻道；未設定時使用公告區
     bulletin_channel_id: int
@@ -71,6 +71,8 @@ class TenantConfig:
     # === 業務常數 ===
     tz: ZoneInfo
     course_types: tuple[str, ...]
+    # 這些 Task 類型除了私訊藝人，也會發到公告頻道。
+    public_task_types: tuple[str, ...]
     # SLA：排課需求建立後 N 小時內要完成發布通告
     sla_hours: int
     sla_hard_limit_hours: int
@@ -142,6 +144,11 @@ def _load_karikari_from_env() -> TenantConfig:
             "歌唱課", "編曲課", "樂理課", "表演藝術課",
             "舞蹈課", "音樂製作課", "聽力訓練課",
         ),
+        public_task_types=tuple(
+            value.strip()
+            for value in os.getenv("PUBLIC_TASK_TYPES", "通告,演出,拍攝").split(",")
+            if value.strip()
+        ),
         sla_hours=48,
         sla_hard_limit_hours=72,
         remind_before_deadline_hours=6,
@@ -200,6 +207,7 @@ DS_COURSE_MEETINGS = TENANT.ds_course_meetings
 # === 業務常數 ===
 TZ = TENANT.tz
 COURSE_TYPES = list(TENANT.course_types)
+PUBLIC_TASK_TYPES = list(TENANT.public_task_types)
 SLA_HOURS = TENANT.sla_hours
 SLA_HARD_LIMIT_HOURS = TENANT.sla_hard_limit_hours
 REMIND_BEFORE_DEADLINE_HOURS = TENANT.remind_before_deadline_hours

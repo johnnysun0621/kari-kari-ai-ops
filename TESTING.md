@@ -235,8 +235,8 @@
 3. 選「課程」後選課程類別、課程培訓 Project、老師與名稱，確認 Bot 建立一筆 Tasks。
 4. 在 Notion Tasks 的 `課程與作業` 補課程類別與正式開始／截止時間，確認可作為正式佔用判斷。
 5. 選「錄音／通告／其他」時，確認 Bot 建立 `Discord 顯示=false` 的 Task 草稿，且藝人未收到通知。
-6. 在 Task 補齊內容與地點後執行 `/正式通告發布`，確認先預覽、再由控方按鍵發布。
-7. 確認公告、藝人 DM、可通知的老師 DM 與 Audit Log；同一 Task 再次發布應被拒絕。
+6. 在 Task 補齊內容、地點與正式時間後勾選 `Discord 顯示=true`，確認 Bot 自動通知藝人。
+7. 確認藝人 DM 與 Audit Log；再次使用任務通知重送時，只重送尚未確認的藝人。
 8. SLA 的 24／48／72 小時情境使用 `tests/test_scheduling_sla.py` 的模擬時間驗證，不需真等候。
 
 舊 `/排課建立`、`/排課比對`、`/排課確認`、`/排課狀態` 與其 Schedule Request／Course Session 程式已完整刪除。老師確認連結只接受 Task 候選表單。

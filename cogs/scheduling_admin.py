@@ -10,7 +10,7 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, ui_text
 from cogs.scheduling_artist import make_pool_availability_view
-from services import audit, formal_notice, overlap, repositories, scheduling_flow, scheduling_sla, teacher_confirm, time_collection, timeparse
+from services import audit, overlap, repositories, scheduling_sla, teacher_confirm, time_collection, timeparse
 from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
@@ -598,7 +598,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
             f"✅ 已建立課程 Task「**{request_name}**」。\n"
             f"課程類別：{self.course_type}｜老師：{self.teacher_name}\n"
             f"候選時段：\n{lines}\n\n"
-            "目前不會通知藝人；請到 Notion 的 Task 頁面填正式開始／結束時間，之後使用 `/正式通告發布`。課程作業也在同一筆 Task 管理。"
+            "目前不會通知藝人；請先把老師回覆的時段傳給控方，再到 Notion 的 Task 頁面填正式開始／結束時間。確認內容完整後勾選 `Discord 顯示=true`，Bot 會自動通知藝人。課程作業也在同一筆 Task 管理。"
             f"{teacher_link}",
             ephemeral=True,
         )
@@ -736,7 +736,7 @@ class DirectArrangementModal(discord.ui.Modal, title="建立安排 Task 草稿")
             f"安排類型：{self.arrangement_type}\n"
             f"任務類型：{self.task_type}\n"
             f"地點／連結：{location or '待補'}\n"
-            "此為控方草稿；補齊內容後使用 /正式通告發布。"
+            "此為控方草稿；補齊內容後勾選 Discord 顯示=true，Bot 會自動通知藝人。"
         )
         try:
             task = await repositories.create_formal_arrangement_task(
@@ -767,131 +767,9 @@ class DirectArrangementModal(discord.ui.Modal, title="建立安排 Task 草稿")
             f"**{task.name}**｜{timeparse.humanize(start, end)}\n"
             f"任務類型：{self.task_type}\n"
             f"🔗 [開啟 Notion Task，補齊內容]({task.url})\n"
-            "請先在 Notion 補齊任務內容，再使用 `/正式通告發布` 預覽並發布。",
+            "請先在 Notion 補齊任務內容；確認後勾選 `Discord 顯示=true`，Bot 會自動通知藝人。",
             ephemeral=True,
         )
-
-
-def _formal_notice_preview(
-    task: repositories.TaskItem,
-    artists: list[repositories.Artist],
-    teachers: list[repositories.PersonItem],
-) -> str:
-    location = repositories.task_description_field(
-        task.description, "地點", "地點／連結"
-    ) or "⚠️ 未填"
-    teacher_names = "、".join(person.name for person in teachers) or "無"
-    content = task.description.strip() or "⚠️ 未填任務內容"
-    return ui_text.trim_message(
-        "📣 **正式通告發布預覽**\n"
-        f"任務：**{task.name}**\n"
-        f"類型：{task.course_category or task.task_type or '未填'}\n"
-        f"時間：{timeparse.humanize(task.start, task.end)}\n"
-        f"藝人：{'、'.join(artist.name for artist in artists) or '⚠️ 未填'}\n"
-        f"老師：{teacher_names}\n"
-        f"地點／連結：{location}\n\n"
-        f"任務內容：\n{content}\n\n"
-        "確認後會發送公告、藝人 DM；有 Discord ID 的老師也會收到通知。"
-    )
-
-
-class FormalNoticePreviewView(discord.ui.View):
-    def __init__(self, task_page_id: str, operator: discord.abc.User):
-        super().__init__(timeout=600)
-        self.task_page_id = task_page_id
-        self.operator_id = operator.id
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.operator_id:
-            return True
-        await interaction.response.send_message("❌ 只有建立預覽的控方可以發布。", ephemeral=True)
-        return False
-
-    @discord.ui.button(label="確認發布", style=discord.ButtonStyle.danger, emoji="📣")
-    async def publish(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        if formal_notice.was_published(self.task_page_id):
-            await interaction.followup.send("⚠️ 這筆 Task 已發布過正式通告，不會重複發送。", ephemeral=True)
-            return
-        task = await repositories.get_task(self.task_page_id)
-        if task is None or not repositories.is_publishable_formal_task(task):
-            await interaction.followup.send(
-                "❌ Task 已變更，現在不符合發布條件。請確認藝人、開始與截止時間後重新執行指令。",
-                ephemeral=True,
-            )
-            return
-        try:
-            artists = await repositories.get_artists_by_ids(task.artist_page_ids)
-            teachers = await repositories.get_people_items_by_ids(task.teacher_page_ids)
-            result = await scheduling_flow.publish_task_notice(
-                interaction.client,
-                task=task,
-                artists=artists,
-                teachers=teachers,
-                operator=str(interaction.user),
-                discord_user_id=str(interaction.user.id),
-            )
-        except ValueError as exc:
-            if str(exc) == "task_already_published":
-                await interaction.followup.send("⚠️ 這筆 Task 已發布過正式通告。", ephemeral=True)
-                return
-            logger.exception("正式通告 Task 驗證失敗")
-            await interaction.followup.send("❌ Task 不符合正式通告發布條件。", ephemeral=True)
-            return
-        except Exception:
-            logger.exception("正式通告發布失敗")
-            await interaction.followup.send(
-                "❌ 正式通告未成功送達任何管道，未標記為已發布，請檢查頻道與 DM 權限後重試。",
-                ephemeral=True,
-            )
-            return
-        await interaction.followup.send(
-            f"✅ 正式通告已發布：**{result.task_name}**\n"
-            f"{result.time_text}\n{result.notify_summary}",
-            ephemeral=True,
-        )
-        self.stop()
-
-
-class FormalNoticeTaskSelectView(discord.ui.View):
-    def __init__(self, tasks: list[repositories.TaskItem], operator: discord.abc.User):
-        super().__init__(timeout=600)
-        self.tasks = {task.page_id: task for task in tasks}
-        self.operator_id = operator.id
-        self.select = discord.ui.Select(
-            placeholder="選擇要發布的正式 Task…",
-            options=[
-                discord.SelectOption(
-                    label=task.name[:100],
-                    value=task.page_id,
-                    description=timeparse.humanize(task.start, task.end)[:100],
-                )
-                for task in tasks[:25]
-            ],
-        )
-        self.select.callback = self.on_select
-        self.add_item(self.select)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.operator_id:
-            return True
-        await interaction.response.send_message("❌ 這個選單只能由原本執行指令的人操作。", ephemeral=True)
-        return False
-
-    async def on_select(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        task = await repositories.get_task(self.select.values[0])
-        if task is None or formal_notice.was_published(task.page_id):
-            await interaction.followup.send("⚠️ 這筆 Task 已不存在或已發布，請重新執行指令。", ephemeral=True)
-            return
-        artists = await repositories.get_artists_by_ids(task.artist_page_ids)
-        teachers = await repositories.get_people_items_by_ids(task.teacher_page_ids)
-        await interaction.followup.send(
-            _formal_notice_preview(task, artists, teachers),
-            view=FormalNoticePreviewView(task.page_id, interaction.user),
-            ephemeral=True,
-        )
-        self.stop()
 
 
 class SchedulingAdminCog(commands.Cog):
@@ -1060,37 +938,6 @@ class SchedulingAdminCog(commands.Cog):
             view=MonthlyPoolArtistSelectView(
                 artists[:25], month, 時長分鐘, interaction.user,
             ),
-            ephemeral=True,
-        )
-
-    @app_commands.command(name="正式通告發布", description="預覽並發布已有明確時間的正式 Task")
-    @app_commands.default_permissions(administrator=True)
-    @is_admin()
-    async def publish_formal_notice(self, interaction: discord.Interaction):
-        if not await channel_guard.ensure_schedule_channel(interaction):
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            tasks = [
-                task for task in await repositories.get_active_tasks()
-                if repositories.is_publishable_formal_task(task)
-                and not formal_notice.was_published(task.page_id)
-            ]
-        except Exception:
-            logger.exception("讀取正式通告候選 Task 失敗")
-            await interaction.followup.send("❌ 讀取正式 Task 失敗，請稍後再試。", ephemeral=True)
-            return
-        tasks.sort(key=lambda task: task.start or datetime.max.replace(tzinfo=config.TZ))
-        if not tasks:
-            await interaction.followup.send(
-                "目前沒有可發布的正式 Task。請確認 Task 已關聯藝人，且硬性安排有明確開始與截止時間。",
-                ephemeral=True,
-            )
-            return
-        limit_note = "\n⚠️ 目前先顯示最早的 25 筆。" if len(tasks) > 25 else ""
-        await interaction.followup.send(
-            "請選擇要預覽的正式 Task。確認前不會發送任何通知。" + limit_note,
-            view=FormalNoticeTaskSelectView(tasks[:25], interaction.user),
             ephemeral=True,
         )
 

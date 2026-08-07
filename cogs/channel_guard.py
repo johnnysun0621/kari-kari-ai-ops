@@ -40,7 +40,7 @@ def _channel_message(expected_channel_id: int, command_kind: str) -> str:
 
 
 def announce_channel_id() -> int:
-    """公告發送目標：正式通告與收集/排課公告。
+    """公告發送目標：公開類型 Task 與收集/排課公告。
 
     有設定 ANNOUNCE_CHANNEL_ID 就發公告區（唯讀頻道也能點按鈕）；
     未設定時 fallback 回時間資訊彙整（SCHEDULE_CHANNEL_ID），行為與舊版相同。

@@ -1332,23 +1332,6 @@ async def create_formal_arrangement_task(
     return _to_task(page)
 
 
-def is_publishable_formal_task(task: TaskItem) -> bool:
-    """正式通告候選必須是未結案、具精準時間且已關聯藝人的 Task。
-
-    任務類型由租戶的 Tasks schema 決定；拍攝、行政或其他自訂分類也可能
-    是控方要發布的正式通告，因此這裡不再硬編碼只接受硬性佔用類型。
-    """
-    return bool(
-        task.artist_page_ids
-        and _is_active_task(task)
-        and task.start
-        and task.end
-        and task.start_has_time
-        and task.end_has_time
-        and task.end > task.start
-    )
-
-
 def task_description_field(description: str, *field_names: str) -> str:
     for line in description.splitlines():
         stripped = line.strip()
@@ -1357,20 +1340,6 @@ def task_description_field(description: str, *field_names: str) -> str:
             if stripped.startswith(prefix):
                 return stripped[len(prefix):].strip()
     return ""
-
-
-async def mark_task_formally_published(
-    page_id: str,
-    notified_at: datetime | None = None,
-) -> None:
-    """正式發布後開放 Discord 顯示，並避免背景派發再送一次新任務通知。"""
-    await notion_api.update_page(
-        page_id,
-        {
-            "Discord 顯示": _checkbox(True),
-            "Discord 通知時間": _date(notified_at or datetime.now(config.TZ)),
-        },
-    )
 
 
 # ---------- P0-3 作業提交（Submissions & File Index） ----------

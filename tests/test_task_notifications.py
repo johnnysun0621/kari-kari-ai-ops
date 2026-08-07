@@ -41,6 +41,51 @@ def test_notification_message_explains_task_and_submission_method():
     assert "收到任務" in message
 
 
+def test_course_notification_hides_internal_candidates_and_shows_formal_time():
+    task = make_task(name="跳舞課(測試)")
+    task.course_category = "舞蹈課"
+    task.start = datetime(2026, 8, 14, 14, 30, tzinfo=config.TZ)
+    task.end = datetime(2026, 8, 14, 15, 30, tzinfo=config.TZ)
+    task.start_has_time = True
+    task.end_has_time = True
+    task.description = (
+        "安排來源：/從時間池建立任務\n"
+        "課程類別：舞蹈課\n"
+        "負責老師：子喬\n"
+        "候選時段（由營運最後確認）：\n"
+        "2026-08-14 14:30~15:30\n"
+        "此 Task 同時管理課程場次與課後作業；正式時間請由營運直接填寫開始日。"
+    )
+
+    message = task_notifications.notification_message(task)
+
+    assert "時間：08/14 14:30–15:30" in message
+    assert "截止：" not in message
+    assert "候選時段" not in message
+    assert "安排來源" not in message
+    assert "負責老師：子喬" in message
+
+
+def test_missing_submit_method_shows_task_description_instead_of_placeholder():
+    task = make_task(submit_method=None)
+    task.description = "請完成舞蹈練習，並於課後提交錄影。"
+
+    message = task_notifications.notification_message(task)
+
+    assert "提交方式：請依任務說明" not in message
+    assert "提交方式／任務說明" in message
+    assert "請完成舞蹈練習，並於課後提交錄影。" in message
+
+
+def test_public_announcement_uses_configured_task_types():
+    course = make_task()
+    public = make_task(name="八月拍攝")
+    public.task_type = "拍攝"
+
+    assert not task_notifications.is_public_announcement_task(course, ("通告", "演出", "拍攝"))
+    assert task_notifications.is_public_announcement_task(public, ("通告", "演出", "拍攝"))
+
+
 def test_acknowledgement_reminder_lists_each_unconfirmed_task():
     tasks = [make_task(page_id="task-a", name="歌唱課作業"), make_task(page_id="task-b", name="舞蹈課作業")]
 
