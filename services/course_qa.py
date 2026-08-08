@@ -94,6 +94,7 @@ async def answer_course_question(
         "model": tenant.llm_model,
         "temperature": 0.2,
         "max_tokens": tenant.llm_max_tokens,
+        "thinking": {"type": "disabled"},
         "messages": [
             {
                 "role": "system",

@@ -107,6 +107,7 @@ async def classify_query(
         "model": tenant.llm_model,
         "temperature": 0,
         "max_tokens": 220,
+        "thinking": {"type": "disabled"},
         "messages": [
             {
                 "role": "system",
