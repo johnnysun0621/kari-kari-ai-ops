@@ -11,10 +11,10 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 | [HANDOFF.md](HANDOFF.md) | AI／工程師協作者接手規則、改檔對照、測試要求 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 程式模組責任、資料邊界、平轉狀態 |
 | [TESTING.md](TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
-| [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Discord 附件限制、10MB 分界、審核通知 |
+| [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Google Drive 資料夾、審核通知 |
 | [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔 OAuth 設定教學（含平轉重跑流程） |
 | [ROADMAP.md](ROADMAP.md) | **進度總表＋下一步**＋進度日誌＋待 Johnny 提供事項——接手先看這裡 |
-| [RESEARCH.md](RESEARCH.md) | 需求研究：Kickoff 客戶需求、11 張 Notion 資料庫欄位對應、Gap 分析、決策收斂紀錄 |
+| [RESEARCH.md](RESEARCH.md) | 需求研究：Kickoff 時期資料庫盤點、Gap 分析、決策收斂紀錄 |
 | [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則（多租戶平展化、資料安全）——Johnny 親寫，架構決策的最高依據 |
 | [README.md](README.md) | 專案入口、安裝、.env 設定、常用文件 |
 
@@ -70,14 +70,14 @@ python bot.py                      # 需 .env（見 README）
 
 ## Notion 資料層
 
-- 正式資料層 11 張表（ID 內建在 config.py，與 Notion「工程設定區」核對一致）
+- Runtime 目前讀寫 9 個 Notion Data Sources（ID 內建在 `config.py`）；其他 workspace 資料庫與 views 不代表 Bot 會讀取
 - 速率 ~3 req/s per integration token——這是產品天花板，效能問題先想快取，不是拆節流
 - 欄位級 schema 與功能對應：見 RESEARCH.md 第二節
 - Audit Log 寫入失敗不阻斷主流程（audit.py 已包好）
 - 月度收集進行中狀態持久化在 `.state/time_collection.json`（bot 本機狀態，非營運資料；已 gitignore）
 
-## 目前狀態（2026-07-10）
+## 目前狀態（2026-08-08）
 
 月度時間池主流程、任務查詢、任務提醒、雙頻道分流、Drive 檔案歸檔、`/提交任務`、`/審核提交` 已落地。  
-檔案提交標準以免費 Discord 使用者為準：10MB 以下走同頻道附件，入口 3 小時有效；10MB 以上走 Drive 連結。
+藝人檔案提交統一走 Bot 指定的 Google Drive 資料夾，或貼自己的 Drive 連結；Discord 不接收藝人作業附件。入口 3 小時有效。
 老師外部確認連結屬歷史相容功能，目前不啟動；主流程是 `/從時間池建立任務` 後由控方在 Tasks 完成正式安排。

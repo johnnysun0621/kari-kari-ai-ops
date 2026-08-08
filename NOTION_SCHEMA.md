@@ -243,7 +243,7 @@ Bot 寫入：
 ### 提交方式與檔案實際存放位置
 
 - Notion `Tasks.提交方式` 是唯一提交方式來源；Discord 端只依此引導與阻擋錯誤提交。
-- Discord 上傳檔案自動歸檔公司 Google Drive。
+- 藝人檔案由 Bot 建立公司 Google Drive 指定資料夾並驗證，或接受藝人自己的 Drive 連結；不接收 Discord 作業附件。
   結構（2026-07-10 拍板，取代 Kickoff 的課程→日期→藝人）：
   **藝人專區 → 任務類型夾 → YYYY-MM**（每類型一夾，隱私隔離：專區只分享給該藝人）。
 - `Artists.Google Drive 資料夾` 存專區連結，Bot 自動 find-or-create 子資料夾。
@@ -255,7 +255,7 @@ Bot 寫入：
 - 回寫 `Drive URL`＋`Drive File ID`＋`原始檔名`＋`檔案大小 MB`；其中 `原始檔名` 保留使用者上傳時的檔名。
 - 大檔流程會先建立/取得對應 Drive 目標資料夾；藝人提交大檔時必須貼 Drive 檔案或資料夾連結；老師批改檔案或連結會併入 `審核回饋`。
 - 路徑邏輯在 `services/drive_archive.py`；Drive API 操作在 `services/drive_api.py`。
-- 自動歸檔標準分界：`<=10MB` 走 Discord 同頻道附件；`>10MB` 走雲端連結。
+- 藝人檔案不做 Discord 10MB 分流，全部走 Google Drive；老師批改附件仍是獨立審核流程。
 - 大型 Stem、DAW 專案、影片、大型音檔請在 Notion 指定 `Drive 連結` 或 `混合`。
 - **P2**：冷資料轉 NAS，`NAS 路徑` 欄位已預留。
 

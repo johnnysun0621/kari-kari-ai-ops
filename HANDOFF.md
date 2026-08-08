@@ -10,7 +10,7 @@
 3. [ROADMAP.md](ROADMAP.md)：目前進度與下一步。
 4. [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md)：Discord 頻道組成與 slash command 分流。
 5. [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md)：每個 slash command 用途與 Notion 互動。
-6. [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)：任務提交方式、Discord 上傳限制、10MB 分界、審核通知。
+6. [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)：任務提交方式、Drive 資料夾、審核通知。
 7. [NOTION_SCHEMA.md](NOTION_SCHEMA.md)：Notion 資料庫交互邏輯。
 8. [ARCHITECTURE.md](ARCHITECTURE.md)：工程架構與程式責任切分。
 9. [TESTING.md](TESTING.md)：測試與驗收方式。
@@ -54,6 +54,8 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 4. 控方在 `任務查詢入口` 執行 `/任務總覽`。
 5. 需要交作業／作品時，藝人執行 `/提交任務`，Bot 依 Notion `提交方式` 引導。
 6. 控方用 `/審核提交` 回覆通過／需修改／退回，Bot DM 藝人審核結果。
+
+目前共有 13 個 slash commands；頻道與角色對應以 [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) 為準。藝人作業檔案不走 Discord 附件，統一上傳至 Bot 指定的 Drive 資料夾或貼自己的 Drive 連結；老師批改附件是獨立流程。
 
 舊 `/排課*`、`Schedule Requests` 與 `Course Sessions` 已從程式、設定與文件介面移除。
 `/從時間池建立任務` 的課程分流會選擇課程培訓 Project、課程類別、老師與自訂名稱，直接建立 `Tasks`；候選時段寫入任務說明，正式時間由營運填回 Task。

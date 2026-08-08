@@ -21,7 +21,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 | [FLOWCHART.md](FLOWCHART.md) | Mermaid 主流程圖與資料庫責任分界 |
 | [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) | Discord 頻道組成與 slash command 對應 |
 | [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md) | Discord slash command 使用手冊 |
-| [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Discord 上傳限制、10MB 分界、審核通知 |
+| [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Drive 資料夾、審核通知 |
 | [OPERATIONS_PLAYBOOK.md](OPERATIONS_PLAYBOOK.md) | 控方營運 SOP |
 | [NOTION_SCHEMA.md](NOTION_SCHEMA.md) | Notion 資料庫交互邏輯 |
 | [NOTION_VIEWS_AUDIT.md](NOTION_VIEWS_AUDIT.md) | KariKari Testing 各區與 view 稽核 |
@@ -76,7 +76,7 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 
 | 變數 | 說明 |
 |---|---|
-| `GOOGLE_DRIVE_ROOT_FOLDER_ID` | 啟用 Discord 小檔自動歸檔到公司 Google Drive |
+| `GOOGLE_DRIVE_ROOT_FOLDER_ID` | 啟用任務提交與老師回饋的公司 Google Drive 資料夾 |
 
 ## Discord / Notion 前置設定
 
@@ -108,8 +108,10 @@ services/
 cogs/
   scheduling_admin.py     # /時間資訊蒐集 /從時間池建立任務
   scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段 /管理可配合時間
-  tasks_artist.py         # /我的任務 /任務總覽
+  tasks_artist.py         # /我的任務 /任務總覽 /任務通知重送
   submissions.py          # /提交任務 /審核提交
+  bulletin.py             # /布告欄同步 + Notion 公告背景同步
+  course_qa.py            # /課程問答 + 課程助教頻道自然對話
   operations_qa.py        # /營運查詢（控方限定）
   server_setup.py         # /伺服器初始化（角色、頻道、env 清單）
   reminders.py            # 月度時間池、排課 SLA、任務與審核提醒

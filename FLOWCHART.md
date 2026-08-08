@@ -17,12 +17,12 @@ flowchart TD
     F -->|是| H["藝人用 /提交任務"]
 
     H --> I{"Notion 指定提交方式"}
-    I -->|檔案 10MB 以下| J["同頻道上傳附件"]
-    I -->|Drive 連結| K["貼雲端連結"]
+    I -->|檔案| J["上傳至 Bot 指定 Drive 資料夾"]
+    I -->|Drive 連結| K["貼自己的 Drive 連結"]
     I -->|文字| L["填文字內容"]
     I -->|混合| M["選檔案或連結 / 文字"]
 
-    J --> N["Bot 歸檔到公司 Google Drive"]
+    J --> N["Bot 驗證指定資料夾的新檔案"]
     K --> O["Bot 寫入 Submissions"]
     L --> O
     M --> O
