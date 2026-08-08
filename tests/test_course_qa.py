@@ -1,5 +1,5 @@
 from cogs.course_qa import _sanitize_memory, _split_discord_message, can_artist_use_ai
-from services import course_qa, llm_usage, repositories
+from services import course_qa, llm_response, llm_usage, repositories
 
 
 def test_split_discord_message_respects_limit_and_preserves_content():
@@ -78,3 +78,28 @@ def test_context_builder_keeps_record_boundaries_and_respects_limit():
     assert "來源：https://notion.so/record-0" in context
     if "【課程 1" in context:
         assert "來源：https://notion.so/record-1" in context
+
+
+def test_extract_llm_text_reads_openai_message_content():
+    payload = {"choices": [{"message": {"content": "完整答案"}}]}
+
+    assert llm_response.extract_text(payload) == "完整答案"
+
+
+def test_extract_llm_text_reads_content_block_list():
+    payload = {
+        "choices": [
+            {"message": {"content": [{"type": "text", "text": "分段答案"}]}}
+        ]
+    }
+
+    assert llm_response.extract_text(payload) == "分段答案"
+
+
+def test_extract_llm_text_reads_common_compatible_fallbacks():
+    assert llm_response.extract_text({"choices": [{"text": "舊式答案"}]}) == "舊式答案"
+    assert llm_response.extract_text({"output_text": "輸出答案"}) == "輸出答案"
+
+
+def test_extract_llm_text_returns_empty_for_incomplete_response():
+    assert llm_response.extract_text({"choices": [{"message": {"content": None}}]}) == ""

@@ -7,7 +7,7 @@ from datetime import datetime
 import httpx
 
 import config
-from services import llm_usage
+from services import llm_response, llm_usage
 from services.repositories import CourseMeetingRecord
 
 
@@ -132,7 +132,9 @@ async def classify_query(
             )
             response.raise_for_status()
         response_data = response.json()
-        raw = response_data["choices"][0]["message"]["content"]
+        raw = llm_response.extract_text(response_data)
+        if not raw:
+            raise ValueError("LLM intent response has no text")
         llm_usage.record(response_data.get("usage"), user_key=usage_key)
         data = _parse_json(raw)
         valid_ids = {record.page_id for record in records}

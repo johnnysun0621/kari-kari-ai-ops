@@ -287,6 +287,7 @@ Drive 資料夾回寫驗收：
 12. 送出與課程無關的模糊問題，確認 Bot 要求補充範圍，不會直接回答前幾筆課程。
 13. 連續快速送出兩個問題，確認同一位藝人的請求依序完成，沒有互相覆蓋回答。
 14. 模擬 LLM timeout／網路錯誤／5xx，確認 Bot 最多自動重試一次；模擬空白或錯誤 JSON，確認顯示明確失敗訊息。
+15. LongCat 環境確認 `LLM_BASE_URL=https://api.longcat.chat/openai/v1`；用簡短問題確認 log 呼叫 `/openai/v1/chat/completions` 並回傳完整答案。
 
 ### 營運 AI 驗收
 

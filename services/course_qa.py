@@ -4,7 +4,7 @@ import asyncio
 import httpx
 
 import config
-from services import llm_usage
+from services import llm_response, llm_usage
 from services.repositories import CourseMeetingRecord
 
 
@@ -115,7 +115,8 @@ async def answer_course_question(
             },
         ],
     }
-    response = None
+    data: dict | None = None
+    answer = ""
     last_error: Exception | None = None
     async with httpx.AsyncClient(timeout=COURSE_QA_TIMEOUT_SECONDS) as client:
         for attempt in range(COURSE_QA_MAX_ATTEMPTS):
@@ -126,7 +127,21 @@ async def answer_course_question(
                     json=payload,
                 )
                 response.raise_for_status()
-                break
+                parsed = response.json()
+                if not isinstance(parsed, dict):
+                    raise ValueError("LLM response is not an object")
+                answer = llm_response.extract_text(parsed)
+                if answer:
+                    data = parsed
+                    break
+                last_error = ValueError(
+                    f"LLM response has no answer text; keys={sorted(parsed.keys())}"
+                )
+                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
+                    raise CourseQAError(
+                        str(last_error),
+                        "⚠️ 課程助教收到不完整回應，請稍後再試。",
+                    )
             except httpx.HTTPStatusError as exc:
                 last_error = exc
                 if not _retryable_http_error(exc) or attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
@@ -147,22 +162,16 @@ async def answer_course_question(
                     "LLM API 網路呼叫失敗",
                     "⚠️ 課程助教暫時連不上 API，請稍後再試。",
                 ) from exc
+            except (TypeError, ValueError) as exc:
+                last_error = exc
+                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
+                    raise CourseQAError(
+                        "LLM API 回傳不是有效 JSON",
+                        "⚠️ 課程助教收到無效回應，請稍後再試。",
+                    ) from exc
             await asyncio.sleep(0.5 * (attempt + 1))
-    if response is None:
+    if data is None or not answer:
         raise CourseQAError("LLM API 沒有回傳結果") from last_error
-    try:
-        data = response.json()
-    except (TypeError, ValueError) as exc:
-        raise CourseQAError("LLM API 回傳不是有效 JSON", "⚠️ 課程助教收到無效回應，請稍後再試。") from exc
     llm_usage.record(data.get("usage"), user_key=usage_key)
-    try:
-        answer = data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError, AttributeError, TypeError) as exc:
-        raise CourseQAError(
-            "LLM API 回傳格式不正確",
-            "⚠️ 課程助教收到不完整回應，請稍後再試。",
-        ) from exc
-    if not answer:
-        raise CourseQAError("LLM API 回傳空答案", "⚠️ 課程助教沒有取得有效回答，請稍後再試。")
     sources = "\n".join(f"・[{record.title}]({record.url})" for record in records if record.url)
     return f"{answer}\n\n**參考課程紀錄**\n{sources}"[:3900]
