@@ -34,7 +34,14 @@ TASK_CHANNEL_ID=
 AI_CHANNEL_ID=
 ADMIN_NOTIFY_CHANNEL_ID=
 BULLETIN_CHANNEL_ID=
+
+LLM_BASE_URL=https://api.longcat.chat/openai/v1
+LLM_MODEL=LongCat-2.0
+LLM_DAILY_TOKEN_LIMIT=0
+LLM_PER_ARTIST_DAILY_TOKEN_LIMIT=0
 ```
+
+`0` 代表 Bot 不啟用每日 token 上限，但仍記錄使用量；供應商帳戶的額度與速率限制不會因此取消。`LLM_API_KEY` 另放部署平台 secret 或本機 `.env`，不要寫入文件。
 
 不要把 `.env`、Discord token、Notion token 或 LLM API key commit 到 Git。
 

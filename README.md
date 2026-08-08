@@ -64,8 +64,10 @@ python bot.py
 | `LLM_BASE_URL` | LLM API base URL，預設 `https://api.openai.com/v1`；LongCat 使用 `https://api.longcat.chat/openai/v1` |
 | `LLM_MODEL` | LLM 模型名稱，預設 `gpt-4o-mini` |
 | `LLM_MAX_TOKENS` | 單次課程助教回答上限，預設 `800` |
-| `LLM_DAILY_TOKEN_LIMIT` | 每租戶每日 token 上限；`0` 表示不限，只記錄數字 |
-| `LLM_PER_ARTIST_DAILY_TOKEN_LIMIT` | 每位藝人每日 token 上限；`0` 表示不限 |
+| `LLM_DAILY_TOKEN_LIMIT` | 每租戶每日 token 護欄；目前預設 `0`（不限），使用量仍只記錄數字 |
+| `LLM_PER_ARTIST_DAILY_TOKEN_LIMIT` | 每位藝人每日 token 護欄；目前預設 `0`（不限） |
+
+KariKari 測試環境目前不啟用 Bot 端每日 token 上限。LLM 供應商帳戶本身的額度、速率限制與服務狀態仍然適用。
 
 這些 ID 都是租戶設定：換到其他公司時，頻道名稱 / 用途可以維持一致，但實際 Discord ID、role ID、Notion Data Source ID 會改。  
 KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫或換租戶時，才需要在 `.env` 覆寫 `NOTION_DS_*`。

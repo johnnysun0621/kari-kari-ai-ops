@@ -20,6 +20,8 @@
 
 課程助教近期新增規則：先顯示藝人自己的課程檔案索引，再依使用者指定的課程頁／檔案檢索；不要把所有附件文字預先混入回答 context。索引顯示不會中斷當次問題的回答。詳見 `DISCORD_COMMANDS.md`、`NOTION_SCHEMA.md` 的課程助教段落。
 
+目前 AI runtime：LongCat 使用官方 `https://api.longcat.chat/openai/v1`，請求關閉 thinking；空白或不完整回應會重試。系統與個人每日 token 護欄目前皆為 `0`（不限額），使用量仍記錄在本機狀態檔。API key 只放 `.env`，不得寫入 Git 或文件。
+
 ## 目前產品方向
 
 KariKari 是第一個測試租戶，但此專案不是一次性客製。

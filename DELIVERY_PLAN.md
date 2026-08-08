@@ -62,11 +62,11 @@
 - [x] 補上未簽權限測試與 Artists 文件說明
 
 ### D6｜AI 問答（會議 #9，~2-3 天）
-- [x] 課程助教沿用 OpenAI 相容 chat（httpx 直打 `/v1/chat/completions`）；TenantConfig 支援 base URL、API key、model 與 token 護欄
+- [x] 課程助教沿用 OpenAI 相容 chat（httpx 直打 `/v1/chat/completions`）；LongCat 使用官方 `/openai/v1` 並關閉 thinking；TenantConfig 支援 base URL、API key、model 與 token 護欄
 - [x] `cogs/course_qa.py`：課程助教自然語言入口與 `/課程問答`；依 Discord User ID 只讀該藝人可見的課程紀錄，回答附來源
 - [x] 課程紀錄在組裝端依藝人權限過濾，正文／附件分開讀取並截斷；Notion 每次提問重新同步，失敗才使用快取
-- [x] 護欄：`max_tokens`、每日 token 上限、逾時、錯誤不洩 context；使用量只寫 `.state/llm_usage.json`
-- [x] 增加每位藝人每日 token 上限；停用狀態不可使用，使用量不保存問題全文。
+- [x] 護欄：`max_tokens`、可設定每日 token 上限、逾時、錯誤不洩 context；使用量只寫 `.state/llm_usage.json`。KariKari 目前每日上限為 `0`（不限額）。
+- [x] 支援每位藝人每日 token 護欄；目前為 `0`（不限額）。停用狀態不可使用，使用量不保存問題全文。
 - [x] AI 回答可回報到 Notion 布告欄 `🙋 使用回饋`。
 - [x] 新增控方限定 `/營運查詢`，查 Tasks、Projects、會議摘要與審核回饋。
 

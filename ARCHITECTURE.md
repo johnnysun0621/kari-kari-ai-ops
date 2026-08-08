@@ -179,7 +179,9 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - 每次提問重新讀取 Notion；Notion 暫時失敗時才退回上次成功快取。
 - 長回覆會切成 Discord 可接受的多則訊息。
 - 公開問題刪除失敗只寫 log，不把權限錯誤洗到頻道。
-- 以藝人 page ID 分開計算每日 token，並同時受租戶總額限制。
+- 以藝人 page ID 分開記錄 token，並保留個人與租戶兩層可設定護欄；目前兩者皆為 `0`（不限額）。
+- LongCat 使用官方 `/openai/v1/chat/completions`，請求明確設定 `thinking.type=disabled`；回應解析相容文字、content list、`choices[].text` 與 `output_text`。
+- HTTP 200 但正式內容空白或格式不完整時視為失敗並重試，不會把 reasoning content 當成藝人回答。
 - 回答附問題回報入口；只把使用者主動填寫的回報寫入 Notion 布告欄。
 
 ### `cogs/operations_qa.py`
