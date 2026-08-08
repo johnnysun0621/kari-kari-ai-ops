@@ -98,8 +98,8 @@ class TenantConfig:
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
     llm_max_tokens: int = 800
-    llm_daily_token_limit: int = 50000
-    llm_per_artist_daily_token_limit: int = 5000
+    llm_daily_token_limit: int = 0
+    llm_per_artist_daily_token_limit: int = 0
 
     # === 老師外部確認連結（Phase 2）===
     # secret 未設定＝功能停用；base_url＝Tunnel 對外網址（開發期用 trycloudflare）
@@ -166,8 +166,8 @@ def _load_karikari_from_env() -> TenantConfig:
         llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
         llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 800),
-        llm_daily_token_limit=_env_int("LLM_DAILY_TOKEN_LIMIT", 50000),
-        llm_per_artist_daily_token_limit=_env_int("LLM_PER_ARTIST_DAILY_TOKEN_LIMIT", 5000),
+        llm_daily_token_limit=_env_int("LLM_DAILY_TOKEN_LIMIT", 0),
+        llm_per_artist_daily_token_limit=_env_int("LLM_PER_ARTIST_DAILY_TOKEN_LIMIT", 0),
         teacher_link_secret=os.getenv("TEACHER_LINK_SECRET", ""),
         teacher_link_base_url=os.getenv("TEACHER_LINK_BASE_URL", ""),
         web_port=_env_int("WEB_PORT", 8787),
