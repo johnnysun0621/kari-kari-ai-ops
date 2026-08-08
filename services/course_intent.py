@@ -12,6 +12,8 @@ from services.repositories import CourseMeetingRecord
 
 
 _OTHER_FOLLOWUP_RE = re.compile(r"其他|另外|別的|其餘|更多|換一堂|換一個|下一堂|再看看")
+_BROAD_QUERY_RE = re.compile(r"上過|學過|有哪些|哪幾堂|全部|所有|總覽|統整|整理|課程紀錄|上課紀錄")
+MAX_SELECTED_RECORDS = 8
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class QueryIntent:
     record_ids: tuple[str, ...] = ()
     terms: tuple[str, ...] = ()
     attachment_names: tuple[str, ...] = ()
+    broad: bool = False
 
 
 def _month_from_text(text: str) -> str | None:
@@ -44,14 +47,25 @@ def _fallback_intent(question: str, records: list[CourseMeetingRecord]) -> Query
     if month:
         matches = [record.page_id for record in records
                    if record.date and record.date.strftime("%Y-%m") == month]
-        return QueryIntent(mode="month_overview", month=month, record_ids=tuple(matches))
+        return QueryIntent(
+            mode="month_overview", month=month, record_ids=tuple(matches), broad=True
+        )
     attachment_names = tuple(
         attachment.name
         for record in records
         for attachment in record.attachments
         if attachment.name.lower() in normalized
     )
-    return QueryIntent(record_ids=tuple(matches), attachment_names=attachment_names)
+    return QueryIntent(
+        record_ids=tuple(matches),
+        attachment_names=attachment_names,
+        broad=is_broad_query(question),
+    )
+
+
+def is_broad_query(question: str) -> bool:
+    """只允許明確的總覽問題擴大到課程目錄，避免模糊問題誤讀資料。"""
+    return bool(_BROAD_QUERY_RE.search(question))
 
 
 def _is_other_followup(question: str, memory: dict | None) -> bool:
@@ -130,12 +144,19 @@ async def classify_query(
             str(value) for value in data.get("attachment_names", [])
             if str(value) in valid_attachment_names
         )
+        mode = str(data.get("mode", "course_question"))
+        if mode not in {"month_overview", "course_question", "transcript_search", "task_lookup", "compare"}:
+            mode = "course_question"
+        month = data.get("month") or _month_from_text(question)
+        if month and not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", str(month)):
+            month = _month_from_text(question)
         return QueryIntent(
-            mode=str(data.get("mode", "course_question")),
-            month=data.get("month") or _month_from_text(question),
+            mode=mode,
+            month=month,
             record_ids=record_ids,
             terms=tuple(str(value) for value in data.get("terms", [])[:8]),
             attachment_names=attachment_names,
+            broad=is_broad_query(question),
         )
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
         return _fallback_intent(question, records)
@@ -147,12 +168,12 @@ def select_records(
     by_id = {record.page_id: record for record in records}
     selected = [by_id[page_id] for page_id in intent.record_ids if page_id in by_id]
     if selected:
-        return selected
+        return selected[:MAX_SELECTED_RECORDS]
     if intent.month:
         monthly = [record for record in records
                    if record.date and record.date.strftime("%Y-%m") == intent.month]
         if monthly:
-            return monthly
+            return monthly[:MAX_SELECTED_RECORDS]
     if intent.terms:
         terms = [term.lower() for term in intent.terms if len(term) >= 2]
         matched = [
@@ -160,11 +181,13 @@ def select_records(
             if any(term in f"{record.title} {record.summary} {record.content}".lower() for term in terms)
         ]
         if matched:
-            return matched
+            return matched[:MAX_SELECTED_RECORDS]
     previous_ids = (memory or {}).get("record_ids", [])
     if intent.mode == "compare" and previous_ids:
         remaining = [record for record in records if record.page_id not in previous_ids]
         if remaining:
-            return remaining[:8]
+            return remaining[:MAX_SELECTED_RECORDS]
     previous = [by_id[page_id] for page_id in previous_ids if page_id in by_id]
-    return previous or records[:8]
+    if previous:
+        return previous[:MAX_SELECTED_RECORDS]
+    return records[:MAX_SELECTED_RECORDS] if intent.broad else []

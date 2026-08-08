@@ -1,9 +1,16 @@
 """課程 AI 助教：以已授權的 Notion 課程紀錄回答問題。"""
+import asyncio
+
 import httpx
 
 import config
 from services import llm_usage
 from services.repositories import CourseMeetingRecord
+
+
+COURSE_QA_TIMEOUT_SECONDS = 45
+COURSE_QA_MAX_ATTEMPTS = 2
+COURSE_QA_MAX_CONTEXT_CHARS = 16000
 
 
 class CourseQAError(Exception):
@@ -35,6 +42,28 @@ def _record_text(record: CourseMeetingRecord, attachment_names: tuple[str, ...] 
     return "\n\n".join(sections)
 
 
+def build_context(
+    records: list[CourseMeetingRecord],
+    attachment_names: tuple[str, ...] = (),
+    max_chars: int = COURSE_QA_MAX_CONTEXT_CHARS,
+) -> str:
+    """以完整紀錄為單位組上下文，避免硬切在來源或段落中間。"""
+    sections: list[str] = []
+    total = 0
+    for record in records:
+        section = _record_text(record, attachment_names)
+        separator = "\n\n" if sections else ""
+        if total + len(separator) + len(section) > max_chars:
+            break
+        sections.append(section)
+        total += len(separator) + len(section)
+    return "\n\n".join(sections)
+
+
+def _retryable_http_error(error: httpx.HTTPStatusError) -> bool:
+    return error.response.status_code >= 500
+
+
 async def answer_course_question(
     artist_name: str,
     question: str,
@@ -55,7 +84,12 @@ async def answer_course_question(
             "LLM daily token limit reached",
             quota_message(quota),
         )
-    context = "\n\n".join(_record_text(record, attachment_names) for record in records)[:16000]
+    context = build_context(records, attachment_names)
+    if not context:
+        raise CourseQAError(
+            "沒有可供回答的課程內容",
+            "⚠️ 找不到可供回答的課程內容，請改指定課程或月份。",
+        )
     payload = {
         "model": tenant.llm_model,
         "temperature": 0.2,
@@ -81,35 +115,54 @@ async def answer_course_question(
             },
         ],
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        try:
-            response = await client.post(
-                f"{tenant.llm_base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {tenant.llm_api_key}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        except httpx.TimeoutException as exc:
-            raise CourseQAError(
-                "LLM API 回應逾時",
-                "⚠️ 課程助教回應逾時，請稍後再試。",
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:300].replace("\n", " ")
-            raise CourseQAError(
-                f"LLM API HTTP {exc.response.status_code}: {body}",
-                "⚠️ 課程助教 API 暫時無法回應，請稍後再試。",
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise CourseQAError(
-                "LLM API 網路呼叫失敗",
-                "⚠️ 課程助教暫時連不上 API，請稍後再試。",
-            ) from exc
-    data = response.json()
+    response = None
+    last_error: Exception | None = None
+    async with httpx.AsyncClient(timeout=COURSE_QA_TIMEOUT_SECONDS) as client:
+        for attempt in range(COURSE_QA_MAX_ATTEMPTS):
+            try:
+                response = await client.post(
+                    f"{tenant.llm_base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {tenant.llm_api_key}"},
+                    json=payload,
+                )
+                response.raise_for_status()
+                break
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if not _retryable_http_error(exc) or attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
+                    body = exc.response.text[:300].replace("\n", " ")
+                    raise CourseQAError(
+                        f"LLM API HTTP {exc.response.status_code}: {body}",
+                        "⚠️ 課程助教 API 暫時無法回應，請稍後再試。",
+                    ) from exc
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_error = exc
+                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
+                    raise CourseQAError(
+                        "LLM API 網路呼叫失敗或逾時",
+                        "⚠️ 課程助教暫時無法連線，請稍後再試。",
+                    ) from exc
+            except httpx.HTTPError as exc:
+                raise CourseQAError(
+                    "LLM API 網路呼叫失敗",
+                    "⚠️ 課程助教暫時連不上 API，請稍後再試。",
+                ) from exc
+            await asyncio.sleep(0.5 * (attempt + 1))
+    if response is None:
+        raise CourseQAError("LLM API 沒有回傳結果") from last_error
+    try:
+        data = response.json()
+    except (TypeError, ValueError) as exc:
+        raise CourseQAError("LLM API 回傳不是有效 JSON", "⚠️ 課程助教收到無效回應，請稍後再試。") from exc
     llm_usage.record(data.get("usage"), user_key=usage_key)
     try:
         answer = data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise CourseQAError("LLM API 回傳格式不正確") from exc
+    except (KeyError, IndexError, AttributeError, TypeError) as exc:
+        raise CourseQAError(
+            "LLM API 回傳格式不正確",
+            "⚠️ 課程助教收到不完整回應，請稍後再試。",
+        ) from exc
+    if not answer:
+        raise CourseQAError("LLM API 回傳空答案", "⚠️ 課程助教沒有取得有效回答，請稍後再試。")
     sources = "\n".join(f"・[{record.title}]({record.url})" for record in records if record.url)
     return f"{answer}\n\n**參考課程紀錄**\n{sources}"[:3900]

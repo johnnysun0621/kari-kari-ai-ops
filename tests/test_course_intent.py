@@ -50,3 +50,21 @@ def test_other_follow_up_excludes_previous_course():
     )
 
     assert [item.page_id for item in selected] == ["august"]
+
+
+def test_unrelated_question_does_not_expand_to_first_records():
+    records = [record("july", "歌唱課", 7), record("august", "表演課", 8)]
+
+    intent = course_intent._fallback_intent("我想問薪資制度", records)
+
+    assert course_intent.select_records(records, intent) == []
+
+
+def test_broad_question_can_select_bounded_catalog():
+    records = [record(str(index), f"第{index}堂課", 8) for index in range(12)]
+
+    intent = course_intent._fallback_intent("我想統整上過哪些課", records)
+    selected = course_intent.select_records(records, intent)
+
+    assert len(selected) == course_intent.MAX_SELECTED_RECORDS
+    assert [item.page_id for item in selected] == [str(index) for index in range(8)]

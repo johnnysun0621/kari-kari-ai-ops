@@ -53,3 +53,28 @@ def test_persisted_memory_drops_legacy_question_text():
 
     assert "last_question" not in memory
     assert memory["record_ids"] == ["meeting-1"]
+
+
+def test_context_builder_keeps_record_boundaries_and_respects_limit():
+    records = [
+        repositories.CourseMeetingRecord(
+            page_id=f"record-{index}",
+            url=f"https://notion.so/record-{index}",
+            title=f"課程 {index}",
+            date=None,
+            summary="摘要",
+            content="內容 " + ("x" * 300),
+            artist_page_ids=("artist-1",),
+            task_page_ids=(),
+            project_page_ids=(),
+        )
+        for index in range(10)
+    ]
+
+    context = course_qa.build_context(records, max_chars=900)
+
+    assert len(context) <= 900
+    assert context.startswith("【課程 0")
+    assert "來源：https://notion.so/record-0" in context
+    if "【課程 1" in context:
+        assert "來源：https://notion.so/record-1" in context

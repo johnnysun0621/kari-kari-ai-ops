@@ -18,7 +18,7 @@
 11. [NOTION_VIEWS_AUDIT.md](NOTION_VIEWS_AUDIT.md)：定稿 workspace 的 view 稽核。
 12. [SERVER_MIGRATION.md](SERVER_MIGRATION.md)：正式伺服器初始化與平轉。
 
-課程助教近期新增規則：先顯示藝人自己的課程檔案索引，再依使用者指定的課程頁／檔案檢索；不要把所有附件文字預先混入回答 context。詳見 `DISCORD_COMMANDS.md`、`NOTION_SCHEMA.md` 的課程助教段落。
+課程助教近期新增規則：先顯示藝人自己的課程檔案索引，再依使用者指定的課程頁／檔案檢索；不要把所有附件文字預先混入回答 context。索引顯示不會中斷當次問題的回答。詳見 `DISCORD_COMMANDS.md`、`NOTION_SCHEMA.md` 的課程助教段落。
 
 ## 目前產品方向
 

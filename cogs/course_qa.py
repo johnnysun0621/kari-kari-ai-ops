@@ -113,6 +113,7 @@ class CourseQACog(commands.Cog):
         self._save_memory_state()
         self._records_cache: dict[int, list[repositories.CourseMeetingRecord]] = {}
         self._catalog_sent_threads: set[int] = set()
+        self._answer_locks: dict[int, asyncio.Lock] = {}
         self._warm_task: asyncio.Task | None = None
 
     async def cog_load(self):
@@ -198,6 +199,12 @@ class CourseQACog(commands.Cog):
         return artist, records, None
 
     async def _answer_for_user(self, user: discord.abc.User, question: str) -> str:
+        """同一位使用者同時只跑一個回答，避免重複消耗 API 額度。"""
+        lock = self._answer_locks.setdefault(user.id, asyncio.Lock())
+        async with lock:
+            return await self._answer_for_user_unlocked(user, question)
+
+    async def _answer_for_user_unlocked(self, user: discord.abc.User, question: str) -> str:
         artist, records, error = await self._load_records_for_user(user)
         if error:
             return error
@@ -210,15 +217,18 @@ class CourseQACog(commands.Cog):
                 usage_key=artist.page_id,
             )
         except Exception:
-            logger.exception("課程助教意圖判斷失敗，改用全部課程紀錄")
-            intent = course_intent.QueryIntent(mode="compare")
+            logger.exception("課程助教意圖判斷失敗，改用保守的本地檢索")
+            intent = course_intent._fallback_intent(question, records)
         selected = course_intent.select_records(records, intent, memory)
+        if not selected:
+            return "請指定月份、課程名稱、老師、附件名稱或關鍵字，我才能縮小查詢範圍。"
         intent_context = json.dumps(
             {
                 "mode": intent.mode,
                 "month": intent.month,
                 "terms": intent.terms,
                 "attachment_names": intent.attachment_names,
+                "broad": intent.broad,
             },
             ensure_ascii=False,
         )
@@ -345,7 +355,6 @@ class CourseQACog(commands.Cog):
                 catalog = await self._attachment_catalog_for_user(message.author)
                 if catalog:
                     await thread.send(catalog)
-                    return
 
             waiting = await thread.send("⏳ 我正在整理你的課程紀錄，請稍候……")
             answer = await self._answer_for_user(message.author, question)

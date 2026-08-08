@@ -175,7 +175,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 - `AI_CHANNEL_ID` 頻道支援自然語言，不需要 slash command 或 mention Bot。
 - 每位藝人使用自己的私人 Thread，並以 Discord User ID 對應 Notion Artists。
-- 新 Thread 首次先顯示課程附件索引；使用者指定課程頁／檔案後才進行內容問答。
+- 新 Thread 首次先顯示課程附件索引；索引顯示後仍處理當次問題，後續可指定課程頁／檔案進行內容問答。
 - 每次提問重新讀取 Notion；Notion 暫時失敗時才退回上次成功快取。
 - 長回覆會切成 Discord 可接受的多則訊息。
 - 公開問題刪除失敗只寫 log，不把權限錯誤洗到頻道。
@@ -272,6 +272,7 @@ Google Drive API 操作。
 - `course_intent` 將自然語言問題整理成月份、課程、主題、逐字稿搜尋或附件名稱等檢索條件。
 - `course_qa` 將頁面正文與使用者明確指定的附件分開組成 LLM context。
 - LLM 只能根據已授權的課程紀錄回答，找不到內容時必須說明資料不足。
+- 意圖判斷失敗採保守本地檢索；LLM 呼叫有固定 timeout、一次重試與完整紀錄邊界，避免模糊查詢與部分上下文造成誤答。
 
 ### `services/audit.py`
 
