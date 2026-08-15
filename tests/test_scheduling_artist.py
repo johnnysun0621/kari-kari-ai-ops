@@ -9,8 +9,12 @@ import discord
 import config
 from cogs.scheduling_artist import (
     AvailabilityConflictConfirmView,
+    AvailabilityBatchConfirmView,
     AvailabilityConfirmView,
+    AvailabilityDraftGroup,
+    AvailabilityDraftManageView,
     DatePresetView,
+    PoolContinueView,
     SchedulingArtistCog,
 )
 from services import repositories, time_collection
@@ -86,6 +90,89 @@ def test_month_overview_allows_artist_to_choose_a_month_or_cancel():
 
 
 class TestDatePresetInteractions:
+    def test_draft_groups_accumulate_until_final_submit(self):
+        first = AvailabilityDraftGroup(
+            day_values=("2026-08-15", "2026-08-16"),
+            mode="all_day",
+        )
+        second = AvailabilityDraftGroup(
+            day_values=("2026-08-20",),
+            mode="specific",
+            start_text="13:00",
+            end_text="15:00",
+        )
+
+        slots = scheduling_artist._draft_slots([first, second])
+
+        assert len(slots) == 3
+        assert slots[0][0] == datetime(2026, 8, 15, 8, 0, tzinfo=config.TZ)
+        assert slots[-1] == (
+            datetime(2026, 8, 20, 13, 0, tzinfo=config.TZ),
+            datetime(2026, 8, 20, 15, 0, tzinfo=config.TZ),
+        )
+        assert scheduling_artist._draft_day_values([first, second]) == {
+            "2026-08-15",
+            "2026-08-16",
+            "2026-08-20",
+        }
+
+    def test_draft_is_resumed_by_user_and_month_even_if_entry_deadline_changes(self):
+        group = AvailabilityDraftGroup(("2026-08-15",), "all_day")
+        scheduling_artist._set_drafts(123, "2026-08", 1000, [group])
+
+        assert scheduling_artist._drafts_for(123, "2026-08", 2000) == [group]
+
+        scheduling_artist._set_drafts(123, "2026-08", 2000, [])
+
+    def test_group_confirmation_adds_to_draft_instead_of_submitting(self):
+        week_values = [week.value for week in time_collection.month_week_options("2026-08")]
+        view = AvailabilityConfirmView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            week_values,
+            ["2026-08-15"],
+            "all_day",
+        )
+
+        assert "加入本次回報" in child_labels(view)
+        assert "確認送出" not in child_labels(view)
+        assert "不會立即寫入 Notion" in view.prompt()
+
+    def test_continue_view_exposes_draft_management_and_final_review(self):
+        view = PoolContinueView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            [week.value for week in time_collection.month_week_options("2026-08")],
+            draft_count=2,
+        )
+
+        labels = child_labels(view)
+        assert "繼續選日期" in labels
+        assert "查看／移除已選" in labels
+        assert "檢查全部時段" in labels
+
+    def test_draft_management_pages_more_than_twenty_five_groups(self):
+        groups = [
+            AvailabilityDraftGroup((f"2026-08-{day:02d}",), "all_day")
+            for day in range(1, 32)
+        ]
+        first = AvailabilityDraftManageView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            [],
+            groups,
+            "",
+        )
+        second = first.page_view(1)
+
+        assert "頁面 1/2" in first.prompt()
+        assert "下一頁" in child_labels(first)
+        assert "頁面 2/2" in second.prompt()
+        assert len(second.select.options) == 6
+
     def test_last_day_button_page_shows_remaining_month_days(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
         view = DatePresetView(
@@ -162,7 +249,7 @@ class TestDatePresetInteractions:
         assert all(button.disabled for button in empty_apply_buttons)
         assert all(not button.disabled for button in selected_apply_buttons)
 
-    def test_availability_confirmation_allows_submit_or_return(self):
+    def test_availability_confirmation_allows_add_or_return(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
         view = AvailabilityConfirmView(
             "2026-08",
@@ -173,10 +260,38 @@ class TestDatePresetInteractions:
             "all_day",
         )
 
-        assert "確認送出" in child_labels(view)
+        assert "加入本次回報" in child_labels(view)
         assert "返回修改" in child_labels(view)
         assert "8/12、8/13" in view.prompt()
         assert "08:00–24:00" in view.prompt()
+
+    def test_batch_confirmation_is_the_only_final_submit_step(self):
+        groups = [
+            AvailabilityDraftGroup(("2026-08-12",), "all_day"),
+            AvailabilityDraftGroup(
+                ("2026-08-13",),
+                "specific",
+                start_text="13:00",
+                end_text="15:00",
+            ),
+        ]
+        slots = scheduling_artist._draft_slots(groups)
+        view = AvailabilityBatchConfirmView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            [week.value for week in time_collection.month_week_options("2026-08")],
+            groups,
+            original_slots=slots,
+            adjusted_windows=slots,
+            conflicts=[],
+            blocked_slots=[],
+        )
+
+        assert "全部確認送出" in child_labels(view)
+        assert "返回調整" in child_labels(view)
+        assert "2 組、2 個原始時段" in view.prompt()
+        assert "按「全部確認送出」後才會一次寫入 Notion" in view.prompt()
 
     def test_conflict_confirmation_shows_adjusted_windows_and_return(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]

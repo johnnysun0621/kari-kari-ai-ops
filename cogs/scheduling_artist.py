@@ -1,6 +1,7 @@
 """藝人端：填寫與管理可配合時間的按鈕、Modal 與統一指令。"""
 import logging
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 import discord
@@ -15,6 +16,54 @@ from services import time_collection
 logger = logging.getLogger(__name__)
 
 INTERACTION_VIEW_TIMEOUT_SECONDS = 7200
+
+
+@dataclass(frozen=True)
+class AvailabilityDraftGroup:
+    day_values: tuple[str, ...]
+    mode: str
+    start_text: str = ""
+    end_text: str = ""
+
+    def slots(self) -> list[tuple[datetime, datetime]]:
+        return time_collection.build_mode_slots(
+            list(self.day_values),
+            self.mode,
+            start_text=self.start_text,
+            end_text=self.end_text,
+        )
+
+
+_pool_drafts: dict[tuple[int, str], list[AvailabilityDraftGroup]] = {}
+
+
+def _draft_key(user_id: int, month: str, _deadline_ts: int) -> tuple[int, str]:
+    return user_id, month
+
+
+def _drafts_for(user_id: int, month: str, deadline_ts: int) -> list[AvailabilityDraftGroup]:
+    return list(_pool_drafts.get(_draft_key(user_id, month, deadline_ts), []))
+
+
+def _set_drafts(
+    user_id: int,
+    month: str,
+    deadline_ts: int,
+    groups: list[AvailabilityDraftGroup],
+) -> None:
+    key = _draft_key(user_id, month, deadline_ts)
+    if groups:
+        _pool_drafts[key] = list(groups)
+    else:
+        _pool_drafts.pop(key, None)
+
+
+def _draft_slots(groups: list[AvailabilityDraftGroup]) -> list[tuple[datetime, datetime]]:
+    return [slot for group in groups for slot in group.slots()]
+
+
+def _draft_day_values(groups: list[AvailabilityDraftGroup]) -> set[str]:
+    return {value for group in groups for value in group.day_values}
 
 
 class InteractionDebugView(discord.ui.View):
@@ -573,6 +622,8 @@ async def _submit_pool_slots(
     excluded_day_values: set[str] | None = None,
     schedule_summary: str = "",
     response_deferred: bool = False,
+    prepared_slots: list[tuple[datetime, datetime]] | None = None,
+    finalize_batch: bool = False,
 ):
     if not response_deferred:
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -594,7 +645,7 @@ async def _submit_pool_slots(
         return
 
     try:
-        slots = time_collection.build_mode_slots(
+        slots = prepared_slots if prepared_slots is not None else time_collection.build_mode_slots(
             day_values, mode, start_text=start_text, end_text=end_text
         )
     except (ValueError, timeparse.ParseError) as e:
@@ -663,6 +714,47 @@ async def _submit_pool_slots(
             duplicate_text += f"\n・另有 {len(duplicates) - 10} 筆已存在"
     late_text = "\n⚠️ 已超過填寫截止時間，這些時段標記為逾期提交。" if is_late and created else ""
     next_excluded_days = set(excluded_day_values or set()) | set(day_values)
+    if finalize_batch:
+        if created or duplicates:
+            cleanup_text = await _cleanup_notice(artist, interaction)
+            await _send_pool_completion_notifications(
+                interaction, artist, month, deadline_ts
+            )
+            _set_drafts(interaction.user.id, month, deadline_ts, [])
+            created_text = (
+                "✅ 已一次送出以下月度可配合時段：\n"
+                + "\n".join(f"・{line}" for line in created)
+                if created
+                else "✅ 本次時段先前已存在，未重複新增。"
+            )
+            await interaction.followup.send(
+                created_text
+                + duplicate_text
+                + skipped_text
+                + _conflict_text(conflicts)
+                + _warning_text(warnings)
+                + late_text
+                + cleanup_text
+                + "\n\n本次回報已完成；正式安排前營運仍會再確認。",
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(
+            "⚠️ 最新既定任務已占用本次所選時段，尚未寫入 Notion。請返回重新調整。"
+            + skipped_text
+            + _conflict_text(conflicts),
+            view=PoolContinueView(
+                month,
+                deadline_ts,
+                nature_code,
+                week_values,
+                _draft_day_values(_drafts_for(interaction.user.id, month, deadline_ts)),
+                schedule_summary=schedule_summary,
+                draft_count=len(_drafts_for(interaction.user.id, month, deadline_ts)),
+            ),
+            ephemeral=True,
+        )
+        return
     if not created:
         await interaction.followup.send(
             "⚠️ 沒有新增新的未來時段。"
@@ -759,7 +851,7 @@ class ModeTimeModal(discord.ui.Modal):
 
 
 class AvailabilityConfirmView(InteractionDebugView):
-    """時段寫入 Notion 前的最後確認，讓藝人可返回修改。"""
+    """Confirm one date/time group before adding it to the in-memory draft."""
 
     def __init__(
         self,
@@ -801,79 +893,49 @@ class AvailabilityConfirmView(InteractionDebugView):
         else:
             time_text = f"{self.start_text}–{self.end_text}"
         return (
-            "請確認這批可配合時間：\n"
+            "請確認要加入本次回報的時段：\n"
             f"日期：{dates}\n"
             f"時間：{time_text}\n\n"
-            "確認後才會寫入 Notion；需要調整請按「返回修改」。"
+            "加入後不會立即寫入 Notion；全部選完後再一次檢查並送出。"
         )
 
-    @discord.ui.button(label="確認送出", style=discord.ButtonStyle.success, emoji="✅")
+    @discord.ui.button(label="加入本次回報", style=discord.ButtonStyle.success, emoji="➕")
     async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is None:
-            await interaction.followup.send(
-                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
-                ephemeral=True,
-            )
-            return
         try:
-            slots = time_collection.build_mode_slots(
-                self.day_values,
-                self.mode,
+            group = AvailabilityDraftGroup(
+                day_values=tuple(self.day_values),
+                mode=self.mode,
                 start_text=self.start_text,
                 end_text=self.end_text,
             )
-            context = await _schedule_impact_context(artist)
+            group.slots()
         except (ValueError, timeparse.ParseError) as error:
-            await interaction.followup.send(f"❌ {error}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {error}", ephemeral=True)
             return
-        except Exception:
-            logger.exception("預覽正式安排衝突失敗")
-            await interaction.followup.send(
-                "❌ 讀不到你已安排的正式任務，暫時不能送出，請稍後再試或聯絡管理者。",
-                ephemeral=True,
-            )
-            return
-
-        adjusted, conflicts, blocked = _preview_availability_impact(slots, context)
-        if conflicts:
-            view = AvailabilityConflictConfirmView(
+        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
+        groups.append(group)
+        _set_drafts(interaction.user.id, self.month, self.deadline_ts, groups)
+        excluded = set(self.excluded_day_values) | _draft_day_values(groups)
+        await interaction.response.edit_message(
+            content=(
+                f"✅ 已加入本次回報：{len(group.day_values)} 天。\n"
+                f"目前暫存 **{len(groups)} 組、{len(_draft_slots(groups))} 個時段**；"
+                "尚未寫入 Notion。"
+            ),
+            view=PoolContinueView(
                 self.month,
                 self.deadline_ts,
                 self.nature_code,
                 self.week_values,
-                self.day_values,
-                self.mode,
-                start_text=self.start_text,
-                end_text=self.end_text,
-                excluded_day_values=self.excluded_day_values,
+                excluded,
                 schedule_summary=self.schedule_summary,
-                original_slots=slots,
-                adjusted_windows=adjusted,
-                conflicts=conflicts,
-                blocked_slots=blocked,
-            )
-            await interaction.edit_original_response(content=view.prompt(), view=view)
-            return
-
-        await _submit_pool_slots(
-            interaction,
-            self.month,
-            self.deadline_ts,
-            self.nature_code,
-            self.week_values,
-            self.day_values,
-            self.mode,
-            start_text=self.start_text,
-            end_text=self.end_text,
-            excluded_day_values=self.excluded_day_values,
-            schedule_summary=self.schedule_summary,
-            response_deferred=True,
+                draft_count=len(groups),
+            ),
         )
 
     @discord.ui.button(label="返回修改", style=discord.ButtonStyle.secondary, emoji="↩️")
     async def back(self, interaction: discord.Interaction, _: discord.ui.Button):
+        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
         view = DatePresetView(
             self.month,
             self.deadline_ts,
@@ -881,8 +943,9 @@ class AvailabilityConfirmView(InteractionDebugView):
             self.nature_code,
             selected_day_values=self.day_values,
             selected_mode=self.mode,
-            excluded_day_values=self.excluded_day_values,
+            excluded_day_values=set(self.excluded_day_values) | _draft_day_values(groups),
             schedule_summary=self.schedule_summary,
+            draft_count=len(groups),
         )
         await interaction.response.edit_message(content=view.prompt(), view=view)
 
@@ -1049,6 +1112,7 @@ class DatePresetView(InteractionDebugView):
         selected_mode: str | None = None,
         excluded_day_values: set[str] | None = None,
         schedule_summary: str = "",
+        draft_count: int = 0,
     ):
         super().__init__()
         self.month = month
@@ -1073,6 +1137,7 @@ class DatePresetView(InteractionDebugView):
         self.day_values = self._sort_day_values(selected_day_values or [])
         self.mode = selected_mode
         self.schedule_summary = schedule_summary
+        self.draft_count = draft_count
         if self.current_day_options:
             self.add_item(DaySelect(self))
         self.add_item(
@@ -1140,11 +1205,17 @@ class DatePresetView(InteractionDebugView):
         selected_hint = time_collection.availability_page_hint(len(self.day_values), self.mode)
         selected_text = f"已選：{selected_days}" if selected_days else "尚未選日期"
         persistent_context = f"{self.schedule_summary}\n" if self.schedule_summary else ""
+        draft_text = (
+            f"本次已暫存 **{self.draft_count} 組**；全部選完後再一次送出。\n"
+            if self.draft_count
+            else ""
+        )
         return persistent_context + (
-            f"請勾選要套用同一時段的日期。\n"
+            draft_text
+            + f"請勾選要套用同一時段的日期。\n"
             f"日期頁：**{self.page_index + 1}/{page_count}**｜本頁：{page_range}\n"
             f"{selected_text}（共 {len(self.day_values)} 天）。{selected_hint}\n"
-            "不同時段請分批選；同一天要填不同時段，請用 `/管理可配合時間`。\n\n"
+            "不同時段請分組加入；全部選完後再一次送出。\n\n"
             f"{time_collection.availability_selection_sop()}"
         )
 
@@ -1159,6 +1230,7 @@ class DatePresetView(InteractionDebugView):
             selected_mode=self.mode,
             excluded_day_values=self.excluded_day_values,
             schedule_summary=self.schedule_summary,
+            draft_count=self.draft_count,
         )
 
     async def previous_page(self, interaction: discord.Interaction):
@@ -1184,23 +1256,18 @@ class DatePresetView(InteractionDebugView):
             self.nature_code,
             excluded_day_values=self.excluded_day_values,
             schedule_summary=self.schedule_summary,
+            draft_count=self.draft_count,
         )
         await interaction.response.edit_message(content=view.prompt(), view=view)
 
     @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️", row=4)
     async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        _set_drafts(interaction.user.id, self.month, self.deadline_ts, [])
         await interaction.response.edit_message(
-            content="已取消本次操作，尚未送出的日期與時間不會寫入 Notion。",
+            content="已取消本次操作，暫存日期與時間已清除，不會寫入 Notion。",
             view=None,
         )
         self.stop()
-
-    @discord.ui.button(label="自訂時間 / 備註", style=discord.ButtonStyle.secondary, emoji="✏️", row=4)
-    async def custom_time(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.send_modal(
-            PoolAvailabilityModal(self.month, self.deadline_ts, self.nature_code)
-        )
-
 
 class PoolContinueView(InteractionDebugView):
     def __init__(
@@ -1211,6 +1278,7 @@ class PoolContinueView(InteractionDebugView):
         week_values: list[str] | None = None,
         excluded_day_values: set[str] | None = None,
         schedule_summary: str = "",
+        draft_count: int = 0,
     ):
         super().__init__()
         self.month = month
@@ -1219,19 +1287,30 @@ class PoolContinueView(InteractionDebugView):
         self.week_values = week_values
         self.excluded_day_values = set(excluded_day_values or set())
         self.schedule_summary = schedule_summary
+        self.draft_count = draft_count
 
-    @discord.ui.button(label="繼續選下一組日期", style=discord.ButtonStyle.primary, emoji="➕")
+    @discord.ui.button(label="繼續選日期", style=discord.ButtonStyle.primary, emoji="➕")
     async def continue_selecting(self, interaction: discord.Interaction, _: discord.ui.Button):
+        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
+        excluded = _draft_day_values(groups)
         if self.week_values:
             all_day_values = [
                 option.value
                 for page in time_collection.day_option_pages(self.week_values)
                 for option in page
             ]
-            if set(all_day_values) <= self.excluded_day_values:
+            if set(all_day_values) <= excluded:
                 await interaction.response.edit_message(
-                    content="✅ 這個月份的日期都已填寫完成。若要補填或修改，請使用 `/管理可配合時間`。",
-                    view=PoolAfterSubmitView(self.month, self.deadline_ts, self.nature_code),
+                    content="✅ 這個月份的日期都已加入暫存。請檢查全部時段，或先查看／移除已選項目。",
+                    view=PoolContinueView(
+                        self.month,
+                        self.deadline_ts,
+                        self.nature_code,
+                        self.week_values,
+                        excluded,
+                        schedule_summary=self.schedule_summary,
+                        draft_count=len(groups),
+                    ),
                 )
                 return
             view = DatePresetView(
@@ -1239,8 +1318,9 @@ class PoolContinueView(InteractionDebugView):
                 self.deadline_ts,
                 self.week_values,
                 self.nature_code,
-                excluded_day_values=self.excluded_day_values,
+                excluded_day_values=excluded,
                 schedule_summary=self.schedule_summary,
+                draft_count=len(groups),
             )
             await interaction.response.edit_message(
                 content=view.prompt(),
@@ -1255,26 +1335,312 @@ class PoolContinueView(InteractionDebugView):
                 [week.value for week in time_collection.month_week_options(self.month)],
                 self.nature_code,
                 schedule_summary=self.schedule_summary,
+                draft_count=len(groups),
             ),
         )
 
-    @discord.ui.button(label="自訂時間 / 備註", style=discord.ButtonStyle.secondary, emoji="✏️")
-    async def custom_time(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.send_modal(
-            PoolAvailabilityModal(self.month, self.deadline_ts, self.nature_code)
+    @discord.ui.button(label="查看／移除已選", style=discord.ButtonStyle.secondary, emoji="🗂️")
+    async def manage_drafts(self, interaction: discord.Interaction, _: discord.ui.Button):
+        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
+        if not groups:
+            await interaction.response.send_message("目前沒有暫存時段。", ephemeral=True)
+            return
+        view = AvailabilityDraftManageView(
+            self.month,
+            self.deadline_ts,
+            self.nature_code,
+            self.week_values or [],
+            groups,
+            self.schedule_summary,
+        )
+        await interaction.response.edit_message(content=view.prompt(), view=view)
+
+    @discord.ui.button(label="檢查全部時段", style=discord.ButtonStyle.success, emoji="✅")
+    async def review_all(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
+        if not groups:
+            await interaction.edit_original_response(content="目前沒有暫存時段。", view=self)
+            return
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if artist is None:
+            await interaction.edit_original_response(
+                content="❌ 找不到你的藝人資料，請聯絡管理者確認 Discord User ID。",
+                view=self,
+            )
+            return
+        try:
+            slots = _draft_slots(groups)
+            context = await _schedule_impact_context(artist)
+            adjusted, conflicts, blocked = _preview_availability_impact(slots, context)
+        except (ValueError, timeparse.ParseError) as error:
+            await interaction.edit_original_response(content=f"❌ {error}", view=self)
+            return
+        except Exception:
+            logger.exception("檢查整批可配合時間失敗")
+            await interaction.edit_original_response(
+                content="❌ 讀不到既定任務，暫時不能送出，請稍後再試。",
+                view=self,
+            )
+            return
+        view = AvailabilityBatchConfirmView(
+            self.month,
+            self.deadline_ts,
+            self.nature_code,
+            self.week_values or [],
+            groups,
+            schedule_summary=self.schedule_summary,
+            original_slots=slots,
+            adjusted_windows=adjusted,
+            conflicts=conflicts,
+            blocked_slots=blocked,
+        )
+        await interaction.edit_original_response(content=view.prompt(), view=view)
+
+    @discord.ui.button(label="取消本次回報", style=discord.ButtonStyle.danger, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        _set_drafts(interaction.user.id, self.month, self.deadline_ts, [])
+        await interaction.response.edit_message(
+            content="已取消本次回報；暫存內容已清除，未寫入 Notion。",
+            view=None,
         )
 
-    @discord.ui.button(label="完成", style=discord.ButtonStyle.secondary, emoji="✅")
-    async def done(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.edit_message(content="⏳ 正在整理你的時間池…", view=None)
-        cleanup_text = await _cleanup_notice_for_user(interaction)
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is not None:
-            await _send_pool_completion_notifications(
-                interaction, artist, self.month, self.deadline_ts
+
+def _draft_group_text(group: AvailabilityDraftGroup) -> str:
+    slots = group.slots()
+    if not slots:
+        return "（空白時段）"
+    dates = [date.fromisoformat(value) for value in group.day_values]
+    date_text = (
+        f"{dates[0].month}/{dates[0].day}"
+        if len(dates) == 1
+        else f"{dates[0].month}/{dates[0].day} 等 {len(dates)} 天"
+    )
+    first_start, first_end = slots[0]
+    if first_end.date() == first_start.date() + timedelta(days=1) and first_end.hour == 0:
+        time_text = f"{first_start:%H:%M}–24:00"
+    else:
+        time_text = f"{first_start:%H:%M}–{first_end:%H:%M}"
+    return f"{date_text}｜{time_text}"
+
+
+class AvailabilityDraftManageView(InteractionDebugView):
+    def __init__(
+        self,
+        month: str,
+        deadline_ts: int,
+        nature_code: str,
+        week_values: list[str],
+        groups: list[AvailabilityDraftGroup],
+        schedule_summary: str,
+        page_index: int = 0,
+    ):
+        super().__init__()
+        self.month = month
+        self.deadline_ts = deadline_ts
+        self.nature_code = nature_code
+        self.week_values = week_values
+        self.groups = groups
+        self.schedule_summary = schedule_summary
+        self.page_count = max(1, (len(groups) + 24) // 25)
+        self.page_index = max(0, min(page_index, self.page_count - 1))
+        page_start = self.page_index * 25
+        page_groups = groups[page_start:page_start + 25]
+        options = [
+            discord.SelectOption(
+                label=f"第 {index + 1} 組｜{_draft_group_text(group)}"[:100],
+                value=str(index),
+                description=f"共 {len(group.day_values)} 天"[:100],
             )
-        await interaction.edit_original_response(
-            content="✅ 感謝填寫！月度可配合時段已記錄，營運會用來初步安排課程 / 錄音 / 通告；正式安排前仍會再確認。" + cleanup_text
+            for index, group in enumerate(page_groups, start=page_start)
+        ]
+        self.select = discord.ui.Select(
+            placeholder="選擇要移除的暫存時段（可多選）…",
+            min_values=1,
+            max_values=len(options),
+            options=options,
+        )
+        self.select.callback = self.selection_changed
+        self.add_item(self.select)
+        if self.page_count > 1:
+            previous = discord.ui.Button(
+                label="上一頁",
+                style=discord.ButtonStyle.secondary,
+                disabled=self.page_index == 0,
+                row=2,
+            )
+            following = discord.ui.Button(
+                label="下一頁",
+                style=discord.ButtonStyle.secondary,
+                disabled=self.page_index >= self.page_count - 1,
+                row=2,
+            )
+            previous.callback = self.previous_page
+            following.callback = self.next_page
+            self.add_item(previous)
+            self.add_item(following)
+
+    def prompt(self) -> str:
+        page_start = self.page_index * 25
+        page_groups = self.groups[page_start:page_start + 25]
+        lines = [
+            f"**本次暫存｜{len(self.groups)} 組｜頁面 {self.page_index + 1}/{self.page_count}**"
+        ]
+        for index, group in enumerate(page_groups, start=page_start):
+            lines.append(f"{index + 1}. {_draft_group_text(group)}")
+        lines.append("\n選取後按「移除選取」；尚未寫入 Notion。")
+        return _trim_discord_message("\n".join(lines))
+
+    def page_view(self, page_index: int) -> "AvailabilityDraftManageView":
+        return AvailabilityDraftManageView(
+            self.month,
+            self.deadline_ts,
+            self.nature_code,
+            self.week_values,
+            self.groups,
+            self.schedule_summary,
+            page_index,
+        )
+
+    async def previous_page(self, interaction: discord.Interaction):
+        view = self.page_view(self.page_index - 1)
+        await interaction.response.edit_message(content=view.prompt(), view=view)
+
+    async def next_page(self, interaction: discord.Interaction):
+        view = self.page_view(self.page_index + 1)
+        await interaction.response.edit_message(content=view.prompt(), view=view)
+
+    async def selection_changed(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+    @discord.ui.button(label="移除選取", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def remove_selected(self, interaction: discord.Interaction, _: discord.ui.Button):
+        selected = {int(value) for value in self.select.values}
+        remaining = [group for index, group in enumerate(self.groups) if index not in selected]
+        _set_drafts(interaction.user.id, self.month, self.deadline_ts, remaining)
+        excluded = _draft_day_values(remaining)
+        await interaction.response.edit_message(
+            content=f"已移除 {len(selected)} 組；目前暫存 {len(remaining)} 組。",
+            view=PoolContinueView(
+                self.month,
+                self.deadline_ts,
+                self.nature_code,
+                self.week_values,
+                excluded,
+                schedule_summary=self.schedule_summary,
+                draft_count=len(remaining),
+            ),
+        )
+
+    @discord.ui.button(label="返回", style=discord.ButtonStyle.secondary, emoji="↩️")
+    async def back(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=f"目前暫存 **{len(self.groups)} 組、{len(_draft_slots(self.groups))} 個時段**。",
+            view=PoolContinueView(
+                self.month,
+                self.deadline_ts,
+                self.nature_code,
+                self.week_values,
+                _draft_day_values(self.groups),
+                schedule_summary=self.schedule_summary,
+                draft_count=len(self.groups),
+            ),
+        )
+
+
+class AvailabilityBatchConfirmView(InteractionDebugView):
+    def __init__(
+        self,
+        month: str,
+        deadline_ts: int,
+        nature_code: str,
+        week_values: list[str],
+        groups: list[AvailabilityDraftGroup],
+        *,
+        original_slots: list[tuple[datetime, datetime]],
+        adjusted_windows: list[tuple[datetime, datetime]],
+        conflicts: list[repositories.ScheduleConflict],
+        blocked_slots: list[tuple[datetime, datetime]],
+        schedule_summary: str = "",
+    ):
+        super().__init__()
+        self.month = month
+        self.deadline_ts = deadline_ts
+        self.nature_code = nature_code
+        self.week_values = week_values
+        self.groups = groups
+        self.original_slots = original_slots
+        self.adjusted_windows = adjusted_windows
+        self.conflicts = conflicts
+        self.blocked_slots = blocked_slots
+        self.schedule_summary = schedule_summary
+        for child in self.children:
+            if getattr(child, "label", None) == "全部確認送出":
+                child.disabled = not adjusted_windows
+
+    def prompt(self) -> str:
+        parts = [
+            f"**{self.month} 本次回報總覽**",
+            f"共 {len(self.groups)} 組、{len(self.original_slots)} 個原始時段。",
+            "",
+            "實際將寫入：",
+        ]
+        if self.adjusted_windows:
+            parts.extend(
+                f"・{timeparse.humanize(start, end)}"
+                for start, end in self.adjusted_windows
+            )
+        else:
+            parts.append("・沒有可寫入時段")
+        if self.conflicts:
+            parts.append(
+                _conflict_text(self.conflicts).replace(
+                    "⚠️ 已排除與正式安排衝突的時間：",
+                    "⚠️ 你已有以下既定任務，重疊時間不會寫入：",
+                )
+            )
+        if self.blocked_slots:
+            parts.append(f"\n完全被占用：{len(self.blocked_slots)} 個原始時段。")
+        parts.append(
+            "\n按「全部確認送出」後才會一次寫入 Notion；需要調整可返回。"
+            if self.adjusted_windows
+            else "\n全部時段都無法寫入，請返回調整。"
+        )
+        return _trim_discord_message("\n".join(parts))
+
+    @discord.ui.button(label="全部確認送出", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="⏳ 正在重新檢查全部時段並寫入 Notion……",
+            view=None,
+        )
+        await _submit_pool_slots(
+            interaction,
+            self.month,
+            self.deadline_ts,
+            self.nature_code,
+            self.week_values,
+            sorted(_draft_day_values(self.groups)),
+            "batch",
+            schedule_summary=self.schedule_summary,
+            response_deferred=True,
+            prepared_slots=self.original_slots,
+            finalize_batch=True,
+        )
+
+    @discord.ui.button(label="返回調整", style=discord.ButtonStyle.secondary, emoji="↩️")
+    async def back(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=f"目前暫存 **{len(self.groups)} 組、{len(self.original_slots)} 個時段**。",
+            view=PoolContinueView(
+                self.month,
+                self.deadline_ts,
+                self.nature_code,
+                self.week_values,
+                _draft_day_values(self.groups),
+                schedule_summary=self.schedule_summary,
+                draft_count=len(self.groups),
+            ),
         )
 
 
@@ -1325,17 +1691,29 @@ class PoolAvailabilityButton(
         except Exception:
             logger.exception("讀取藝人既定安排摘要失敗")
             schedule_summary = "⚠️ 目前讀不到既定安排，請先照可用時間填寫；送出時 Bot 會再檢查。\n"
+        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
+        excluded = _draft_day_values(groups)
+        week_values = [
+            week.value for week in time_collection.month_week_options(self.month)
+        ]
         await interaction.followup.send(
             f"回報 **{self.month} 可配合時間**。\n"
             + schedule_summary
-            + "直接勾選日期；日期會分頁，可按下一頁繼續選。\n\n"
+            + (
+                f"已接續先前暫存的 {len(groups)} 組時段；尚未寫入 Notion。\n"
+                if groups
+                else ""
+            )
+            + "勾選日期並加入一組時段；全部選完後再一次送出。\n\n"
             f"{time_collection.availability_selection_sop()}",
             view=DatePresetView(
                 self.month,
                 self.deadline_ts,
-                [week.value for week in time_collection.month_week_options(self.month)],
+                week_values,
                 self.nature_code,
+                excluded_day_values=excluded,
                 schedule_summary=schedule_summary,
+                draft_count=len(groups),
             ),
             ephemeral=True,
         )
@@ -1582,12 +1960,15 @@ class ManageAvailabilityView(InteractionDebugView):
         )
 
     async def open_fill_flow(self, interaction: discord.Interaction):
+        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
         view = DatePresetView(
             self.month,
             self.deadline_ts,
             [week.value for week in time_collection.month_week_options(self.month)],
             self.nature_code,
+            excluded_day_values=_draft_day_values(groups),
             schedule_summary=self.schedule_summary,
+            draft_count=len(groups),
         )
         await interaction.response.edit_message(content=view.prompt(), view=view)
 
