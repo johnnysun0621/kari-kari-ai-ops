@@ -154,6 +154,40 @@ class TestDatePresetInteractions:
         assert updated == [replacement, groups[1]]
         assert groups[0].day_values == ("2026-08-15",)
 
+    def test_replacing_one_day_splits_group_and_preserves_other_days(self):
+        groups = [
+            AvailabilityDraftGroup(
+                ("2026-08-15", "2026-08-16", "2026-08-17"),
+                "all_day",
+            ),
+            AvailabilityDraftGroup(("2026-08-20",), "before", end_text="17:00"),
+        ]
+        replacement = AvailabilityDraftGroup(
+            ("2026-08-16",),
+            "specific",
+            start_text="14:00",
+            end_text="16:00",
+        )
+
+        updated = scheduling_artist._replace_draft_group_days(
+            groups,
+            0,
+            {"2026-08-16"},
+            replacement,
+        )
+
+        assert updated[0] == AvailabilityDraftGroup(
+            ("2026-08-15", "2026-08-17"),
+            "all_day",
+        )
+        assert updated[1] == replacement
+        assert updated[2] == groups[1]
+        assert groups[0].day_values == (
+            "2026-08-15",
+            "2026-08-16",
+            "2026-08-17",
+        )
+
     def test_draft_is_resumed_by_user_and_month_even_if_entry_deadline_changes(self):
         group = AvailabilityDraftGroup(("2026-08-15",), "all_day")
         scheduling_artist._set_drafts(123, "2026-08", 1000, [group])
@@ -226,6 +260,29 @@ class TestDatePresetInteractions:
         )
 
         assert "修改選取" in child_labels(view)
+
+    def test_group_edit_view_lists_individual_dates(self):
+        group = AvailabilityDraftGroup(
+            ("2026-08-15", "2026-08-16"),
+            "all_day",
+        )
+        view = scheduling_artist.AvailabilityDraftDayManageView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            [week.value for week in time_collection.month_week_options("2026-08")],
+            [group],
+            "",
+            group_index=0,
+        )
+
+        selects = [child for child in view.children if isinstance(child, discord.ui.Select)]
+        assert [option.label for option in selects[0].options] == [
+            "8/15（週六）",
+            "8/16（週日）",
+        ]
+        assert "修改單日" in child_labels(view)
+        assert "修改整組" in child_labels(view)
 
     def test_editing_view_keeps_original_dates_and_cancel_only_exits_editing(self):
         view = DatePresetView(
