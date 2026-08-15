@@ -27,6 +27,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 | [NOTION_VIEWS_AUDIT.md](NOTION_VIEWS_AUDIT.md) | KariKari Testing 各區與 view 稽核 |
 | [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md) | 三次會議需求、功能與測試對照 |
 | [SERVER_MIGRATION.md](SERVER_MIGRATION.md) | Discord 正式伺服器初始化與平轉 SOP |
+| [CLIENT_SETUP_REQUIREMENTS.md](CLIENT_SETUP_REQUIREMENTS.md) | 導入時客戶需要準備的帳號與權限 |
 | [DELIVERY.md](DELIVERY.md) | v1.0 交付範圍、限制與回復方式 |
 | [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則與平展化方向 |
 | [ROADMAP.md](ROADMAP.md) | 開發進度與下一步 |
