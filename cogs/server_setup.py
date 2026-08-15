@@ -1,5 +1,6 @@
 """可平轉的 Discord 頻道與身分組初始化。"""
 import logging
+import asyncio
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -89,11 +90,19 @@ async def sync_command_permissions(
                     "type": 1,  # ROLE
                     "permission": True,
                 })
-            response = await client.put(
-                f"/applications/{bot.user.id}/guilds/{guild.id}/commands/{command.id}/permissions",
-                json={"permissions": permissions},
-            )
-            response.raise_for_status()
+            url = f"/applications/{bot.user.id}/guilds/{guild.id}/commands/{command.id}/permissions"
+            for attempt in range(4):
+                response = await client.put(url, json={"permissions": permissions})
+                if response.status_code != 429:
+                    response.raise_for_status()
+                    break
+                if attempt == 3:
+                    response.raise_for_status()
+                try:
+                    retry_after = float(response.json().get("retry_after", 1.0))
+                except (ValueError, TypeError):
+                    retry_after = 1.0
+                await asyncio.sleep(min(max(retry_after, 0.5), 10.0))
 
 
 def oauth_authorize_url(state: str) -> str:
