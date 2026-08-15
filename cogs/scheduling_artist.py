@@ -66,6 +66,20 @@ def _draft_day_values(groups: list[AvailabilityDraftGroup]) -> set[str]:
     return {value for group in groups for value in group.day_values}
 
 
+def _past_day_values(month: str, *, today: date | None = None) -> set[str]:
+    """Return dates in the target month that have already ended in Taipei."""
+    current_day = today or datetime.now(config.TZ).date()
+    month_start = date.fromisoformat(f"{month}-01")
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    cutoff = min(max(current_day, month_start), next_month)
+    values: set[str] = set()
+    cursor = month_start
+    while cursor < cutoff:
+        values.add(cursor.isoformat())
+        cursor += timedelta(days=1)
+    return values
+
+
 class InteractionDebugView(discord.ui.View):
     def __init__(self, timeout: int | None = INTERACTION_VIEW_TIMEOUT_SECONDS):
         super().__init__(timeout=timeout)
@@ -1113,13 +1127,18 @@ class DatePresetView(InteractionDebugView):
         excluded_day_values: set[str] | None = None,
         schedule_summary: str = "",
         draft_count: int = 0,
+        today: date | None = None,
     ):
         super().__init__()
         self.month = month
         self.deadline_ts = deadline_ts
         self.week_values = week_values
         self.nature_code = nature_code
-        self.excluded_day_values = set(excluded_day_values or set())
+        self.today = today
+        self.excluded_day_values = (
+            set(excluded_day_values or set())
+            | _past_day_values(month, today=today)
+        )
         excluded_dates = {
             date.fromisoformat(value) for value in self.excluded_day_values
         }
@@ -1231,6 +1250,7 @@ class DatePresetView(InteractionDebugView):
             excluded_day_values=self.excluded_day_values,
             schedule_summary=self.schedule_summary,
             draft_count=self.draft_count,
+            today=self.today,
         )
 
     async def previous_page(self, interaction: discord.Interaction):
@@ -1257,6 +1277,7 @@ class DatePresetView(InteractionDebugView):
             excluded_day_values=self.excluded_day_values,
             schedule_summary=self.schedule_summary,
             draft_count=self.draft_count,
+            today=self.today,
         )
         await interaction.response.edit_message(content=view.prompt(), view=view)
 
@@ -1292,7 +1313,7 @@ class PoolContinueView(InteractionDebugView):
     @discord.ui.button(label="繼續選日期", style=discord.ButtonStyle.primary, emoji="➕")
     async def continue_selecting(self, interaction: discord.Interaction, _: discord.ui.Button):
         groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
-        excluded = _draft_day_values(groups)
+        excluded = _draft_day_values(groups) | _past_day_values(self.month)
         if self.week_values:
             all_day_values = [
                 option.value

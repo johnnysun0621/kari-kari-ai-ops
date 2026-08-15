@@ -1,6 +1,6 @@
 """Discord artist scheduling UI helper tests."""
 
-from datetime import datetime
+from datetime import date, datetime
 import inspect
 
 from cogs import scheduling_artist
@@ -25,6 +25,22 @@ def child_labels(view):
 
 
 class TestDatePresetView:
+    def test_dates_before_today_are_not_displayed(self):
+        week_values = [week.value for week in time_collection.month_week_options("2026-08")]
+        view = DatePresetView(
+            "2026-08",
+            deadline_ts=1785600000,
+            week_values=week_values,
+            nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
+            today=date(2026, 8, 15),
+        )
+
+        visible_values = [option.value for page in view.day_pages for option in page]
+        assert visible_values[0] == "2026-08-15"
+        assert visible_values[-1] == "2026-08-31"
+        assert "2026-08-14" not in visible_values
+        assert [len(page) for page in view.day_pages] == [9, 8]
+
     def test_month_dates_are_shown_as_discord_sized_select_pages(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
         view = DatePresetView(
@@ -32,6 +48,7 @@ class TestDatePresetView:
             deadline_ts=1785600000,
             week_values=week_values,
             nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
+            today=date(2026, 8, 1),
         )
 
         assert len(view.all_day_values) == 31
@@ -181,6 +198,7 @@ class TestDatePresetInteractions:
             week_values=week_values,
             nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
             page_index=1,
+            today=date(2026, 8, 1),
         )
 
         selects = [child for child in view.children if isinstance(child, discord.ui.Select)]
@@ -196,6 +214,7 @@ class TestDatePresetInteractions:
             week_values=week_values,
             nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
             selected_day_values=["2026-08-01", "2026-08-30"],
+            today=date(2026, 8, 1),
         )
 
         assert "已選：8/1、8/30" in view.prompt()
@@ -209,6 +228,7 @@ class TestDatePresetInteractions:
             week_values=week_values,
             nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
             excluded_day_values={"2026-08-01", "2026-08-02", "2026-08-08"},
+            today=date(2026, 8, 1),
         )
 
         visible_values = [
@@ -229,6 +249,7 @@ class TestDatePresetInteractions:
             deadline_ts=1785600000,
             week_values=week_values,
             nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
+            today=date(2026, 8, 1),
         )
         selected_view = DatePresetView(
             "2026-08",
@@ -236,6 +257,7 @@ class TestDatePresetInteractions:
             week_values=week_values,
             nature_code=time_collection.DEFAULT_COLLECTION_NATURE,
             selected_day_values=["2026-08-01", "2026-08-02"],
+            today=date(2026, 8, 1),
         )
 
         empty_apply_buttons = [

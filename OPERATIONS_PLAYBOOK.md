@@ -132,6 +132,7 @@ Discord 頻道與 slash command 對應總表請看 [DISCORD_CHANNELS.md](DISCORD
 6. 如果有藝人 DM 失敗，手動提醒他到頻道公告或使用 `/管理可配合時間`。
 7. 藝人可跨日期頁選完整月份；每組日期套用同一時段，不同時段再加入下一組。
 8. 所有組別暫存在 Bot，按「全部確認送出」前不會寫入 Notion。
+9. Bot 使用 `Asia/Taipei` 系統日期隱藏今天以前的日期；這是本機時間判斷，不會消耗外部 API 或 AI token。
 
 ## 藝人修改時間 SOP
 
