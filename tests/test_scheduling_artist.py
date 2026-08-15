@@ -293,6 +293,32 @@ class TestDatePresetInteractions:
         assert "2 組、2 個原始時段" in view.prompt()
         assert "按「全部確認送出」後才會一次寫入 Notion" in view.prompt()
 
+    def test_batch_confirmation_explains_past_slots_that_will_be_skipped(self):
+        past_slot = (
+            datetime(2026, 8, 1, 8, 0, tzinfo=config.TZ),
+            datetime(2026, 8, 2, 0, 0, tzinfo=config.TZ),
+        )
+        future_slot = (
+            datetime(2026, 8, 15, 13, 0, tzinfo=config.TZ),
+            datetime(2026, 8, 15, 17, 0, tzinfo=config.TZ),
+        )
+        groups = [AvailabilityDraftGroup(("2026-08-01",), "all_day")]
+        view = AvailabilityBatchConfirmView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            [],
+            groups,
+            original_slots=[past_slot, future_slot],
+            adjusted_windows=[future_slot],
+            conflicts=[],
+            blocked_slots=[],
+            past_slots=[past_slot],
+        )
+
+        assert "已略過過去時段" in view.prompt()
+        assert "8/1（週六）08:00–24:00" in view.prompt()
+
     def test_conflict_confirmation_shows_adjusted_windows_and_return(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
         original_slots = [

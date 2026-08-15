@@ -1372,7 +1372,13 @@ class PoolContinueView(InteractionDebugView):
         try:
             slots = _draft_slots(groups)
             context = await _schedule_impact_context(artist)
-            adjusted, conflicts, blocked = _preview_availability_impact(slots, context)
+            review_now = datetime.now(config.TZ)
+            adjusted, conflicts, blocked = _preview_availability_impact(
+                slots,
+                context,
+                now=review_now,
+            )
+            past_slots = [(start, end) for start, end in slots if end <= review_now]
         except (ValueError, timeparse.ParseError) as error:
             await interaction.edit_original_response(content=f"❌ {error}", view=self)
             return
@@ -1394,6 +1400,7 @@ class PoolContinueView(InteractionDebugView):
             adjusted_windows=adjusted,
             conflicts=conflicts,
             blocked_slots=blocked,
+            past_slots=past_slots,
         )
         await interaction.edit_original_response(content=view.prompt(), view=view)
 
@@ -1561,6 +1568,7 @@ class AvailabilityBatchConfirmView(InteractionDebugView):
         adjusted_windows: list[tuple[datetime, datetime]],
         conflicts: list[repositories.ScheduleConflict],
         blocked_slots: list[tuple[datetime, datetime]],
+        past_slots: list[tuple[datetime, datetime]] | None = None,
         schedule_summary: str = "",
     ):
         super().__init__()
@@ -1573,6 +1581,7 @@ class AvailabilityBatchConfirmView(InteractionDebugView):
         self.adjusted_windows = adjusted_windows
         self.conflicts = conflicts
         self.blocked_slots = blocked_slots
+        self.past_slots = list(past_slots or [])
         self.schedule_summary = schedule_summary
         for child in self.children:
             if getattr(child, "label", None) == "全部確認送出":
@@ -1592,6 +1601,17 @@ class AvailabilityBatchConfirmView(InteractionDebugView):
             )
         else:
             parts.append("・沒有可寫入時段")
+        if self.past_slots:
+            parts.extend(
+                [
+                    "",
+                    "⏭️ 已略過過去時段：",
+                    *[
+                        f"・{timeparse.humanize(start, end)}"
+                        for start, end in self.past_slots
+                    ],
+                ]
+            )
         if self.conflicts:
             parts.append(
                 _conflict_text(self.conflicts).replace(
