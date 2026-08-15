@@ -1,10 +1,15 @@
 """Slash command visibility metadata tests."""
 
 from cogs import channel_guard
+from discord import app_commands
+from cogs.bulletin import BulletinCog
+from cogs.scheduling_artist import SchedulingArtistCog
 from cogs.scheduling_admin import SchedulingAdminCog
 from cogs.tasks_artist import TasksCog
 from cogs.operations_qa import OperationsQACog
 from cogs.server_setup import ServerSetupCog
+from cogs.submissions import SubmissionsCog
+from cogs.course_qa import CourseQACog
 
 
 ADMIN_COMMANDS = [
@@ -43,6 +48,43 @@ def test_legacy_scheduling_commands_removed_from_tree():
 
 def test_time_collection_command_uses_task_focused_name():
     assert SchedulingAdminCog.create_availability_collection.name == "時間資訊蒐集"
+
+
+def test_duplicate_artist_commands_are_removed():
+    assert not hasattr(SubmissionsCog, "submit_task")
+    assert not hasattr(CourseQACog, "course_question")
+
+
+def test_registered_cogs_expose_exactly_ten_slash_commands():
+    cog_classes = (
+        SchedulingAdminCog,
+        SchedulingArtistCog,
+        TasksCog,
+        SubmissionsCog,
+        BulletinCog,
+        CourseQACog,
+        OperationsQACog,
+        ServerSetupCog,
+    )
+    names = {
+        value.name
+        for cog_class in cog_classes
+        for value in vars(cog_class).values()
+        if isinstance(value, app_commands.Command)
+    }
+
+    assert names == {
+        "伺服器初始化",
+        "布告欄同步",
+        "我的任務",
+        "任務總覽",
+        "任務通知重送",
+        "營運查詢",
+        "時間資訊蒐集",
+        "從時間池建立任務",
+        "管理可配合時間",
+        "審核提交",
+    }
 
 
 def test_task_channel_allows_anywhere_when_not_configured(monkeypatch):

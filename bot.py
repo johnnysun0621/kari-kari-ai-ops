@@ -34,7 +34,7 @@ class KariKariBot(commands.Bot):
         intents = discord.Intents.default()
         intents.messages = True
         intents.dm_messages = True
-        # Needed for same-channel attachment submission after /提交任務.
+        # Needed for course-assistant conversation and attachment-related workflows.
         # Discord strips guild message attachments without Message Content Intent.
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)

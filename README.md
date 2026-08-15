@@ -53,7 +53,7 @@ python bot.py
 | `SCHEDULE_CHANNEL_ID` | 時間資訊彙整頻道 ID（公告與時間池互動處） |
 | `ADMIN_ROLE_ID` | 控方 / 管理者身分組 ID（管理指令權限） |
 | `TASK_CHANNEL_ID` | 任務查詢入口頻道 ID（留空則不限制任務指令頻道） |
-| `AI_CHANNEL_ID` | 課程 AI 助教頻道 ID（設定後自然對話與 `/課程問答` 只允許在此頻道使用） |
+| `AI_CHANNEL_ID` | 課程 AI 助教頻道 ID（設定後只在此頻道接受自然對話） |
 | `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（留空則用排課頻道） |
 | `ANNOUNCE_CHANNEL_ID` | 公告區頻道 ID（留空則公告發到時間資訊彙整；建議設唯讀頻道） |
 | `BULLETIN_CHANNEL_ID` | Notion 布告欄同步到的 Discord 頻道 ID（留空則使用公告區） |
@@ -109,9 +109,9 @@ cogs/
   scheduling_admin.py     # /時間資訊蒐集 /從時間池建立任務
   scheduling_artist.py    # 填寫按鈕 + Modal + /管理可配合時間
   tasks_artist.py         # /我的任務 /任務總覽 /任務通知重送
-  submissions.py          # /提交任務 /審核提交
+  submissions.py          # /我的任務內的提交操作 + /審核提交
   bulletin.py             # /布告欄同步 + Notion 公告背景同步
-  course_qa.py            # /課程問答 + 課程助教頻道自然對話
+  course_qa.py            # 課程助教頻道自然對話
   operations_qa.py        # /營運查詢（控方限定）
   server_setup.py         # /伺服器初始化（角色、頻道、env 清單）
   reminders.py            # 月度時間池、排課 SLA、任務與審核提醒

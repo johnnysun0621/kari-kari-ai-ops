@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 import config
@@ -300,22 +299,6 @@ class CourseQACog(commands.Cog):
         self._save_thread_state()
         return thread
 
-    @app_commands.command(name="課程問答", description="查詢自己已確認且可見的課程會議紀錄")
-    @app_commands.describe(問題="例如：上次歌唱課老師交代我練習什麼？")
-    async def course_question(self, interaction: discord.Interaction, 問題: str):
-        if not await channel_guard.ensure_ai_channel(interaction):
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        chunks = _split_discord_message(await self._answer_for_user(interaction.user, 問題))
-        view = AIAnswerFeedbackView(
-            artist.name if artist else str(interaction.user),
-            interaction.user.id,
-        )
-        await interaction.followup.send(chunks[0], ephemeral=True, view=view)
-        for chunk in chunks[1:]:
-            await interaction.followup.send(chunk, ephemeral=True)
-
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """課程助教頻道的自然語言入口；每位藝人使用自己的私人 Thread。"""
@@ -374,15 +357,6 @@ class CourseQACog(commands.Cog):
                 await message.channel.send("⚠️ 課程助教處理失敗，請稍後再試；Bot 仍在運作。")
             except (discord.Forbidden, discord.HTTPException):
                 logger.exception("課程助教錯誤通知也發送失敗")
-
-    async def cog_app_command_error(self, interaction: discord.Interaction, error):
-        logger.exception("課程問答指令失敗", exc_info=error)
-        message = "❌ 課程問答執行失敗，請稍後再試。"
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(CourseQACog(bot))

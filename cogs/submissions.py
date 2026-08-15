@@ -1,4 +1,4 @@
-"""P0-3 作業提交：/提交任務（檔案自動歸檔 Drive；連結／文字走表單）。"""
+"""P0-3 作業提交：由 /我的任務 進入 Drive 提交與審核流程。"""
 import logging
 import re
 import asyncio
@@ -421,7 +421,7 @@ def review_dm_text(
     if task_link:
         lines.append(task_link)
     if result in ("需修改", "退回"):
-        lines.append("請依回饋修改後，再到 `/提交任務` 重新提交。")
+        lines.append("請依回饋修改後，到 `/我的任務` 按「提交任務」重新提交。")
     return "\n".join(lines)
 
 
@@ -516,7 +516,7 @@ def submission_method_conflict(task: repositories.TaskItem, has_attachment: bool
         if method in ("Drive 連結", "文字"):
             return (
                 f"❌ 「{task.name}」在 Notion 指定的提交方式是**{method}**，不收檔案上傳。\n"
-                "請重新打 `/提交任務`（不帶檔案），"
+                "請回到 `/我的任務` 按「提交任務」，"
                 + ("貼上你的雲端連結。" if method == "Drive 連結" else "直接填文字內容。")
             )
         return None
@@ -759,7 +759,7 @@ async def _archive_file_submission_batch(
 ) -> tuple[bool, str]:
     """多檔案提交核心：整批上傳到同一提交資料夾，再寫一筆 Notion。"""
     if not attachments:
-        return False, "❌ 沒有收到檔案，請重新執行 `/提交任務`。"
+        return False, "❌ 沒有收到檔案，請回到 `/我的任務` 重新進入提交流程。"
     for attachment in attachments:
         size_error = direct_upload_size_error(attachment.size)
         if size_error:
@@ -770,7 +770,7 @@ async def _archive_file_submission_batch(
         if target is None:
             return False, (
                 "❌ 無法建立公司的指定 Drive 資料夾，請聯絡營運確認 Drive 設定；"
-                "或改用 `/提交任務` 貼雲端連結。"
+                "請聯絡營運確認公司 Drive 設定。"
             )
         base_folder_id, task_path = target
         try:
@@ -822,7 +822,7 @@ async def _archive_file_submission_batch(
         logger.exception("Drive 上傳失敗")
         return False, (
             "❌ 檔案上傳 Google Drive 失敗（未寫入任何紀錄）。\n"
-            "請稍後再試，或改用 `/提交任務` 貼雲端連結。"
+            "請稍後再試，或回到 `/我的任務` 重新提交。"
         )
 
     file_size_mb = round(sum(item["size_mb"] for item in uploaded_files), 2)
@@ -979,12 +979,12 @@ class SubmitTaskView(discord.ui.View):
         attachment: discord.Attachment | None = None,
     ):
         super().__init__(timeout=600)
-        self.add_item(SubmitTaskSelect(cog, tasks, now, attachment))
+        if tasks:
+            self.add_item(SubmitTaskSelect(cog, tasks, now, attachment))
 
-    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️")
-    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.edit_message(content="已取消提交，任務資料未變更。", view=None)
-        self.stop()
+    @discord.ui.button(label="返回我的任務", style=discord.ButtonStyle.secondary, emoji="↩️")
+    async def back_to_my_tasks(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await self.cog.return_to_my_tasks(interaction)
 
 
 class MixedSubmissionChoiceView(discord.ui.View):
@@ -1300,6 +1300,59 @@ class SubmissionsCog(commands.Cog):
     def cog_unload(self):
         self.review_poll_loop.cancel()
 
+    async def edit_submit_task_list(self, interaction: discord.Interaction) -> None:
+        """在 /我的任務 的原訊息中開啟可提交任務清單。"""
+        try:
+            artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        except Exception:
+            logger.exception("開啟提交清單時讀取藝人失敗")
+            await interaction.edit_original_response(
+                content="❌ 讀取藝人資料失敗，請稍後再試。",
+                view=None,
+            )
+            return
+        if artist is None:
+            await interaction.edit_original_response(
+                content="❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
+                view=None,
+            )
+            return
+        try:
+            tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
+        except Exception:
+            logger.exception("讀取可提交任務失敗")
+            await interaction.edit_original_response(
+                content="❌ 讀取任務失敗，請稍後再試。",
+                view=None,
+            )
+            return
+        submittable = [task for task in tasks if repositories.is_task_submittable(task)]
+        if not submittable:
+            await interaction.edit_original_response(
+                content=(
+                    "目前沒有開放提交的任務。\n"
+                    "（任務需在 Notion 勾「是否開放提交」且尚未進入審核／結案狀態）"
+                ),
+                view=SubmitTaskView(self, [], datetime.now(config.get_tenant().tz)),
+            )
+            return
+        now = datetime.now(config.get_tenant().tz)
+        submittable.sort(key=lambda task: (task.end is None, task.end or now))
+        await interaction.edit_original_response(
+            content=submit_task_intro_text(artist.name, submittable, now),
+            view=SubmitTaskView(self, submittable, now),
+        )
+
+    async def return_to_my_tasks(self, interaction: discord.Interaction) -> None:
+        tasks_cog = self.bot.get_cog("TasksCog")
+        if tasks_cog is None:
+            await interaction.response.edit_message(
+                content="❌ 任務總覽尚未初始化，請稍後再試。",
+                view=None,
+            )
+            return
+        await tasks_cog.return_to_my_tasks(interaction)
+
     async def start_file_upload_wait(
         self,
         interaction: discord.Interaction,
@@ -1376,35 +1429,7 @@ class SubmissionsCog(commands.Cog):
         """取消尚未完成的 Drive 提交，回到可提交任務清單。"""
         await interaction.response.defer(ephemeral=True, thinking=True)
         self.pending_file_submissions.pop(interaction.user.id, None)
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is None:
-            await interaction.edit_original_response(
-                content="❌ 找不到你的藝人資料，請重新執行 `/提交任務`。",
-                view=None,
-            )
-            return
-        try:
-            tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
-        except Exception:
-            logger.exception("返回提交任務清單時讀取任務失敗")
-            await interaction.edit_original_response(
-                content="❌ 讀取任務失敗，請重新執行 `/提交任務`。",
-                view=None,
-            )
-            return
-        submittable = [task for task in tasks if repositories.is_task_submittable(task)]
-        if not submittable:
-            await interaction.edit_original_response(
-                content="目前沒有開放提交的任務。",
-                view=None,
-            )
-            return
-        now = datetime.now(config.get_tenant().tz)
-        submittable.sort(key=lambda task: (task.end is None, task.end or now))
-        await interaction.edit_original_response(
-            content=submit_task_intro_text(artist.name, submittable, now),
-            view=SubmitTaskView(self, submittable, now),
-        )
+        await self.edit_submit_task_list(interaction)
 
     async def complete_drive_folder_submission(self, interaction: discord.Interaction) -> None:
         """驗證指定資料夾的新檔案，成功後建立一筆檔案提交。"""
@@ -1412,7 +1437,7 @@ class SubmissionsCog(commands.Cog):
         pending = self.pending_file_submissions.get(interaction.user.id)
         if pending is None or not pending.folder_url or not pending.folder_base_id:
             await interaction.followup.send(
-                "❌ 目前沒有可驗證的公司資料夾，請重新執行 `/提交任務`；若仍失敗請聯絡控方。",
+                "❌ 目前沒有可驗證的公司資料夾，請回到 `/我的任務` 重新進入提交流程；若仍失敗請聯絡控方。",
                 ephemeral=True,
             )
             return
@@ -1624,7 +1649,7 @@ class SubmissionsCog(commands.Cog):
         now = datetime.now(config.get_tenant().tz)
         if pending.is_expired(now):
             self.pending_file_submissions.pop(message.author.id, None)
-            await message.channel.send("❌ 這次檔案上傳入口已過期，請重新執行 `/提交任務`。")
+            await message.channel.send("❌ 這次檔案上傳入口已過期，請回到 `/我的任務` 重新進入提交流程。")
             return
         if message.attachments:
             folder_hint = (
@@ -1978,46 +2003,6 @@ class SubmissionsCog(commands.Cog):
     @review_poll_loop.before_loop
     async def before_review_poll(self):
         await self.bot.wait_until_ready()
-
-    @app_commands.command(
-        name="提交任務",
-        description="依 Notion 指定方式提交作業／作品，任務會轉待審核",
-    )
-    async def submit_task(
-        self,
-        interaction: discord.Interaction,
-    ):
-        if not await channel_guard.ensure_task_channel(interaction):
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is None:
-            await interaction.followup.send(
-                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
-                ephemeral=True,
-            )
-            return
-        try:
-            tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
-        except Exception:
-            logger.exception("讀取可提交任務失敗")
-            await interaction.followup.send("❌ 讀取任務失敗，請稍後再試。", ephemeral=True)
-            return
-        submittable = [t for t in tasks if repositories.is_task_submittable(t)]
-        if not submittable:
-            await interaction.followup.send(
-                "目前沒有開放提交的任務。\n"
-                "（任務需在 Notion 勾「是否開放提交」且尚未進入審核／結案狀態）",
-                ephemeral=True,
-            )
-            return
-        now = datetime.now(config.get_tenant().tz)
-        submittable.sort(key=lambda t: (t.end is None, t.end or now))
-        await interaction.followup.send(
-            submit_task_intro_text(artist.name, submittable, now),
-            view=SubmitTaskView(self, submittable, now),
-            ephemeral=True,
-        )
 
     @app_commands.command(name="審核提交", description="管理端：審核待審核提交並通知藝人")
     @app_commands.default_permissions(administrator=True)

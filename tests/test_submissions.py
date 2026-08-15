@@ -540,7 +540,7 @@ class TestReviewDisplayHelpers:
         cog = SimpleNamespace()
 
         task_view = SubmitTaskView(cog, [submit_task], now)
-        assert any(getattr(item, "label", "") == "取消" for item in task_view.children)
+        assert any(getattr(item, "label", "") == "返回我的任務" for item in task_view.children)
 
         mixed_view = MixedSubmissionChoiceView(cog, submit_task, [submit_task], now)
         assert any(getattr(item, "label", "") == "返回任務選擇" for item in mixed_view.children)

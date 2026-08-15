@@ -1,7 +1,7 @@
 from datetime import datetime
 
 import config
-from cogs.tasks_artist import TaskResendView
+from cogs.tasks_artist import MyTasksView, TaskResendView
 from services import repositories, task_notifications
 
 
@@ -27,6 +27,14 @@ def make_task(
         discord_notified_at=discord_notified_at,
         discord_acknowledged_at=discord_acknowledged_at,
     )
+
+
+def test_my_tasks_view_only_shows_submission_entry_when_tasks_are_submittable():
+    with_submission = MyTasksView(object(), submittable_count=2)
+    without_submission = MyTasksView(object(), submittable_count=0)
+
+    assert [item.label for item in with_submission.children] == ["提交任務（2）"]
+    assert without_submission.children == []
 
 
 def test_notification_message_explains_task_and_submission_method():

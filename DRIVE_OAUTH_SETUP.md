@@ -11,7 +11,7 @@
 | 總資料夾 | ✅ 「Kali Kali AI Ops Testing」，ID 已入 `.env` 的 `GOOGLE_DRIVE_ROOT_FOLDER_ID` |
 | 藝人專區 | ✅ Johnny、Chenhua 兩區已建立 |
 | Notion 回填 | ✅ 兩位藝人的 Artists「Google Drive 資料夾」欄位已填入專區連結 |
-| 檔案上傳功能 | ✅ 已上線（`/提交任務` 選任務後，使用 Bot 建立的公司 Drive 指定資料夾） |
+| 檔案上傳功能 | ✅ 已上線（`/我的任務` → `提交任務` 選任務後，使用 Bot 建立的公司 Drive 指定資料夾） |
 
 之後**新增藝人**時的步驟：總資料夾底下建「<藝人>專區」→ 跑 `scripts/check_drive.py`
 拿到連結 → 填入該藝人 Notion Artists 的「Google Drive 資料夾」欄位。完成。
@@ -116,8 +116,8 @@ Notion Artists 的「Google Drive 資料夾」欄位**，歸檔就接通了。
 
 | 提交內容 | 入口 | 流程 |
 |---|---|---|
-| 雲端連結／文字 | `/提交任務` | 選任務 → Bot 依 Notion `提交方式` 開對應表單 → 寫 Notion |
-| 檔案 | `/提交任務` | 選任務 → Bot 建立指定 Drive 資料夾（入口 3 小時有效） → 藝人上傳 → 按「我已上傳到 Drive」→ 寫 Submissions |
+| 雲端連結／文字 | `/我的任務` → `提交任務` | 選任務 → Bot 依 Notion `提交方式` 開對應表單 → 寫 Notion |
+| 檔案 | `/我的任務` → `提交任務` | 選任務 → Bot 建立指定 Drive 資料夾（入口 3 小時有效） → 藝人上傳 → 按「我已上傳到 Drive」→ 寫 Submissions |
 
 - 藝人檔案不受 Discord 10MB 限制，直接放入 Bot 建立的公司指定資料夾
 - 上傳失敗不寫入半套資料：Bot 會提示重新驗證或聯絡控方檢查公司 Drive；Drive 成功但 Notion 失敗時保留資料夾連結供營運補登

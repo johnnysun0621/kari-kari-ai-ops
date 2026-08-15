@@ -213,6 +213,26 @@ def format_task_buckets(
     return "\n".join(lines).strip()
 
 
+class MyTasksView(discord.ui.View):
+    """藝人任務總覽的操作入口。"""
+
+    def __init__(self, cog: "TasksCog", submittable_count: int):
+        super().__init__(timeout=600)
+        self.cog = cog
+        if submittable_count > 0:
+            button = discord.ui.Button(
+                label=f"提交任務（{submittable_count}）",
+                style=discord.ButtonStyle.primary,
+                emoji="📤",
+            )
+            button.callback = self.open_submissions
+            self.add_item(button)
+
+    async def open_submissions(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.cog.open_submissions(interaction)
+
+
 class TaskResendSelect(discord.ui.Select):
     def __init__(self, tasks: list[repositories.TaskItem]):
         self.tasks = {task.page_id: task for task in tasks}
@@ -278,33 +298,68 @@ class TasksCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _my_tasks_payload(
+        self,
+        discord_user_id: int,
+    ) -> tuple[str, MyTasksView | None]:
+        artist = await repositories.find_artist_by_discord_id(discord_user_id)
+        if artist is None:
+            return (
+                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
+                None,
+            )
+        tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
+        now = datetime.now(config.get_tenant().tz)
+        buckets = repositories.classify_tasks_for_display(tasks, now)
+        body = format_task_buckets(buckets, now)
+        submittable_count = sum(
+            1 for task in tasks if repositories.is_task_submittable(task)
+        )
+        if not body:
+            content = "🎉 目前沒有進行中的任務。"
+        else:
+            content = ui_text.trim_message(f"📑 {artist.name} 的任務：\n\n{body}")
+        view = MyTasksView(self, submittable_count) if submittable_count else None
+        return content, view
+
+    async def open_submissions(self, interaction: discord.Interaction) -> None:
+        submissions_cog = self.bot.get_cog("SubmissionsCog")
+        if submissions_cog is None:
+            await interaction.edit_original_response(
+                content="❌ 提交功能尚未初始化，請稍後再試。",
+                view=None,
+            )
+            return
+        try:
+            await submissions_cog.edit_submit_task_list(interaction)
+        except Exception:
+            logger.exception("從我的任務開啟提交流程失敗")
+            await interaction.edit_original_response(
+                content="❌ 開啟提交流程失敗，請稍後再試。",
+                view=None,
+            )
+
+    async def return_to_my_tasks(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            content, view = await self._my_tasks_payload(interaction.user.id)
+        except Exception:
+            logger.exception("返回我的任務時讀取失敗")
+            content, view = "❌ 讀取任務失敗，請稍後再試。", None
+        await interaction.edit_original_response(content=content, view=view)
+
     @app_commands.command(name="我的任務", description="查看我的未完成、即將到期與待審核任務")
     async def my_tasks(self, interaction: discord.Interaction):
         if not await channel_guard.ensure_task_channel(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is None:
-            await interaction.followup.send(
-                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
-                ephemeral=True,
-            )
-            return
         try:
-            tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
+            content, view = await self._my_tasks_payload(interaction.user.id)
         except Exception:
             logger.exception("讀取藝人任務失敗")
             await interaction.followup.send("❌ 讀取任務失敗，請稍後再試。", ephemeral=True)
             return
-        now = datetime.now(config.get_tenant().tz)
-        buckets = repositories.classify_tasks_for_display(tasks, now)
-        body = format_task_buckets(buckets, now)
-        if not body:
-            await interaction.followup.send("🎉 目前沒有進行中的任務。", ephemeral=True)
-            return
-        await interaction.followup.send(
-            ui_text.trim_message(f"📑 {artist.name} 的任務：\n\n{body}"), ephemeral=True
-        )
+        await interaction.followup.send(content, view=view, ephemeral=True)
 
     @app_commands.command(name="任務總覽", description="管理端：全部未結案任務（待審核／逾期／即將到期）")
     @app_commands.default_permissions(administrator=True)
