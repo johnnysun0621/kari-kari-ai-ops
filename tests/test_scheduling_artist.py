@@ -216,7 +216,8 @@ class TestDatePresetInteractions:
         prompt = view.prompt()
         assert "8/15（週六）08:00–13:30" in prompt
         assert "8/15（週六）14:30–24:00" in prompt
-        assert "測試課程" in prompt
+        assert "你已有以下既定任務" in prompt
+        assert "8/15（週六）13:30–14:30｜任務：測試課程" in prompt
         assert blocked == []
         assert "確認調整後送出" in child_labels(view)
         assert "返回修改" in child_labels(view)

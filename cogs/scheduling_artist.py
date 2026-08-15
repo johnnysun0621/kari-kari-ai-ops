@@ -152,7 +152,11 @@ def _conflict_text(conflicts: list[repositories.ScheduleConflict]) -> str:
         unique.append(conflict)
     lines: list[str] = []
     for conflict in unique[:8]:
-        lines.append(f"・{conflict.source_name}｜{timeparse.humanize(conflict.start, conflict.end)}")
+        source_label = "任務" if conflict.source_type == "Task" else "安排"
+        lines.append(
+            f"・{timeparse.humanize(conflict.start, conflict.end)}｜"
+            f"{source_label}：{conflict.source_name}"
+        )
     suffix = f"\n・另有 {len(unique) - len(lines)} 筆衝突" if len(unique) > len(lines) else ""
     return "\n⚠️ 已排除與正式安排衝突的時間：\n" + "\n".join(lines) + suffix
 
@@ -930,7 +934,7 @@ class AvailabilityConflictConfirmView(AvailabilityConfirmView):
         adjusted_lines = [timeparse.humanize(start, end) for start, end in self.adjusted_windows[:12]]
         conflict_text = _conflict_text(self.conflicts).replace(
             "⚠️ 已排除與正式安排衝突的時間：",
-            "⚠️ 將排除以下既定安排：",
+            "⚠️ 你已有以下既定任務，重疊時間不會寫入：",
         )
         parts = [
             "⚠️ **選擇的時間與既定安排重疊**",
