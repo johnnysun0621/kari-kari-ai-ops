@@ -66,6 +66,18 @@ def _draft_day_values(groups: list[AvailabilityDraftGroup]) -> set[str]:
     return {value for group in groups for value in group.day_values}
 
 
+def _replace_draft_group(
+    groups: list[AvailabilityDraftGroup],
+    index: int,
+    replacement: AvailabilityDraftGroup,
+) -> list[AvailabilityDraftGroup]:
+    if index < 0 or index >= len(groups):
+        raise IndexError("Draft group no longer exists")
+    updated = list(groups)
+    updated[index] = replacement
+    return updated
+
+
 def _past_day_values(month: str, *, today: date | None = None) -> set[str]:
     """Return dates in the target month that have already ended in Taipei."""
     current_day = today or datetime.now(config.TZ).date()
@@ -821,6 +833,7 @@ class ModeTimeModal(discord.ui.Modal):
         mode: str,
         excluded_day_values: set[str] | None = None,
         schedule_summary: str = "",
+        edit_group_index: int | None = None,
     ):
         super().__init__(title="補充可用時間")
         self.month = month
@@ -831,6 +844,7 @@ class ModeTimeModal(discord.ui.Modal):
         self.mode = mode
         self.excluded_day_values = set(excluded_day_values or set())
         self.schedule_summary = schedule_summary
+        self.edit_group_index = edit_group_index
         self.start_input: discord.ui.TextInput | None = None
         self.end_input: discord.ui.TextInput | None = None
         if mode in {"after", "specific"}:
@@ -860,6 +874,7 @@ class ModeTimeModal(discord.ui.Modal):
             end_text=self.end_input.value if self.end_input else "",
             excluded_day_values=self.excluded_day_values,
             schedule_summary=self.schedule_summary,
+            edit_group_index=self.edit_group_index,
         )
         await interaction.response.send_message(view.prompt(), view=view, ephemeral=True)
 
@@ -880,6 +895,7 @@ class AvailabilityConfirmView(InteractionDebugView):
         end_text: str = "",
         excluded_day_values: set[str] | None = None,
         schedule_summary: str = "",
+        edit_group_index: int | None = None,
     ):
         super().__init__()
         self.month = month
@@ -892,6 +908,11 @@ class AvailabilityConfirmView(InteractionDebugView):
         self.end_text = end_text
         self.excluded_day_values = set(excluded_day_values or set())
         self.schedule_summary = schedule_summary
+        self.edit_group_index = edit_group_index
+        if edit_group_index is not None:
+            for child in self.children:
+                if getattr(child, "label", None) == "加入本次回報":
+                    child.label = "儲存修改"
 
     def prompt(self) -> str:
         dates = "、".join(
@@ -906,11 +927,16 @@ class AvailabilityConfirmView(InteractionDebugView):
             time_text = f"{self.end_text} 之前"
         else:
             time_text = f"{self.start_text}–{self.end_text}"
+        action_text = (
+            f"請確認第 {self.edit_group_index + 1} 組修改內容："
+            if self.edit_group_index is not None
+            else "請確認要加入本次回報的時段："
+        )
         return (
-            "請確認要加入本次回報的時段：\n"
+            f"{action_text}\n"
             f"日期：{dates}\n"
             f"時間：{time_text}\n\n"
-            "加入後不會立即寫入 Notion；全部選完後再一次檢查並送出。"
+            "儲存後不會立即寫入 Notion；全部確認後才會整批送出。"
         )
 
     @discord.ui.button(label="加入本次回報", style=discord.ButtonStyle.success, emoji="➕")
@@ -927,12 +953,24 @@ class AvailabilityConfirmView(InteractionDebugView):
             await interaction.response.send_message(f"❌ {error}", ephemeral=True)
             return
         groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
-        groups.append(group)
+        if self.edit_group_index is None:
+            groups.append(group)
+            action_text = f"✅ 已加入本次回報：{len(group.day_values)} 天。"
+        else:
+            try:
+                groups = _replace_draft_group(groups, self.edit_group_index, group)
+            except IndexError:
+                await interaction.response.send_message(
+                    "❌ 這組暫存內容已變更，請返回全部暫存重新選擇。",
+                    ephemeral=True,
+                )
+                return
+            action_text = f"✅ 已更新第 {self.edit_group_index + 1} 組：{len(group.day_values)} 天。"
         _set_drafts(interaction.user.id, self.month, self.deadline_ts, groups)
         excluded = set(self.excluded_day_values) | _draft_day_values(groups)
         await interaction.response.edit_message(
             content=(
-                f"✅ 已加入本次回報：{len(group.day_values)} 天。\n"
+                f"{action_text}\n"
                 f"目前暫存 **{len(groups)} 組、{len(_draft_slots(groups))} 個時段**；"
                 "尚未寫入 Notion。"
             ),
@@ -957,9 +995,10 @@ class AvailabilityConfirmView(InteractionDebugView):
             self.nature_code,
             selected_day_values=self.day_values,
             selected_mode=self.mode,
-            excluded_day_values=set(self.excluded_day_values) | _draft_day_values(groups),
+            excluded_day_values=self.excluded_day_values,
             schedule_summary=self.schedule_summary,
             draft_count=len(groups),
+            edit_group_index=self.edit_group_index,
         )
         await interaction.response.edit_message(content=view.prompt(), view=view)
 
@@ -1097,6 +1136,7 @@ class ApplyModeButton(discord.ui.Button):
                 self.mode,
                 excluded_day_values=self.parent_view.excluded_day_values,
                 schedule_summary=self.parent_view.schedule_summary,
+                edit_group_index=self.parent_view.edit_group_index,
             )
             await interaction.response.edit_message(content=view.prompt(), view=view)
             return
@@ -1110,6 +1150,7 @@ class ApplyModeButton(discord.ui.Button):
                 self.mode,
                 excluded_day_values=self.parent_view.excluded_day_values,
                 schedule_summary=self.parent_view.schedule_summary,
+                edit_group_index=self.parent_view.edit_group_index,
             )
         )
 
@@ -1128,6 +1169,7 @@ class DatePresetView(InteractionDebugView):
         schedule_summary: str = "",
         draft_count: int = 0,
         today: date | None = None,
+        edit_group_index: int | None = None,
     ):
         super().__init__()
         self.month = month
@@ -1135,6 +1177,7 @@ class DatePresetView(InteractionDebugView):
         self.week_values = week_values
         self.nature_code = nature_code
         self.today = today
+        self.edit_group_index = edit_group_index
         self.excluded_day_values = (
             set(excluded_day_values or set())
             | _past_day_values(month, today=today)
@@ -1157,6 +1200,10 @@ class DatePresetView(InteractionDebugView):
         self.mode = selected_mode
         self.schedule_summary = schedule_summary
         self.draft_count = draft_count
+        if edit_group_index is not None:
+            for child in self.children:
+                if getattr(child, "label", None) == "取消":
+                    child.label = "取消修改"
         if self.current_day_options:
             self.add_item(DaySelect(self))
         self.add_item(
@@ -1229,8 +1276,14 @@ class DatePresetView(InteractionDebugView):
             if self.draft_count
             else ""
         )
+        edit_text = (
+            f"✏️ 正在修改第 {self.edit_group_index + 1} 組；儲存後會取代原內容。\n"
+            if self.edit_group_index is not None
+            else ""
+        )
         return persistent_context + (
             draft_text
+            + edit_text
             + f"請勾選要套用同一時段的日期。\n"
             f"日期頁：**{self.page_index + 1}/{page_count}**｜本頁：{page_range}\n"
             f"{selected_text}（共 {len(self.day_values)} 天）。{selected_hint}\n"
@@ -1251,6 +1304,7 @@ class DatePresetView(InteractionDebugView):
             schedule_summary=self.schedule_summary,
             draft_count=self.draft_count,
             today=self.today,
+            edit_group_index=self.edit_group_index,
         )
 
     async def previous_page(self, interaction: discord.Interaction):
@@ -1278,11 +1332,27 @@ class DatePresetView(InteractionDebugView):
             schedule_summary=self.schedule_summary,
             draft_count=self.draft_count,
             today=self.today,
+            edit_group_index=self.edit_group_index,
         )
         await interaction.response.edit_message(content=view.prompt(), view=view)
 
     @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️", row=4)
     async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if self.edit_group_index is not None:
+            groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
+            await interaction.response.edit_message(
+                content="已取消修改，原本暫存內容保持不變。",
+                view=PoolContinueView(
+                    self.month,
+                    self.deadline_ts,
+                    self.nature_code,
+                    self.week_values,
+                    _draft_day_values(groups),
+                    schedule_summary=self.schedule_summary,
+                    draft_count=len(groups),
+                ),
+            )
+            return
         _set_drafts(interaction.user.id, self.month, self.deadline_ts, [])
         await interaction.response.edit_message(
             content="已取消本次操作，暫存日期與時間已清除，不會寫入 Notion。",
@@ -1360,7 +1430,7 @@ class PoolContinueView(InteractionDebugView):
             ),
         )
 
-    @discord.ui.button(label="查看／移除已選", style=discord.ButtonStyle.secondary, emoji="🗂️")
+    @discord.ui.button(label="管理全部已選", style=discord.ButtonStyle.secondary, emoji="🗂️")
     async def manage_drafts(self, interaction: discord.Interaction, _: discord.ui.Button):
         groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
         if not groups:
@@ -1483,7 +1553,7 @@ class AvailabilityDraftManageView(InteractionDebugView):
             for index, group in enumerate(page_groups, start=page_start)
         ]
         self.select = discord.ui.Select(
-            placeholder="選擇要移除的暫存時段（可多選）…",
+            placeholder="選擇要修改或移除的暫存時段…",
             min_values=1,
             max_values=len(options),
             options=options,
@@ -1516,7 +1586,9 @@ class AvailabilityDraftManageView(InteractionDebugView):
         ]
         for index, group in enumerate(page_groups, start=page_start):
             lines.append(f"{index + 1}. {_draft_group_text(group)}")
-        lines.append("\n選取後按「移除選取」；尚未寫入 Notion。")
+        lines.append(
+            "\n單選一組可修改；可多選後移除。所有內容仍未寫入 Notion。"
+        )
         return _trim_discord_message("\n".join(lines))
 
     def page_view(self, page_index: int) -> "AvailabilityDraftManageView":
@@ -1540,6 +1612,40 @@ class AvailabilityDraftManageView(InteractionDebugView):
 
     async def selection_changed(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+
+    @discord.ui.button(label="修改選取", style=discord.ButtonStyle.primary, emoji="✏️")
+    async def edit_selected(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if len(self.select.values) != 1:
+            await interaction.response.send_message(
+                "一次只能修改一組，請只選一個暫存時段。",
+                ephemeral=True,
+            )
+            return
+        group_index = int(self.select.values[0])
+        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
+        if group_index < 0 or group_index >= len(groups):
+            await interaction.response.send_message(
+                "這組暫存內容已變更，請重新開啟管理頁。",
+                ephemeral=True,
+            )
+            return
+        group = groups[group_index]
+        other_groups = [
+            item for index, item in enumerate(groups) if index != group_index
+        ]
+        view = DatePresetView(
+            self.month,
+            self.deadline_ts,
+            self.week_values,
+            self.nature_code,
+            selected_day_values=list(group.day_values),
+            selected_mode=group.mode,
+            excluded_day_values=_draft_day_values(other_groups),
+            schedule_summary=self.schedule_summary,
+            draft_count=len(groups),
+            edit_group_index=group_index,
+        )
+        await interaction.response.edit_message(content=view.prompt(), view=view)
 
     @discord.ui.button(label="移除選取", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def remove_selected(self, interaction: discord.Interaction, _: discord.ui.Button):

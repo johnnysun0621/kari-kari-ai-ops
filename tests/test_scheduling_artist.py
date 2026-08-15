@@ -133,6 +133,27 @@ class TestDatePresetInteractions:
             "2026-08-20",
         }
 
+    def test_replacing_a_draft_group_preserves_other_groups(self):
+        groups = [
+            AvailabilityDraftGroup(("2026-08-15",), "all_day"),
+            AvailabilityDraftGroup(
+                ("2026-08-16",),
+                "specific",
+                start_text="13:00",
+                end_text="15:00",
+            ),
+        ]
+        replacement = AvailabilityDraftGroup(
+            ("2026-08-17", "2026-08-18"),
+            "after",
+            start_text="14:00",
+        )
+
+        updated = scheduling_artist._replace_draft_group(groups, 0, replacement)
+
+        assert updated == [replacement, groups[1]]
+        assert groups[0].day_values == ("2026-08-15",)
+
     def test_draft_is_resumed_by_user_and_month_even_if_entry_deadline_changes(self):
         group = AvailabilityDraftGroup(("2026-08-15",), "all_day")
         scheduling_artist._set_drafts(123, "2026-08", 1000, [group])
@@ -167,7 +188,7 @@ class TestDatePresetInteractions:
 
         labels = child_labels(view)
         assert "繼續選日期" in labels
-        assert "查看／移除已選" in labels
+        assert "管理全部已選" in labels
         assert "檢查全部時段" in labels
 
     def test_draft_management_pages_more_than_twenty_five_groups(self):
@@ -189,6 +210,39 @@ class TestDatePresetInteractions:
         assert "下一頁" in child_labels(first)
         assert "頁面 2/2" in second.prompt()
         assert len(second.select.options) == 6
+
+    def test_draft_management_allows_editing_any_selected_group(self):
+        groups = [
+            AvailabilityDraftGroup(("2026-08-15",), "all_day"),
+            AvailabilityDraftGroup(("2026-08-16",), "before", end_text="17:00"),
+        ]
+        view = AvailabilityDraftManageView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            [],
+            groups,
+            "",
+        )
+
+        assert "修改選取" in child_labels(view)
+
+    def test_editing_view_keeps_original_dates_and_cancel_only_exits_editing(self):
+        view = DatePresetView(
+            "2026-08",
+            1785600000,
+            [week.value for week in time_collection.month_week_options("2026-08")],
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            selected_day_values=["2026-08-17", "2026-08-18"],
+            excluded_day_values={"2026-08-20"},
+            draft_count=3,
+            edit_group_index=1,
+            today=date(2026, 8, 15),
+        )
+
+        assert "正在修改第 2 組" in view.prompt()
+        assert "已選：8/17、8/18" in view.prompt()
+        assert "取消修改" in child_labels(view)
 
     def test_last_day_button_page_shows_remaining_month_days(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
