@@ -564,8 +564,8 @@ class RemindersCog(commands.Cog):
             return
 
         artist_map = await repositories.get_artist_map()  # 一輪只撈一次
-        admin_channel = self.bot.get_channel(config.TASK_CHANNEL_ID) \
-            or self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
+        admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
+            or self.bot.get_channel(config.TASK_CHANNEL_ID) \
             or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
 
         for t, stages in due:

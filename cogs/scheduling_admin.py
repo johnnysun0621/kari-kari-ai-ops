@@ -1113,7 +1113,7 @@ class SchedulingAdminCog(commands.Cog):
         月份: str,
         時長分鐘: app_commands.Range[int, 15, 600],
     ):
-        if not await channel_guard.ensure_schedule_channel(interaction):
+        if not await channel_guard.ensure_admin_channel(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         month = time_collection.normalize_month(月份)

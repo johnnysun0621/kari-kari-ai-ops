@@ -2008,7 +2008,7 @@ class SubmissionsCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def review_submission(self, interaction: discord.Interaction):
-        if not await channel_guard.ensure_task_channel(interaction):
+        if not await channel_guard.ensure_admin_channel(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:

@@ -50,9 +50,9 @@ python bot.py
 |---|---|
 | `DISCORD_TOKEN` | Discord Developer Portal → Bot → Token |
 | `GUILD_ID` | 目前租戶 / 公司的 Discord 伺服器 ID |
-| `SCHEDULE_CHANNEL_ID` | 時間資訊彙整頻道 ID（公告與時間池互動處） |
+| `SCHEDULE_CHANNEL_ID` | 時間資訊彙整頻道 ID（藝人回報與管理可配合時間） |
 | `ADMIN_ROLE_ID` | 控方 / 管理者身分組 ID（管理指令權限） |
-| `TASK_CHANNEL_ID` | 任務查詢入口頻道 ID（留空則不限制任務指令頻道） |
+| `TASK_CHANNEL_ID` | 藝人任務查詢入口頻道 ID（留空則不限制 `/我的任務` 頻道） |
 | `AI_CHANNEL_ID` | 課程 AI 助教頻道 ID（設定後只在此頻道接受自然對話） |
 | `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（留空則用排課頻道） |
 | `ANNOUNCE_CHANNEL_ID` | 公告區頻道 ID（留空則公告發到時間資訊彙整；建議設唯讀頻道） |

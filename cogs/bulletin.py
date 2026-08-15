@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from cogs import channel_guard
 from services import repositories
 from services.permissions import is_admin
 
@@ -212,6 +213,8 @@ class BulletinCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def sync_command(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_admin_channel(interaction):
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             created, updated, skipped = await self.sync_bulletins()

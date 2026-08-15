@@ -1,5 +1,9 @@
 """Slash command visibility metadata tests."""
 
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 from cogs import channel_guard
 from discord import app_commands
 from cogs.bulletin import BulletinCog
@@ -72,7 +76,6 @@ def test_registered_cogs_expose_exactly_ten_slash_commands():
         for value in vars(cog_class).values()
         if isinstance(value, app_commands.Command)
     }
-
     assert names == {
         "伺服器初始化",
         "布告欄同步",
@@ -86,6 +89,26 @@ def test_registered_cogs_expose_exactly_ten_slash_commands():
         "審核提交",
     }
 
+
+def test_management_task_commands_use_admin_channel_guard(monkeypatch):
+    guard = AsyncMock(return_value=False)
+    monkeypatch.setattr(channel_guard, "ensure_admin_channel", guard)
+    interaction = SimpleNamespace()
+
+    async def run():
+        cases = (
+            (SchedulingAdminCog.match_availability_pool, ("2026-08", 60)),
+            (TasksCog.task_overview, ()),
+            (TasksCog.resend_task_notification, ()),
+            (SubmissionsCog.review_submission, ()),
+            (BulletinCog.sync_command, ()),
+        )
+        for command, args in cases:
+            guard.reset_mock()
+            await command.callback(SimpleNamespace(), interaction, *args)
+            guard.assert_awaited_once_with(interaction)
+
+    asyncio.run(run())
 
 def test_task_channel_allows_anywhere_when_not_configured(monkeypatch):
     monkeypatch.setattr(channel_guard.config, "TASK_CHANNEL_ID", 0)

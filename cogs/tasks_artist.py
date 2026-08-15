@@ -365,7 +365,7 @@ class TasksCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def task_overview(self, interaction: discord.Interaction):
-        if not await channel_guard.ensure_task_channel(interaction):
+        if not await channel_guard.ensure_admin_channel(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
@@ -391,7 +391,7 @@ class TasksCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def resend_task_notification(self, interaction: discord.Interaction):
-        if not await channel_guard.ensure_task_channel(interaction):
+        if not await channel_guard.ensure_admin_channel(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
