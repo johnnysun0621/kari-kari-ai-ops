@@ -43,6 +43,16 @@ def test_env_summary_uses_created_resource_ids():
     assert "BULLETIN_CHANNEL_ID=10" in text
 
 
+def test_command_channel_groups_cover_each_slash_command():
+    groups = server_setup.command_channel_groups()
+
+    assert groups["時間資訊蒐集"] == ("時間資訊彙整", True)
+    assert groups["管理可配合時間"] == ("時間資訊彙整", False)
+    assert groups["我的任務"] == ("任務查詢入口", False)
+    assert groups["從時間池建立任務"] == ("營運操作", True)
+    assert groups["伺服器初始化"] == ("營運操作", True)
+
+
 def test_operational_channels_are_hidden_from_unassigned_members():
     everyone = object()
     artist = object()

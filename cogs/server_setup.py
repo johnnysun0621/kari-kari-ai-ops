@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import discord
 from discord import app_commands
+from discord.http import Route
 from discord.ext import commands
 
 import config
@@ -40,6 +41,57 @@ def env_summary(guild_id: int, admin_role_id: int, channel_ids: dict[str, int]) 
         "BULLETIN_CHANNEL_ID": channel_ids["公告區"],
     }
     return "\n".join(f"{key}={value}" for key, value in values.items())
+
+
+def command_channel_groups() -> dict[str, tuple[str, bool]]:
+    """Return command name -> (channel name, requires 控方 role)."""
+    return {
+        "時間資訊蒐集": ("時間資訊彙整", True),
+        "管理可配合時間": ("時間資訊彙整", False),
+        "我的任務": ("任務查詢入口", False),
+        "從時間池建立任務": ("營運操作", True),
+        "任務總覽": ("營運操作", True),
+        "任務通知重送": ("營運操作", True),
+        "審核提交": ("營運操作", True),
+        "營運查詢": ("營運操作", True),
+        "布告欄同步": ("營運操作", True),
+        "伺服器初始化": ("營運操作", True),
+    }
+
+
+async def sync_command_permissions(
+    bot: commands.Bot,
+    guild: discord.Guild,
+    channel_ids: dict[str, int],
+    admin_role_id: int,
+) -> None:
+    """Make Discord's slash-command picker show commands only in their channels."""
+    application_commands = await bot.tree.fetch_commands(guild=guild)
+    groups = command_channel_groups()
+    for command in application_commands:
+        group = groups.get(command.name)
+        if group is None:
+            continue
+        channel_name, requires_admin = group
+        permissions = [{
+            "id": str(channel_ids[channel_name]),
+            "type": 3,  # CHANNEL
+            "permission": True,
+        }]
+        if requires_admin:
+            permissions.append({
+                "id": str(admin_role_id),
+                "type": 1,  # ROLE
+                "permission": True,
+            })
+        route = Route(
+            "PUT",
+            "/applications/{application_id}/guilds/{guild_id}/commands/{command_id}/permissions",
+            application_id=bot.user.id,
+            guild_id=guild.id,
+            command_id=command.id,
+        )
+        await bot.http.request(route, json={"permissions": permissions})
 
 
 def _overwrites(
@@ -161,11 +213,31 @@ class ServerSetupConfirmView(discord.ui.View):
             logger.exception("Discord 伺服器初始化失敗")
             await interaction.followup.send("❌ Discord 初始化失敗，請稍後再試。", ephemeral=True)
             return
+        try:
+            await sync_command_permissions(interaction.client, interaction.guild, channel_ids, admin_role.id)
+        except discord.Forbidden:
+            logger.exception("Discord slash command 權限同步失敗：Forbidden")
+            await interaction.followup.send(
+                "⚠️ 頻道與身分組已完成，但 slash command 可見性同步失敗。"
+                "請確認 Bot 有管理伺服器／管理應用程式指令權限後再執行一次初始化。",
+                ephemeral=True,
+            )
+            self.stop()
+            return
+        except discord.HTTPException:
+            logger.exception("Discord slash command 權限同步失敗")
+            await interaction.followup.send(
+                "⚠️ 頻道與身分組已完成，但 slash command 可見性同步失敗，請稍後再執行一次初始化。",
+                ephemeral=True,
+            )
+            self.stop()
+            return
         summary = env_summary(interaction.guild.id, admin_role.id, channel_ids)
         await interaction.followup.send(
-            "✅ 頻道與身分組已建立／對齊。請將以下值填入此租戶的 `.env` 後重啟 Bot：\n"
+            "✅ 頻道、身分組與 slash command 可見範圍已建立／對齊。\n"
+            "請將以下值填入此租戶的 `.env` 後重啟 Bot：\n"
             f"```env\n{summary}\n```\n"
-            "最後到「伺服器設定 → 整合 → Bot」依 `SERVER_MIGRATION.md` 設定各指令可見角色與頻道。",
+            "之後各頻道只會顯示對應的 slash command。",
             ephemeral=True,
         )
         self.stop()

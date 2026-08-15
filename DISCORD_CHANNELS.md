@@ -103,7 +103,7 @@ Bot 會用 Discord User ID 對應 Notion Artists；只有 Notion 勾選「藝人
 3. 將 Bot 回傳的 ID 清單填入該租戶 `.env`。
 4. 重啟 Bot，再依 [SERVER_MIGRATION.md](SERVER_MIGRATION.md) 設定 command 可見性並驗收。
 
-`/伺服器初始化` 是建立頻道前的 bootstrap 指令，因此程式不會硬性限制它只能在尚未存在的 `營運內部通知` 使用；初始化完成後，Discord 介面權限應只對伺服器管理員開放。若伺服器已有舊名稱 `營運內部`，初始化會沿用原頻道並自動改名。
+`/伺服器初始化` 是建立頻道前的 bootstrap 指令。確認初始化後，Bot 會同步 Discord Application Command Permissions，讓各頻道只顯示對應指令；若伺服器已有舊名稱 `營運內部`，初始化會沿用原頻道並自動改名。
 
 課程助教頻道另需給 Bot：檢視頻道、讀取歷史訊息、發送訊息、建立私人 Thread、管理訊息、在 Thread 中發言。沒有「管理訊息」時，Bot 仍可能建立私人 Thread，但無法刪除公開頻道中的原始問題。
 
