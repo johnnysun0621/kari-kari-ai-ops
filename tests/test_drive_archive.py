@@ -80,8 +80,29 @@ class TestArchivePath:
         current.created_at = datetime(2026, 7, 9, 23, 30, tzinfo=config.TZ)
         assert drive_archive.task_folder_name(current, NOW) == "2026.07.09_編曲作業"
 
-    def test_review_feedback_folder_name_is_timestamped(self):
-        assert drive_archive.review_feedback_folder_name(NOW) == "回饋_20260710_1500"
+    def test_review_feedback_folder_prefix_is_versioned(self):
+        assert drive_archive.versioned_folder_prefix("老師回饋", NOW) == "老師回饋_2026.07.10_ver."
+
+    def test_submission_folder_prefix_contains_task_date_and_version_marker(self):
+        assert drive_archive.versioned_folder_prefix("編曲/作業", NOW) == "編曲_作業_2026.07.10_ver."
+
+    def test_next_version_ignores_other_dates_and_malformed_names(self):
+        prefix = "編曲作業_2026.07.10_ver."
+
+        assert drive_archive.next_versioned_folder_name(
+            [
+                "編曲作業_2026.07.10_ver.1",
+                "編曲作業_2026.07.10_ver.3",
+                "編曲作業_2026.07.09_ver.8",
+                "編曲作業_2026.07.10_ver.x",
+            ],
+            prefix,
+        ) == "編曲作業_2026.07.10_ver.4"
+
+    def test_first_version_starts_at_one(self):
+        assert drive_archive.next_versioned_folder_name([], "編曲作業_2026.07.10_ver.") == (
+            "編曲作業_2026.07.10_ver.1"
+        )
 
 
 class TestResolveArchiveTarget:

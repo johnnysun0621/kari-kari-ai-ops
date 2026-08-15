@@ -149,7 +149,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 - 讀 Notion `Tasks.提交方式`，依控方指派方式引導提交。
 - 支援 `檔案`、`Drive 連結`、`文字`、`混合`。
-- 藝人檔案統一上傳到 Bot 指定的 Google Drive 資料夾，或貼自己的 Drive 連結；不接收 Discord 作業附件。
+- 藝人檔案統一上傳到 Bot 建立的公司 Google Drive 指定資料夾；不接收 Discord 作業附件，也不提供私人 Drive 連結作為檔案提交 fallback。
 - 老師批改檔仍使用獨立 pending attachment／Drive 回饋流程。
 - 寫 `Submissions & File Index`。
 - 將 Task 轉為 `待審核` 並回寫 `最新提交 URL`。

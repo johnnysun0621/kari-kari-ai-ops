@@ -55,7 +55,7 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 5. 需要交作業／作品時，藝人執行 `/提交任務`，Bot 依 Notion `提交方式` 引導。
 6. 控方用 `/審核提交` 回覆通過／需修改／退回，Bot DM 藝人審核結果。
 
-目前共有 13 個 slash commands；頻道與角色對應以 [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) 為準。藝人作業檔案不走 Discord 附件，統一上傳至 Bot 指定的 Drive 資料夾或貼自己的 Drive 連結；老師批改附件是獨立流程。
+目前共有 13 個 slash commands；頻道與角色對應以 [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) 為準。藝人作業檔案不走 Discord 附件，統一上傳至 Bot 建立的公司 Drive 指定資料夾；老師批改附件是獨立流程。
 
 舊 `/排課*`、`Schedule Requests` 與 `Course Sessions` 已從程式、設定與文件介面移除。
 `/從時間池建立任務` 的課程分流會選擇課程培訓 Project、課程類別、老師與自訂名稱，直接建立 `Tasks`；候選時段寫入任務說明，正式時間由營運填回 Task。

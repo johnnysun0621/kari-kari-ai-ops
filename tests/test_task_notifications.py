@@ -1,6 +1,7 @@
 from datetime import datetime
 
 import config
+from cogs.tasks_artist import TaskResendView
 from services import repositories, task_notifications
 
 
@@ -135,8 +136,8 @@ def test_resend_list_excludes_received_tasks_but_keeps_unconfirmed_tasks():
     assert not task_notifications.is_resendable_task(received)
 
 
-def test_acknowledgement_scan_runs_on_fixed_two_hour_interval():
-    now = datetime(2026, 8, 2, 14, 0, tzinfo=config.TZ)
+def test_acknowledgement_scan_runs_on_fixed_twelve_hour_interval():
+    now = datetime(2026, 8, 3, 0, 0, tzinfo=config.TZ)
 
     assert not task_notifications.should_run_acknowledgement_scan(
         datetime(2026, 8, 2, 12, 1, tzinfo=config.TZ), now
@@ -197,9 +198,38 @@ def test_notified_task_is_not_dispatchable_again():
     assert pending == []
 
 
+def test_hidden_notified_task_is_selected_for_notification_reset():
+    task = make_task(
+        page_id="hidden-1",
+        discord_notified_at=datetime(2026, 8, 2, 12, 0, tzinfo=config.TZ),
+        discord_acknowledged_at=datetime(2026, 8, 2, 12, 5, tzinfo=config.TZ),
+    )
+    task.discord_visible = False
+
+    pending = task_notifications.find_hidden_tasks_needing_notification_reset([task])
+
+    assert [item.page_id for item in pending] == ["hidden-1"]
+
+
+def test_hidden_task_without_notification_history_does_not_need_reset():
+    task = make_task(page_id="hidden-clean")
+    task.discord_visible = False
+
+    assert task_notifications.find_hidden_tasks_needing_notification_reset([task]) == []
+
+
 def test_acknowledgement_props_store_the_received_time():
     received_at = datetime(2026, 8, 2, 12, 30, tzinfo=config.TZ)
 
     props = task_notifications.acknowledgement_props(received_at)
 
     assert props["Discord 收到時間"]["date"]["start"] == received_at.isoformat()
+
+
+def test_task_resend_requires_explicit_confirmation():
+    view = TaskResendView([make_task()])
+    labels = [getattr(item, "label", "") for item in view.children]
+
+    assert "確認重送" in labels
+    assert "取消" in labels
+    assert view.select.callback == view.selection_changed

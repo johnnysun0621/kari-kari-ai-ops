@@ -160,7 +160,7 @@ def is_resendable_task(task: TaskItem) -> bool:
 def should_run_acknowledgement_scan(
     last_scan_at: datetime | None,
     now: datetime,
-    interval_hours: float = 2,
+    interval_hours: float = 12,
 ) -> bool:
     """判斷是否到了固定週期的未確認任務掃描時間。"""
     return last_scan_at is None or now - last_scan_at >= timedelta(hours=interval_hours)
@@ -194,6 +194,21 @@ def find_dispatch_tasks(
     ]
     # 已通知與否以 Notion 的 Discord 通知時間為準。
     return pending, {"initialized": True, "known_task_ids": current_ids}
+
+
+def find_hidden_tasks_needing_notification_reset(
+    tasks: list[TaskItem],
+) -> list[TaskItem]:
+    """找出已隱藏、但仍殘留上次派發紀錄的任務。"""
+    return [
+        task
+        for task in tasks
+        if not task.discord_visible
+        and (
+            task.discord_notified_at is not None
+            or task.discord_acknowledged_at is not None
+        )
+    ]
 
 
 def load_state(path: Path = STATE_PATH) -> dict:

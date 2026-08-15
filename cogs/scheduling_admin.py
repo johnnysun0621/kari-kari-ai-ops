@@ -239,6 +239,14 @@ class MonthlyPoolArtistSelectView(discord.ui.View):
         self.select.callback = self.on_select
         self.add_item(self.select)
 
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, row=1, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="已取消時間池比對，尚未建立任何任務。",
+            view=None,
+        )
+        self.stop()
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.operator_id:
             return True
@@ -363,13 +371,17 @@ class MonthlyPoolCandidateSelectView(discord.ui.View):
             "選好後可翻頁，最後按「確認候選時段」。"
         )
 
+    def _add_navigation_items(self) -> None:
+        self.add_item(self.previous_page)
+        self.add_item(self.next_page)
+        self.add_item(self.confirm_candidates)
+        self.add_item(self.back_to_artists)
+
     async def _change_page(self, interaction: discord.Interaction, page: int) -> None:
         self.page = max(0, min(page, self.page_count - 1))
         self.clear_items()
         self._build_components()
-        self.add_item(self.previous_page)
-        self.add_item(self.next_page)
-        self.add_item(self.confirm_candidates)
+        self._add_navigation_items()
         await interaction.response.edit_message(content=self._page_text(), view=self)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -425,6 +437,7 @@ class MonthlyPoolCandidateSelectView(discord.ui.View):
                 self.month, self.duration_minutes, self.chosen_artists,
                 chosen, interaction.user, task_types,
                 available_artists=self.available_artists,
+                candidate_windows=self.windows,
             ),
             ephemeral=True,
         )
@@ -446,7 +459,7 @@ class MonthlyPoolCandidateSelectView(discord.ui.View):
 class CourseTypeView(discord.ui.View):
     """課程安排的第二層選擇，沿用租戶既有課程類型設定。"""
 
-    def __init__(self, month, duration_minutes, artists, windows, operator, task_types, *, available_artists=None):
+    def __init__(self, month, duration_minutes, artists, windows, operator, task_types, *, available_artists=None, candidate_windows=None):
         super().__init__(timeout=600)
         self.month = month
         self.duration_minutes = duration_minutes
@@ -456,6 +469,7 @@ class CourseTypeView(discord.ui.View):
         self.operator = operator
         self.task_types = task_types
         self.available_artists = available_artists or list(artists)
+        self.candidate_windows = candidate_windows or windows
         course_types = config.get_tenant().course_types[:25]
         self.select = discord.ui.Select(
             placeholder="選擇課程類型…",
@@ -463,6 +477,18 @@ class CourseTypeView(discord.ui.View):
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
+
+    @discord.ui.button(label="返回任務類型", style=discord.ButtonStyle.secondary, row=1, emoji="↩️")
+    async def back_to_task_type(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="請重新選擇 Notion 任務類型：",
+            view=TaskTypeView(
+                self.month, self.duration_minutes, self.artists, self.windows,
+                self.operator, self.task_types,
+                available_artists=self.available_artists,
+                candidate_windows=self.candidate_windows,
+            ),
+        )
 
     async def interaction_check(self, interaction):
         if interaction.user.id == self.operator_id:
@@ -494,6 +520,7 @@ class CourseTypeView(discord.ui.View):
                 self.month, self.duration_minutes, self.artists, self.windows,
                 interaction.user, self.select.values[0], teachers, projects,
                 self.task_types, self.available_artists,
+                self.candidate_windows,
             ),
             ephemeral=True,
         )
@@ -503,7 +530,7 @@ class CourseTypeView(discord.ui.View):
 class CourseProjectSelectView(discord.ui.View):
     """課程安排選擇上層 Project，Task 建立後可由營運集中管理。"""
 
-    def __init__(self, month, duration_minutes, artists, windows, operator, course_type, teachers, projects, task_types, available_artists):
+    def __init__(self, month, duration_minutes, artists, windows, operator, course_type, teachers, projects, task_types, available_artists, candidate_windows=None):
         super().__init__(timeout=600)
         self.month = month
         self.duration_minutes = duration_minutes
@@ -515,6 +542,7 @@ class CourseProjectSelectView(discord.ui.View):
         self.task_types = task_types
         self.operator = operator
         self.available_artists = available_artists
+        self.candidate_windows = candidate_windows or windows
         self.projects = {project.page_id: project for project in projects}
         self.select = discord.ui.Select(
             placeholder="選擇課程培訓 Project…",
@@ -540,6 +568,7 @@ class CourseProjectSelectView(discord.ui.View):
                 self.month, self.duration_minutes, self.artists, self.windows,
                 interaction.user, self.course_type, self.teachers, project_id,
                 self.projects.values(), self.task_types, self.available_artists,
+                self.candidate_windows,
             ),
             ephemeral=True,
         )
@@ -553,6 +582,7 @@ class CourseProjectSelectView(discord.ui.View):
                 self.month, self.duration_minutes, self.artists, self.windows,
                 self.operator, self.task_types,
                 available_artists=self.available_artists,
+                candidate_windows=self.candidate_windows,
             ),
         )
 
@@ -560,7 +590,7 @@ class CourseProjectSelectView(discord.ui.View):
 class TeacherSelectView(discord.ui.View):
     """從 People.身份類型＝老師的清單選擇確認對象。"""
 
-    def __init__(self, month, duration_minutes, artists, windows, operator, course_type, teachers, project_page_id, projects, task_types, available_artists):
+    def __init__(self, month, duration_minutes, artists, windows, operator, course_type, teachers, project_page_id, projects, task_types, available_artists, candidate_windows=None):
         super().__init__(timeout=600)
         self.month = month
         self.duration_minutes = duration_minutes
@@ -573,6 +603,7 @@ class TeacherSelectView(discord.ui.View):
         self.projects = list(projects)
         self.task_types = task_types
         self.operator = operator
+        self.candidate_windows = candidate_windows or windows
         self.select = discord.ui.Select(
             placeholder="選擇老師／確認對象…",
             options=[
@@ -611,6 +642,7 @@ class TeacherSelectView(discord.ui.View):
                 self.month, self.duration_minutes, self.artists, self.windows,
                 self.operator, self.course_type, self.teachers, self.projects,
                 self.task_types, self.available_artists,
+                self.candidate_windows,
             ),
         )
 
@@ -712,7 +744,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
 class TaskTypeView(discord.ui.View):
     """直接從 Notion Tasks schema 選擇正式任務類型。"""
 
-    def __init__(self, month, duration_minutes, artists, windows, operator, task_types, *, available_artists=None):
+    def __init__(self, month, duration_minutes, artists, windows, operator, task_types, *, available_artists=None, candidate_windows=None):
         super().__init__(timeout=600)
         self.month = month
         self.duration_minutes = duration_minutes
@@ -722,6 +754,7 @@ class TaskTypeView(discord.ui.View):
         self.operator = operator
         self.task_types = task_types
         self.available_artists = available_artists or list(artists)
+        self.candidate_windows = candidate_windows or windows
         self.select = discord.ui.Select(
             placeholder="選擇 Notion 任務類型…",
             options=[discord.SelectOption(label=task_type[:100], value=task_type) for task_type in task_types[:25]],
@@ -745,6 +778,7 @@ class TaskTypeView(discord.ui.View):
                     self.month, self.duration_minutes, self.artists,
                     self.windows, interaction.user, self.task_types,
                     available_artists=self.available_artists,
+                    candidate_windows=self.candidate_windows,
                 ), ephemeral=True,
             )
             return
@@ -755,6 +789,7 @@ class TaskTypeView(discord.ui.View):
                 self.artists, self.windows, interaction.user,
                 self.task_types,
                 available_artists=self.available_artists,
+                candidate_windows=self.candidate_windows,
             ),
             ephemeral=True,
         )
@@ -764,7 +799,7 @@ class TaskTypeView(discord.ui.View):
         await interaction.response.edit_message(
             content="請重新勾選候選時段：",
             view=MonthlyPoolCandidateSelectView(
-                self.month, self.duration_minutes, self.artists, self.windows,
+                self.month, self.duration_minutes, self.artists, self.candidate_windows,
                 self.operator, available_artists=self.available_artists,
                 summary_text="已返回候選時段選擇。",
             ),
@@ -774,7 +809,7 @@ class TaskTypeView(discord.ui.View):
 class DirectArrangementCandidateView(discord.ui.View):
     """非課程分流：由控方選候選窗後建立尚未發布的 Task 草稿。"""
 
-    def __init__(self, arrangement_type, task_type, month, duration_minutes, artists, windows, operator, task_types, *, available_artists=None):
+    def __init__(self, arrangement_type, task_type, month, duration_minutes, artists, windows, operator, task_types, *, available_artists=None, candidate_windows=None):
         super().__init__(timeout=600)
         self.arrangement_type = arrangement_type
         self.task_type = task_type
@@ -786,6 +821,7 @@ class DirectArrangementCandidateView(discord.ui.View):
         self.operator = operator
         self.task_types = task_types
         self.available_artists = available_artists or list(artists)
+        self.candidate_windows = candidate_windows or windows
         self.page = 0
         self._build_components()
 
@@ -805,6 +841,11 @@ class DirectArrangementCandidateView(discord.ui.View):
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
+
+    def _add_navigation_items(self) -> None:
+        self.add_item(self.previous_page)
+        self.add_item(self.next_page)
+        self.add_item(self.back_to_task_type)
 
     async def interaction_check(self, interaction):
         if interaction.user.id == self.operator_id:
@@ -830,8 +871,7 @@ class DirectArrangementCandidateView(discord.ui.View):
         self.page = max(0, self.page - 1)
         self.clear_items()
         self._build_components()
-        self.add_item(self.previous_page)
-        self.add_item(self.next_page)
+        self._add_navigation_items()
         await interaction.response.edit_message(
             content=f"請選擇候選時段（第 {self.page + 1}/{self.page_count} 頁）：",
             view=self,
@@ -844,6 +884,8 @@ class DirectArrangementCandidateView(discord.ui.View):
             view=TaskTypeView(
                 self.month, self.duration_minutes, self.artists, self.windows,
                 self.operator, self.task_types,
+                available_artists=self.available_artists,
+                candidate_windows=self.candidate_windows,
             ),
         )
 
@@ -852,8 +894,7 @@ class DirectArrangementCandidateView(discord.ui.View):
         self.page = min(self.page_count - 1, self.page + 1)
         self.clear_items()
         self._build_components()
-        self.add_item(self.previous_page)
-        self.add_item(self.next_page)
+        self._add_navigation_items()
         await interaction.response.edit_message(
             content=f"請選擇候選時段（第 {self.page + 1}/{self.page_count} 頁）：",
             view=self,

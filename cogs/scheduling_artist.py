@@ -710,8 +710,7 @@ class ModeTimeModal(discord.ui.Modal):
             self.add_item(self.end_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await _submit_pool_slots(
-            interaction,
+        view = AvailabilityConfirmView(
             self.month,
             self.deadline_ts,
             self.nature_code,
@@ -723,6 +722,87 @@ class ModeTimeModal(discord.ui.Modal):
             excluded_day_values=self.excluded_day_values,
             schedule_summary=self.schedule_summary,
         )
+        await interaction.response.send_message(view.prompt(), view=view, ephemeral=True)
+
+
+class AvailabilityConfirmView(InteractionDebugView):
+    """時段寫入 Notion 前的最後確認，讓藝人可返回修改。"""
+
+    def __init__(
+        self,
+        month: str,
+        deadline_ts: int,
+        nature_code: str,
+        week_values: list[str],
+        day_values: list[str],
+        mode: str,
+        *,
+        start_text: str = "",
+        end_text: str = "",
+        excluded_day_values: set[str] | None = None,
+        schedule_summary: str = "",
+    ):
+        super().__init__()
+        self.month = month
+        self.deadline_ts = deadline_ts
+        self.nature_code = nature_code
+        self.week_values = week_values
+        self.day_values = day_values
+        self.mode = mode
+        self.start_text = start_text
+        self.end_text = end_text
+        self.excluded_day_values = set(excluded_day_values or set())
+        self.schedule_summary = schedule_summary
+
+    def prompt(self) -> str:
+        dates = "、".join(
+            f"{date.fromisoformat(value).month}/{date.fromisoformat(value).day}"
+            for value in self.day_values
+        )
+        if self.mode == "all_day":
+            time_text = "08:00–24:00"
+        elif self.mode == "after":
+            time_text = f"{self.start_text} 之後"
+        elif self.mode == "before":
+            time_text = f"{self.end_text} 之前"
+        else:
+            time_text = f"{self.start_text}–{self.end_text}"
+        return (
+            "請確認這批可配合時間：\n"
+            f"日期：{dates}\n"
+            f"時間：{time_text}\n\n"
+            "確認後才會寫入 Notion；需要調整請按「返回修改」。"
+        )
+
+    @discord.ui.button(label="確認送出", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await _submit_pool_slots(
+            interaction,
+            self.month,
+            self.deadline_ts,
+            self.nature_code,
+            self.week_values,
+            self.day_values,
+            self.mode,
+            start_text=self.start_text,
+            end_text=self.end_text,
+            excluded_day_values=self.excluded_day_values,
+            schedule_summary=self.schedule_summary,
+        )
+
+    @discord.ui.button(label="返回修改", style=discord.ButtonStyle.secondary, emoji="↩️")
+    async def back(self, interaction: discord.Interaction, _: discord.ui.Button):
+        view = DatePresetView(
+            self.month,
+            self.deadline_ts,
+            self.week_values,
+            self.nature_code,
+            selected_day_values=self.day_values,
+            selected_mode=self.mode,
+            excluded_day_values=self.excluded_day_values,
+            schedule_summary=self.schedule_summary,
+        )
+        await interaction.response.edit_message(content=view.prompt(), view=view)
 
 
 class ApplyModeButton(discord.ui.Button):
@@ -748,8 +828,7 @@ class ApplyModeButton(discord.ui.Button):
             await interaction.response.send_message("請先勾選要套用的日期。", ephemeral=True)
             return
         if self.mode == "all_day":
-            await _submit_pool_slots(
-                interaction,
+            view = AvailabilityConfirmView(
                 self.parent_view.month,
                 self.parent_view.deadline_ts,
                 self.parent_view.nature_code,
@@ -759,6 +838,7 @@ class ApplyModeButton(discord.ui.Button):
                 excluded_day_values=self.parent_view.excluded_day_values,
                 schedule_summary=self.parent_view.schedule_summary,
             )
+            await interaction.response.edit_message(content=view.prompt(), view=view)
             return
         await interaction.response.send_modal(
             ModeTimeModal(
@@ -914,10 +994,23 @@ class DatePresetView(InteractionDebugView):
 
     @discord.ui.button(label="重新選日期", style=discord.ButtonStyle.secondary, emoji="↩️", row=4)
     async def back(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.edit_message(
-            content=self.prompt(),
-            view=self.page_view(0),
+        view = DatePresetView(
+            self.month,
+            self.deadline_ts,
+            self.week_values,
+            self.nature_code,
+            excluded_day_values=self.excluded_day_values,
+            schedule_summary=self.schedule_summary,
         )
+        await interaction.response.edit_message(content=view.prompt(), view=view)
+
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️", row=4)
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="已取消本次操作，尚未送出的日期與時間不會寫入 Notion。",
+            view=None,
+        )
+        self.stop()
 
     @discord.ui.button(label="自訂時間 / 備註", style=discord.ButtonStyle.secondary, emoji="✏️", row=4)
     async def custom_time(self, interaction: discord.Interaction, _: discord.ui.Button):
@@ -1139,11 +1232,27 @@ class MySlotsDeleteView(InteractionDebugView):
             max_values=min(25, len(options)),
             options=options,
         )
-        self.select.callback = self.on_delete
+        self.select.callback = self.selection_changed
         self.add_item(self.select)
 
-    async def on_delete(self, interaction: discord.Interaction):
+        delete_button = discord.ui.Button(
+            label="刪除選取時段",
+            style=discord.ButtonStyle.danger,
+            emoji="🗑️",
+        )
+        delete_button.callback = self.delete_selected
+        self.add_item(delete_button)
+
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(content="已取消，既有時段未變更。", view=None)
+        self.stop()
+
+    async def selection_changed(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+
+    async def delete_selected(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         page_ids = list(self.select.values)
         labels = [
             _slot_delete_label(self.slot_by_id[page_id])
@@ -1225,6 +1334,21 @@ class ManageAvailabilityView(InteractionDebugView):
         )
         fill_button.callback = self.open_fill_flow
         self.add_item(fill_button)
+
+        cancel_button = discord.ui.Button(
+            label="取消",
+            style=discord.ButtonStyle.secondary,
+            emoji="✖️",
+        )
+        cancel_button.callback = self.cancel
+        self.add_item(cancel_button)
+
+    async def cancel(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            content="已取消管理可配合時間，既有資料未變更。",
+            view=None,
+        )
+        self.stop()
 
     async def selection_changed(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)

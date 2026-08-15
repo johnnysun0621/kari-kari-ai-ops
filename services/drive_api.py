@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 _services: dict[str, object] = {}
+_version_folder_locks: dict[str, asyncio.Lock] = {}
 
 
 def _token_path() -> str:
@@ -43,6 +44,7 @@ def _get_service():
 
 def reset_for_tests() -> None:
     _services.clear()
+    _version_folder_locks.clear()
 
 
 def _escape_query_value(value: str) -> str:
@@ -88,6 +90,22 @@ def _folder_resource_sync(service, folder_id: str) -> dict:
     ).execute()
 
 
+def _list_child_folder_names_sync(service, parent_id: str) -> list[str]:
+    query = (
+        f"'{_escape_query_value(parent_id)}' in parents"
+        f" and mimeType = '{_FOLDER_MIME}'"
+        " and trashed = false"
+    )
+    result = service.files().list(
+        q=query,
+        fields="files(name)",
+        pageSize=1000,
+        includeItemsFromAllDrives=True,
+        supportsAllDrives=True,
+    ).execute()
+    return [str(item.get("name") or "") for item in result.get("files", [])]
+
+
 async def upload_submission_file(
     *,
     base_folder_id: str,
@@ -124,6 +142,31 @@ async def ensure_folder_path(
         return _folder_resource_sync(service, folder_id)
 
     return await asyncio.to_thread(run)
+
+
+async def ensure_next_version_folder(
+    *,
+    base_folder_id: str,
+    parent_path_segments: list[str],
+    name_prefix: str,
+) -> dict:
+    """Create and return the next `ver.N` folder below a resolved parent path."""
+    def run() -> dict:
+        from services import drive_archive
+
+        service = _get_service()
+        parent_id = base_folder_id
+        for segment in parent_path_segments:
+            parent_id = _find_or_create_folder_sync(service, parent_id, segment)
+        existing_names = _list_child_folder_names_sync(service, parent_id)
+        name = drive_archive.next_versioned_folder_name(existing_names, name_prefix)
+        folder_id = _find_or_create_folder_sync(service, parent_id, name)
+        return _folder_resource_sync(service, folder_id)
+
+    lock_key = "\x1f".join([base_folder_id, *parent_path_segments, name_prefix])
+    lock = _version_folder_locks.setdefault(lock_key, asyncio.Lock())
+    async with lock:
+        return await asyncio.to_thread(run)
 
 
 def _list_recent_files_sync(service, folder_id: str, since: datetime) -> list[dict]:

@@ -79,6 +79,30 @@ def task_folder_name(
     return f"{date_value.replace('-', '.')}_{name[:70].rstrip(' ._')}"
 
 
+def _safe_versioned_folder_item(value: str, fallback: str = "未命名項目") -> str:
+    value = re.sub(r"[\\/:*?\"<>|\r\n\t]+", "_", value or fallback)
+    value = re.sub(r"\s+", " ", value).strip(" ._") or fallback
+    return value[:70].rstrip(" ._") or fallback
+
+
+def versioned_folder_prefix(item_name: str, created_at: datetime) -> str:
+    """Return `<item>_YYYY.MM.DD_ver.` for a submission/review folder."""
+    item = _safe_versioned_folder_item(item_name)
+    return f"{item}_{created_at.strftime('%Y.%m.%d')}_ver."
+
+
+def next_versioned_folder_name(existing_names: list[str], prefix: str) -> str:
+    """Choose the next numeric version among sibling folders sharing a prefix."""
+    versions: list[int] = []
+    for name in existing_names:
+        if not name.startswith(prefix):
+            continue
+        suffix = name[len(prefix):]
+        if suffix.isdigit():
+            versions.append(int(suffix))
+    return f"{prefix}{max(versions, default=0) + 1}"
+
+
 def archive_path_for_submission(
     task: "repositories.TaskItem",
     now: datetime,
@@ -107,8 +131,9 @@ def archive_path_for_review_feedback(
     ]
 
 
-def review_feedback_folder_name(created_at: datetime) -> str:
-    return f"回饋_{created_at.strftime('%Y%m%d_%H%M')}"
+def review_feedback_folder_name(created_at: datetime, version: int = 1) -> str:
+    """Compatibility helper for callers that already know the target version."""
+    return f"{versioned_folder_prefix('老師回饋', created_at)}{version}"
 
 
 def resolve_archive_target(

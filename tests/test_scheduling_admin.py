@@ -62,6 +62,44 @@ def test_candidate_flow_views_expose_back_navigation():
     )
     assert any(getattr(child, "label", "") == "返回候選時段" for child in task_view.children)
 
+    artist_view = scheduling_admin.MonthlyPoolArtistSelectView(
+        [artist], "2026-08", 60, operator,
+    )
+    assert any(getattr(child, "label", "") == "取消" for child in artist_view.children)
+
+    course_view = scheduling_admin.CourseTypeView(
+        "2026-08", 60, [artist], [(start, end)], operator,
+        ["課程與作業"], available_artists=[artist],
+    )
+    assert any(getattr(child, "label", "") == "返回任務類型" for child in course_view.children)
+
+
+def test_candidate_pagination_keeps_back_navigation():
+    operator = SimpleNamespace(id=123)
+    artist = SimpleNamespace(page_id="artist-1", name="Johnny", status="已簽約")
+    window = (
+        datetime(2026, 8, 1, 8, 0, tzinfo=config.TZ),
+        datetime(2026, 8, 1, 9, 0, tzinfo=config.TZ),
+    )
+    windows = [window] * (scheduling_admin.CANDIDATE_PAGE_SIZE + 1)
+
+    candidate_view = scheduling_admin.MonthlyPoolCandidateSelectView(
+        "2026-08", 60, [artist], windows, operator,
+    )
+    candidate_view.clear_items()
+    candidate_view._build_components()
+    candidate_view._add_navigation_items()
+    assert any(getattr(child, "label", "") == "返回藝人選擇" for child in candidate_view.children)
+
+    direct_view = scheduling_admin.DirectArrangementCandidateView(
+        "通告", "通告", "2026-08", 60, [artist], windows, operator,
+        ["通告"], available_artists=[artist],
+    )
+    direct_view.clear_items()
+    direct_view._build_components()
+    direct_view._add_navigation_items()
+    assert any(getattr(child, "label", "") == "返回任務類型" for child in direct_view.children)
+
 
 def test_course_teacher_view_accepts_back_navigation_context():
     operator = SimpleNamespace(id=123)

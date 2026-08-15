@@ -15,7 +15,7 @@
 | 2026-07-11 | 正式安排不能誤發 | 控方補齊正式時間後才勾選 `Discord 顯示=true`；通知流程以 Notion 通知時間防重複 | 自動任務通知 | Tasks、Audit | Notion 勾選 `Discord 顯示=true` | task dispatch tests | 已完成 |
 | 2026-07-11 | 藝人不可看到營運機密 | 不開放 Notion；Discord 依 ID、角色與頻道限制 | 權限層 | Artists、People | 個人 ephemeral／DM／私人 Thread | permissions tests | 已完成 |
 | 2026-07-11 | 課程助教可查本人紀錄 | 開放式 RAG；每次同步，失敗用快取 | 課程 AI | Course Meetings、Tasks、Projects | 課程助教自然對話 | course QA / attachment tests | 已完成 |
-| 2026-07-24 | 新任務要確認收到 | 每筆獨立確認；未確認每 2 小時重送原通知 | 任務派發 | Tasks、Audit | 「收到任務」按鈕 | task dispatch tests | 已完成 |
+| 2026-07-24 | 新任務要確認收到 | 每筆獨立確認；未確認每 12 小時重送原通知 | 任務派發 | Tasks、Audit | 「收到任務」按鈕 | task dispatch tests | 已完成 |
 | 2026-07-24 | 大檔與多檔提交不要混亂 | 藝人檔案統一走 Drive；藝人／任務／版本資料夾 | Drive 提交流程 | Tasks、Submissions、Artists | `/提交任務` | Drive upload / folder tests | 已完成 |
 | 2026-07-24 | 資料夾名稱易辨識 | `YYYY.MM.DD_任務名稱`，有截止日優先 | Drive 命名 | Tasks | 自動產生 | drive archive tests | 已完成 |
 | 2026-07-24 | 指定老師／公司成員審核 | 審核人員 relation 讀 People | 指定審核 | Tasks、People、Submissions | `/審核提交` | reviewer scope tests | 已完成 |
@@ -33,6 +33,6 @@
 
 ## 版本規則
 
-- 7/24 原始紀錄曾寫 24 小時未確認提醒；後續實測已決定改為每 2 小時掃描並逐筆重送。
+- 7/24 原始紀錄曾寫 24 小時未確認提醒；後續實測已決定改為每 12 小時掃描並逐筆重送。
 - Schedule Requests、Course Sessions 已刪除；歷史文件或 relation 名稱不代表 runtime 仍使用。
 - 長期需求保留在 Roadmap，但需另行核准 schema 後才能實作。

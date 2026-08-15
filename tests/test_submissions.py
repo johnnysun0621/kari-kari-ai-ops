@@ -1,6 +1,8 @@
 """P0-3 提交流程純函式測試。"""
 
+import asyncio
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import config
 from cogs.submissions import (
@@ -10,7 +12,15 @@ from cogs.submissions import (
     PendingFileSubmission,
     PendingReviewFeedbackFile,
     ReviewFeedbackDriveTarget,
+    LargeFileSubmissionChoiceView,
+    ReviewFeedbackLargeFileChoiceView,
+    MixedSubmissionChoiceView,
+    PostReviewAttachmentView,
+    ReviewActionView,
+    ReviewSubmissionView,
+    SubmitTaskView,
     direct_upload_size_error,
+    disable_all_view_items,
     drive_folder_submission_summary,
     expired_pending_keys,
     feedback_with_attachment_links,
@@ -23,6 +33,7 @@ from cogs.submissions import (
     prefixed_submission_filename,
     review_feedback_drive_instruction,
     review_feedback_file_dm_text,
+    review_dm_text,
     review_submission_detail_text,
     review_task_status_for_result,
     submission_method_conflict,
@@ -304,14 +315,16 @@ class TestLargeFileDriveInstruction:
         assert "編曲作業" in text
         assert "資料夾" in text
         assert "https://drive.google.com/drive/folders/abc" in text
-        assert "貼 Drive 連結" in text
+        assert "我已上傳到 Drive" in text
+        assert "貼 Drive 連結" not in text
         assert "截圖佐證" not in text
 
-    def test_without_folder_link_falls_back_to_link_submission(self):
+    def test_without_folder_link_requires_company_drive_repair(self):
         text = large_file_drive_instruction(task_name="編曲作業", folder_url=None)
 
         assert "無法自動產生指定資料夾" in text
-        assert "貼 Drive 連結" in text
+        assert "聯絡控方" in text
+        assert "貼 Drive 連結" not in text
 
     def test_drive_folder_submission_summary_collects_names_ids_and_size(self):
         names, ids, size_mb = drive_folder_submission_summary([
@@ -446,11 +459,118 @@ class TestReviewDisplayHelpers:
         assert "副歌再修" in text
         assert "批改檔：https://drive/a、https://drive/b" in text
 
+    def test_review_result_dm_includes_related_notion_task_link(self):
+        submission = repositories.SubmissionItem(
+            page_id="submission-1",
+            name="Johnny｜編曲作業",
+            status="需修改",
+            task_page_ids=["3b55806f-097b-81e8-b430-e9b9ce902f2a"],
+        )
+
+        text = review_dm_text(
+            submission,
+            task_name="測試課程",
+            result="需修改",
+            feedback="請調整音量",
+            reviewer="A 老師",
+        )
+
+        assert "查看 Notion 任務" in text
+        assert "https://www.notion.so/3b55806f097b81e8b430e9b9ce902f2a" in text
+
+    def test_finishing_review_disables_every_action_in_the_view(self):
+        class Item:
+            disabled = False
+
+        class View:
+            children = [Item(), Item()]
+
+        view = View()
+        disable_all_view_items(view)
+
+        assert all(item.disabled for item in view.children)
+
+    def test_no_feedback_file_removes_completed_review_actions(self):
+        class Response:
+            edited_message = None
+
+            async def edit_message(self, **kwargs):
+                self.edited_message = kwargs
+
+            async def send_message(self, *args, **kwargs):
+                raise AssertionError("reviewer should be allowed to finish the review")
+
+        response = Response()
+        interaction = SimpleNamespace(
+            user=SimpleNamespace(id=123),
+            response=response,
+        )
+        submission = repositories.SubmissionItem(
+            page_id="submission-1",
+            name="Johnny｜測試任務",
+            status="待審核",
+        )
+        view = PostReviewAttachmentView(
+            SimpleNamespace(),
+            submission,
+            result="通過",
+            feedback="很好",
+            reviewer="A 老師",
+            reviewer_id=123,
+        )
+        no_feedback_button = next(
+            item for item in view.children if getattr(item, "label", "") == "不需補批改檔"
+        )
+
+        asyncio.run(no_feedback_button.callback(interaction))
+
+        assert response.edited_message == {
+            "content": "✅ 已確認不需補批改檔。審核流程完成。",
+            "view": None,
+        }
+
+    def test_submission_and_review_views_expose_navigation(self):
+        now = datetime(2026, 8, 12, tzinfo=config.TZ)
+        submit_task = repositories.TaskItem(
+            page_id="task-1", name="測試任務", status="待提交", task_type="作業"
+        )
+        submission = repositories.SubmissionItem(
+            page_id="submission-1", name="Johnny｜測試任務", status="待審核"
+        )
+        cog = SimpleNamespace()
+
+        task_view = SubmitTaskView(cog, [submit_task], now)
+        assert any(getattr(item, "label", "") == "取消" for item in task_view.children)
+
+        mixed_view = MixedSubmissionChoiceView(cog, submit_task, [submit_task], now)
+        assert any(getattr(item, "label", "") == "返回任務選擇" for item in mixed_view.children)
+
+        review_list = ReviewSubmissionView(cog, [submission])
+        assert any(getattr(item, "label", "") == "取消" for item in review_list.children)
+
+        review_action = ReviewActionView(cog, submission, 123, [submission])
+        assert any(getattr(item, "label", "") == "返回審核清單" for item in review_action.children)
+
+        drive_view = LargeFileSubmissionChoiceView(cog, submit_task, owner_id=123)
+        assert any(getattr(item, "label", "") == "返回任務選擇" for item in drive_view.children)
+
+        feedback_view = ReviewFeedbackLargeFileChoiceView(
+            cog,
+            submission,
+            result="通過",
+            feedback="很好",
+            reviewer="老師",
+            targets=[],
+            owner_id=123,
+        )
+        assert any(getattr(item, "label", "") == "返回回饋選擇" for item in feedback_view.children)
+
     def test_review_feedback_file_dm_mentions_result_feedback_and_file(self):
         submission = repositories.SubmissionItem(
             page_id="submission-1",
             name="Johnny｜編曲作業",
             status="通過",
+            task_page_ids=["task-1"],
         )
 
         text = review_feedback_file_dm_text(
@@ -465,6 +585,7 @@ class TestReviewDisplayHelpers:
         assert "通過" in text
         assert "做得很好" in text
         assert "https://drive/review" in text
+        assert "查看 Notion 任務" in text
 
 
 class TestReviewResultMapping:

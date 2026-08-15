@@ -1080,6 +1080,20 @@ async def get_task(task_page_id: str) -> TaskItem | None:
     return _to_task(page) if page else None
 
 
+async def find_task_by_latest_submission_url(submission_url: str) -> TaskItem | None:
+    """舊 Submission 缺 relation 時，以 Tasks.最新提交 URL 找回原任務。"""
+    if not submission_url:
+        return None
+    pages = await notion_api.query_data_source(
+        config.DS_TASKS,
+        filter_={
+            "property": "最新提交 URL",
+            "url": {"equals": submission_url},
+        },
+    )
+    return _to_task(pages[0]) if pages else None
+
+
 # ---------- P0-2 任務查詢（Discord 顯示） ----------
 
 TASK_DUE_SOON_DAYS = 3
@@ -1254,6 +1268,19 @@ async def reset_task_discord_notification(page_id: str) -> None:
     await notion_api.update_page(
         page_id,
         {
+            "Discord 通知時間": {"date": None},
+            "Discord 收到時間": {"date": None},
+        },
+    )
+
+
+async def return_task_after_artist_concern(page_id: str) -> None:
+    """藝人回報無法配合後，退回任務並準備控方修改後重新派發。"""
+    await notion_api.update_page(
+        page_id,
+        {
+            "任務狀態": _select("尚未開始"),
+            "Discord 顯示": _checkbox(False),
             "Discord 通知時間": {"date": None},
             "Discord 收到時間": {"date": None},
         },

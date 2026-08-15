@@ -164,6 +164,17 @@ class ServerSetupConfirmView(discord.ui.View):
         )
         self.stop()
 
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message("❌ 只有發起初始化的控方可以取消。", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            content="已取消伺服器初始化，Discord 設定未變更。",
+            view=None,
+        )
+        self.stop()
+
 
 class ServerSetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):

@@ -28,7 +28,7 @@ def review_reminder_due(
 
 
 class RemindersCog(commands.Cog):
-    TASK_ACK_REMINDER_HOURS = 2
+    TASK_ACK_REMINDER_HOURS = 12
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -216,6 +216,19 @@ class RemindersCog(commands.Cog):
     async def _check_task_dispatch_notifications(self):
         """通知新建立且開啟 Discord 顯示的任務；首次啟用只建立基準。"""
         all_tasks = await repositories.get_active_tasks()
+        stale_hidden_tasks = (
+            task_notifications.find_hidden_tasks_needing_notification_reset(all_tasks)
+        )
+        for task in stale_hidden_tasks:
+            try:
+                await repositories.reset_task_discord_notification(task.page_id)
+                logger.info("已重置隱藏任務的 Discord 通知狀態：%s", task.name)
+            except Exception:
+                logger.exception(
+                    "隱藏任務通知狀態重置失敗：%s（%s）",
+                    task.name,
+                    task.page_id,
+                )
         unseen, next_state = task_notifications.find_dispatch_tasks(
             all_tasks, self._task_dispatch_state
         )
@@ -373,7 +386,7 @@ class RemindersCog(commands.Cog):
                 )
 
     async def _check_unacknowledged_task_notifications(self):
-        """每 2 小時掃描一次，重新推送所有尚未確認的任務。"""
+        """每 12 小時掃描一次，重新推送所有尚未確認的任務。"""
         now = datetime.now(config.get_tenant().tz)
         if not task_notifications.should_run_acknowledgement_scan(
             self._last_unacknowledged_scan_at,

@@ -135,8 +135,9 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
             f"回饋：{reason}"
         )
         try:
-            # 先保存回饋，再記錄已回應；避免前者失敗時錯誤停止未確認提醒。
+            # 先保存原因，再將任務退回未發布狀態供控方調整。
             await repositories.append_task_feedback(self.task_id, entry)
+            await repositories.return_task_after_artist_concern(self.task_id)
             await audit.log_event(
                 event_name=f"藝人回報任務問題｜{task.name}",
                 action_type="更新",
@@ -144,7 +145,7 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
                 discord_user_id=str(interaction.user.id),
                 target_db="Tasks",
                 target_url=task.url,
-                after=reason,
+                after=f"退回尚未開始並暫停 Discord 顯示｜{reason}",
             )
         except Exception:
             logger.exception("任務問題回饋寫入失敗：%s", self.task_id)
@@ -161,11 +162,13 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
                 f"⚠️ **藝人回報任務問題**\n"
                 f"任務：**{task.name}**\n"
                 f"藝人：{artist.name}\n"
-                f"回饋：{reason}{link}"
+                f"回饋：{reason}\n"
+                "狀態：已退回「尚未開始」，並取消 Discord 顯示。\n"
+                "請修改任務後重新勾選「Discord 顯示」，Bot 會重新通知藝人。"
+                f"{link}"
             )
         await interaction.followup.send(
-            "✅ 已把你的回饋寫入任務說明，控方已收到通知；這項任務仍會保留在重送清單。\n"
-            "控方調整任務後會再通知你。",
+            "✅ 已將問題回報給控方，任務已暫停。控方調整後會重新通知你。",
             ephemeral=True,
         )
 
@@ -224,7 +227,25 @@ class TaskResendSelect(discord.ui.Select):
         super().__init__(placeholder="選擇要重新通知的任務…", options=options)
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        task = self.tasks[self.values[0]]
+        await interaction.response.defer(ephemeral=True)
+
+
+class TaskResendView(discord.ui.View):
+    def __init__(self, tasks: list[repositories.TaskItem]):
+        super().__init__(timeout=180)
+        self.select = TaskResendSelect(tasks)
+        self.select.callback = self.selection_changed
+        self.add_item(self.select)
+
+    async def selection_changed(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+
+    @discord.ui.button(label="確認重送", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm_resend(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not self.select.values:
+            await interaction.response.send_message("請先選擇要重新通知的任務。", ephemeral=True)
+            return
+        task = self.select.tasks[self.select.values[0]]
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await repositories.reset_task_discord_notification(task.page_id)
@@ -245,12 +266,12 @@ class TaskResendSelect(discord.ui.Select):
             f"✅ 已排入重送：**{task.name}**。Bot 將在下一輪背景檢查（目前每 30 秒）重新通知。",
             ephemeral=True,
         )
+        self.stop()
 
-
-class TaskResendView(discord.ui.View):
-    def __init__(self, tasks: list[repositories.TaskItem]):
-        super().__init__(timeout=180)
-        self.add_item(TaskResendSelect(tasks))
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(content="已取消，沒有重送任何任務通知。", view=None)
+        self.stop()
 
 
 class TasksCog(commands.Cog):

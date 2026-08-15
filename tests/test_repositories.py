@@ -97,6 +97,65 @@ class TestTaskDriveFolder:
         monkeypatch.setattr(repositories.notion_api, "update_page", fail_update_page)
         asyncio.run(repositories.set_task_drive_folder("task-1", ""))
 
+
+class TestTaskConcernReset:
+    def test_returns_task_to_unpublished_state(self, monkeypatch):
+        calls = []
+
+        async def fake_update_page(page_id, properties):
+            calls.append((page_id, properties))
+
+        monkeypatch.setattr(repositories.notion_api, "update_page", fake_update_page)
+
+        asyncio.run(repositories.return_task_after_artist_concern("task-1"))
+
+        assert calls == [
+            (
+                "task-1",
+                {
+                    "任務狀態": {"select": {"name": "尚未開始"}},
+                    "Discord 顯示": {"checkbox": False},
+                    "Discord 通知時間": {"date": None},
+                    "Discord 收到時間": {"date": None},
+                },
+            )
+        ]
+
+
+class TestTaskSubmissionFallback:
+    def test_finds_task_by_latest_submission_url(self, monkeypatch):
+        calls = []
+        expected = repositories.TaskItem(
+            page_id="task-1",
+            name="測試任務",
+            status="待審核",
+            task_type="課程與作業",
+        )
+
+        async def fake_query(data_source_id, filter_=None):
+            calls.append((data_source_id, filter_))
+            return [{"id": "task-1"}]
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+        monkeypatch.setattr(repositories, "_to_task", lambda page: expected)
+
+        result = asyncio.run(
+            repositories.find_task_by_latest_submission_url(
+                "https://www.notion.so/submission-1"
+            )
+        )
+
+        assert result is expected
+        assert calls == [
+            (
+                config.DS_TASKS,
+                {
+                    "property": "最新提交 URL",
+                    "url": {"equals": "https://www.notion.so/submission-1"},
+                },
+            )
+        ]
+
 def slot(
     *,
     page_id: str = "slot-1",

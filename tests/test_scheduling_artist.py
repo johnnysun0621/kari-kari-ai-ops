@@ -6,7 +6,7 @@ from cogs import scheduling_artist
 import discord
 
 import config
-from cogs.scheduling_artist import DatePresetView, SchedulingArtistCog
+from cogs.scheduling_artist import AvailabilityConfirmView, DatePresetView, SchedulingArtistCog
 from services import repositories, time_collection
 
 
@@ -34,11 +34,43 @@ class TestDatePresetView:
         assert "下一頁" in labels
         assert "整天可（08:00–24:00）" in labels
         assert "指定時段" in labels
+        assert "取消" in labels
         assert "選全部日期" not in labels
         assert "本頁：8/1–8/16" in view.prompt()
         assert "尚未選日期" in view.prompt()
         assert "填寫方式" in view.prompt()
         assert "整天可：08:00–24:00" in view.prompt()
+
+
+def test_availability_management_view_has_cancel_navigation():
+    artist = repositories.Artist(
+        page_id="artist-1", name="Johnny", discord_user_id="123", status="已簽約"
+    )
+    view = scheduling_artist.ManageAvailabilityView(
+        "2026-08", 1785600000, time_collection.DEFAULT_COLLECTION_NATURE,
+        artist, [], "",
+    )
+
+    assert "取消" in child_labels(view)
+
+
+def test_my_slots_requires_explicit_delete_confirmation():
+    artist = repositories.Artist(
+        page_id="artist-1", name="Johnny", discord_user_id="123", status="已簽約"
+    )
+    slot = repositories.AvailabilitySlot(
+        page_id="slot-1",
+        name="8/12 可配合",
+        start=datetime(2026, 8, 12, 8, 0, tzinfo=config.TZ),
+        end=datetime(2026, 8, 12, 12, 0, tzinfo=config.TZ),
+        artist_page_ids=[artist.page_id],
+    )
+    view = scheduling_artist.MySlotsDeleteView([slot], artist)
+
+    labels = child_labels(view)
+    assert "刪除選取時段" in labels
+    assert "取消" in labels
+    assert view.select.callback == view.selection_changed
 
     def test_last_day_button_page_shows_remaining_month_days(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
@@ -115,6 +147,22 @@ class TestDatePresetView:
         ]
         assert all(button.disabled for button in empty_apply_buttons)
         assert all(not button.disabled for button in selected_apply_buttons)
+
+    def test_availability_confirmation_allows_submit_or_return(self):
+        week_values = [week.value for week in time_collection.month_week_options("2026-08")]
+        view = AvailabilityConfirmView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            week_values,
+            ["2026-08-12", "2026-08-13"],
+            "all_day",
+        )
+
+        assert "確認送出" in child_labels(view)
+        assert "返回修改" in child_labels(view)
+        assert "8/12、8/13" in view.prompt()
+        assert "08:00–24:00" in view.prompt()
 
     def test_schedule_summary_stays_visible_across_date_interactions(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]

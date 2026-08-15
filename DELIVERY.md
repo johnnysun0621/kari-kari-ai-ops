@@ -13,7 +13,7 @@ Discord 收集月度可配合時間
 → TimeTree 人工補登
 ```
 
-任務則由 Notion Tasks 派送到 Discord，支援逐筆收到確認、每 2 小時未確認重送、提交、Drive 歸檔、指定審核與修改期限。
+任務則由 Notion Tasks 派送到 Discord，支援逐筆收到確認、每 12 小時未確認重送、提交、Drive 歸檔、指定審核與修改期限。
 
 目前程式註冊 13 個 slash commands；完整角色與頻道對應見 [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md)。藝人檔案提交統一使用 Google Drive，Discord 附件只保留在老師批改檔等獨立審核流程。
 
