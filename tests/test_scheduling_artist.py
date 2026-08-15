@@ -1,6 +1,7 @@
 """Discord artist scheduling UI helper tests."""
 
 from datetime import datetime
+import inspect
 
 from cogs import scheduling_artist
 import discord
@@ -54,7 +55,7 @@ def test_availability_management_view_has_cancel_navigation():
     assert "取消" in child_labels(view)
 
 
-def test_my_slots_requires_explicit_delete_confirmation():
+def test_month_overview_allows_artist_to_choose_a_month_or_cancel():
     artist = repositories.Artist(
         page_id="artist-1", name="Johnny", discord_user_id="123", status="已簽約"
     )
@@ -65,12 +66,18 @@ def test_my_slots_requires_explicit_delete_confirmation():
         end=datetime(2026, 8, 12, 12, 0, tzinfo=config.TZ),
         artist_page_ids=[artist.page_id],
     )
-    view = scheduling_artist.MySlotsDeleteView([slot], artist)
+    view = scheduling_artist.AvailabilityMonthOverviewView(
+        None,
+        artist,
+        [slot],
+        datetime(2026, 8, 1, tzinfo=config.TZ),
+    )
 
     labels = child_labels(view)
-    assert "刪除選取時段" in labels
     assert "取消" in labels
-    assert view.select.callback == view.selection_changed
+    selects = [child for child in view.children if isinstance(child, discord.ui.Select)]
+    assert len(selects) == 1
+    assert any(option.value == "2026-08" for option in selects[0].options)
 
     def test_last_day_button_page_shows_remaining_month_days(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
@@ -243,3 +250,5 @@ def test_refill_time_command_is_artist_visible():
 
     assert command.name == "管理可配合時間"
     assert command.default_permissions is None
+    assert inspect.signature(command.callback).parameters["月份"].default is None
+    assert not hasattr(SchedulingArtistCog, "my_slots")

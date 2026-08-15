@@ -1,4 +1,4 @@
-"""藝人端：填寫可用時間按鈕（persistent）、時段 Modal、/我的時段。"""
+"""藝人端：填寫與管理可配合時間的按鈕、Modal 與統一指令。"""
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -1211,75 +1211,90 @@ def _trim_discord_message(text: str, limit: int = 1900) -> str:
     return text[:limit - 18].rstrip() + "\n…清單過長已截斷"
 
 
-class MySlotsDeleteView(InteractionDebugView):
-    """列出自己已填時段，可多選刪除（Notion archive）。"""
+def _month_value(year: int, month: int, offset: int) -> str:
+    index = year * 12 + (month - 1) + offset
+    return f"{index // 12:04d}-{index % 12 + 1:02d}"
 
-    def __init__(self, slots: list[repositories.AvailabilitySlot], artist: repositories.Artist):
+
+def _overview_months(
+    slots: list[repositories.AvailabilitySlot],
+    now: datetime,
+) -> list[tuple[str, int]]:
+    counts: dict[str, int] = {}
+    for slot in slots:
+        month = _slot_month_label(slot)
+        if month != "未分類":
+            counts[month] = counts.get(month, 0) + 1
+    months = {
+        _month_value(now.year, now.month, offset)
+        for offset in range(12)
+    }
+    months.update(counts)
+    return [(month, counts.get(month, 0)) for month in sorted(months)[:25]]
+
+
+def availability_overview_text(
+    slots: list[repositories.AvailabilitySlot],
+    cleanup_count: int = 0,
+) -> str:
+    lines = ["**我的可配合時間**"]
+    if not slots:
+        lines.append("目前沒有已填寫的未來時段。")
+    else:
+        current_month = ""
+        for slot in sorted(slots, key=_slot_sort_key):
+            month = _slot_month_label(slot)
+            if month != current_month:
+                current_month = month
+                lines.append(f"\n__{month}__")
+            lines.append(f"・{_slot_line(slot)}")
+    if cleanup_count:
+        lines.append(f"\n已自動整理 {cleanup_count} 筆重複、重疊或冗餘時段。")
+    lines.append("\n請選擇月份，即可查看既定安排、刪除時段或新增／補填日期。")
+    return _trim_discord_message("\n".join(lines))
+
+
+class AvailabilityMonthOverviewView(InteractionDebugView):
+    """跨月份總覽入口；選定月份後進入同一套管理流程。"""
+
+    def __init__(
+        self,
+        cog: "SchedulingArtistCog | None",
+        artist: repositories.Artist,
+        slots: list[repositories.AvailabilitySlot],
+        now: datetime,
+    ):
         super().__init__()
+        self.cog = cog
         self.artist = artist
-        self.slot_by_id = {slot.page_id: slot for slot in slots[:25]}
         options = [
             discord.SelectOption(
-                label=_slot_delete_label(slot),
-                value=slot.page_id,
-                description=_slot_month_label(slot)[:100],
+                label=month,
+                value=month,
+                description=(f"已填 {count} 筆" if count else "尚未填寫")[:100],
             )
-            for slot in slots[:25]
+            for month, count in _overview_months(slots, now)
         ]
         self.select = discord.ui.Select(
-            placeholder="選擇要刪除的時段（可多選）…",
+            placeholder="選擇要管理的月份…",
             min_values=1,
-            max_values=min(25, len(options)),
+            max_values=1,
             options=options,
         )
-        self.select.callback = self.selection_changed
+        self.select.callback = self.month_selected
         self.add_item(self.select)
 
-        delete_button = discord.ui.Button(
-            label="刪除選取時段",
-            style=discord.ButtonStyle.danger,
-            emoji="🗑️",
-        )
-        delete_button.callback = self.delete_selected
-        self.add_item(delete_button)
+    async def month_selected(self, interaction: discord.Interaction):
+        if self.cog is None:
+            await interaction.response.send_message("❌ 管理入口尚未初始化。", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.cog.edit_month_management(interaction, self.artist, self.select.values[0])
 
     @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️")
     async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.edit_message(content="已取消，既有時段未變更。", view=None)
+        await interaction.response.edit_message(content="已關閉可配合時間管理。", view=None)
         self.stop()
-
-    async def selection_changed(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-    async def delete_selected(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        page_ids = list(self.select.values)
-        labels = [
-            _slot_delete_label(self.slot_by_id[page_id])
-            for page_id in page_ids
-            if page_id in self.slot_by_id
-        ]
-        try:
-            for page_id in page_ids:
-                await repositories.archive_slot(page_id)
-        except Exception:
-            logger.exception("刪除時段失敗")
-            await interaction.followup.send("❌ 刪除失敗，請稍後再試。", ephemeral=True)
-            return
-        await audit.log_event(
-            event_name=f"刪除可用時段｜{self.artist.name}",
-            action_type="更新", operator=self.artist.name,
-            discord_user_id=str(interaction.user.id),
-            target_db="Availability Slots",
-            before=f"{len(page_ids)} 筆",
-            after="（已刪除）",
-        )
-        await interaction.followup.send(
-            "🗑️ 已刪除以下時段，Notion 端也會同步移除：\n"
-            + "\n".join(f"・{label}" for label in labels)
-            + "\n\n可直接使用 `/管理可配合時間` 重新填寫，不需要回去找舊公告。",
-            ephemeral=True,
-        )
 
 
 class ManageAvailabilityView(InteractionDebugView):
@@ -1398,15 +1413,75 @@ class SchedulingArtistCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="管理可配合時間", description="查詢、修改及補填指定月份的月度可配合時間")
-    @app_commands.describe(月份="要補填的月份，例如 2026-08")
-    async def refill_time(self, interaction: discord.Interaction, 月份: str):
+    async def _month_management_payload(
+        self,
+        artist: repositories.Artist,
+        month: str,
+        slots: list[repositories.AvailabilitySlot] | None = None,
+    ) -> tuple[str, ManageAvailabilityView]:
+        try:
+            schedule_summary = _artist_schedule_summary(
+                month,
+                await _schedule_impact_context(artist),
+            )
+        except Exception:
+            logger.exception("讀取藝人既定安排摘要失敗")
+            schedule_summary = "⚠️ 目前讀不到既定安排，請稍後再試。\n"
+        now = datetime.now(config.TZ)
+        if slots is None:
+            slots = _future_slots(await repositories.get_slots_for_artist(artist.page_id))
+        current_slots = sorted(
+            [slot for slot in slots if _slot_month_label(slot) == month],
+            key=_slot_sort_key,
+        )
+        current_text = "目前尚未填寫這個月份的時段。"
+        if current_slots:
+            current_text = "目前已填時段：\n" + "\n".join(
+                f"・{_management_slot_line(slot)}" for slot in current_slots[:25]
+            )
+        deadline_ts = int((now + timedelta(days=3650)).timestamp())
+        content = _trim_discord_message(
+            f"管理 **{month} 可配合時間**。\n"
+            + schedule_summary
+            + current_text
+            + "\n\n選擇既有時段可刪除；要增加時間請按「新增／補填日期」。\n\n"
+            + time_collection.availability_selection_sop()
+        )
+        view = ManageAvailabilityView(
+            month,
+            deadline_ts,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            artist,
+            current_slots,
+            schedule_summary,
+        )
+        return content, view
+
+    async def edit_month_management(
+        self,
+        interaction: discord.Interaction,
+        artist: repositories.Artist,
+        month: str,
+    ) -> None:
+        try:
+            content, view = await self._month_management_payload(artist, month)
+        except Exception:
+            logger.exception("讀取月份可配合時間失敗")
+            await interaction.edit_original_response(
+                content="❌ 讀取可配合時間失敗，請稍後再試。",
+                view=None,
+            )
+            return
+        await interaction.edit_original_response(content=content, view=view)
+
+    @app_commands.command(name="管理可配合時間", description="查詢、刪除及補填月度可配合時間")
+    @app_commands.describe(月份="選填；例如 2026-08，留空可先查看全部未來時段")
+    async def refill_time(self, interaction: discord.Interaction, 月份: str | None = None):
         if not await channel_guard.ensure_schedule_channel(interaction):
             return
-        # 讀取 Tasks / Projects / Course Sessions 可能超過 Discord 3 秒期限。
         await interaction.response.defer(ephemeral=True, thinking=True)
-        normalized_month = time_collection.normalize_month(月份)
-        if normalized_month is None:
+        normalized_month = time_collection.normalize_month(月份) if 月份 else None
+        if 月份 and normalized_month is None:
             await interaction.followup.send(
                 "❌ 月份格式不正確，請輸入像 `2026-08` 這樣的格式。",
                 ephemeral=True,
@@ -1420,111 +1495,46 @@ class SchedulingArtistCog(commands.Cog):
             )
             return
         try:
-            schedule_summary = _artist_schedule_summary(
-                normalized_month,
-                await _schedule_impact_context(artist),
+            compaction, cleanup_count = await _cleanup_artist_time_pool(
+                artist,
+                artist.name,
+                str(interaction.user.id),
             )
         except Exception:
-            logger.exception("讀取藝人既定安排摘要失敗")
-            schedule_summary = "⚠️ 目前讀不到既定安排，請先照可用時間填寫；送出時 Bot 會再檢查。\n"
-        deadline_ts = int((datetime.now(config.TZ) + timedelta(days=3650)).timestamp())
-        now = datetime.now(config.TZ)
-        current_slots = sorted(
-            [
-                slot for slot in await repositories.get_slots_for_artist(artist.page_id)
-                if slot.end and slot.end > now and _slot_month_label(slot) == normalized_month
-            ],
-            key=_slot_sort_key,
-        )
-        current_text = "目前尚未填寫這個月份的時段。"
-        if current_slots:
-            current_text = "目前已填時段：\n" + "\n".join(
-                f"・{_management_slot_line(slot)}" for slot in current_slots[:25]
-            )
-        management_text = (
-            f"管理 **{normalized_month} 可配合時間**。\n"
-            + schedule_summary
-            + current_text
-            + "\n\n選擇既有時段可刪除；要補填或重填請按「新增／補填日期」。\n\n"
-            + time_collection.availability_selection_sop()
-        )
-        await interaction.followup.send(
-            _trim_discord_message(management_text),
-            view=ManageAvailabilityView(
-                normalized_month,
-                deadline_ts,
-                time_collection.DEFAULT_COLLECTION_NATURE,
-                artist,
-                current_slots,
-                schedule_summary,
-            ),
-            ephemeral=True,
-        )
-
-    @app_commands.command(name="我的時段", description="查看並管理我已填寫的可用時間")
-    async def my_slots(self, interaction: discord.Interaction):
-        if not await channel_guard.ensure_schedule_channel(interaction):
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is None:
+            logger.exception("管理入口自動整理時間池失敗")
             await interaction.followup.send(
-                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 設定。", ephemeral=True
-            )
-            return
-        now = datetime.now(config.TZ)
-        all_slots = await repositories.get_slots_for_artist(artist.page_id)
-        my_slots = [
-            slot for slot in all_slots
-            if slot.end and slot.end > now
-        ]
-        compaction = repositories.compact_availability_slots(my_slots)
-        cleanup_count = len(compaction.redundant) + len(compaction.updates)
-        if cleanup_count:
-            try:
-                compaction, cleanup_count = await _cleanup_artist_time_pool(
-                    artist, artist.name, str(interaction.user.id)
-                )
-            except Exception:
-                logger.exception("整理重複 / 冗餘時段失敗")
-                await interaction.followup.send(
-                    "⚠️ 偵測到重複、重疊或被較長時段包含的資料，但自動整理失敗，請稍後再試。",
-                    ephemeral=True,
-                )
-                return
-        my_slots = [
-            slot for slot in compaction.visible
-            if slot.end and slot.end > now
-        ]
-        my_slots = sorted(my_slots, key=_slot_sort_key)
-        if not my_slots:
-            cleanup_text = f"\n已自動整理 {cleanup_count} 筆重複、重疊或冗餘時段。" if cleanup_count else ""
-            await interaction.followup.send(
-                f"目前沒有已填寫的可用時段。{cleanup_text}",
+                "❌ 讀取或整理可配合時間失敗，請稍後再試。",
                 ephemeral=True,
             )
             return
-        lines: list[str] = []
-        lines.append("**月度可配合時段（不是正式行程）**")
-        current_month = ""
-        for slot in my_slots:
-            month = _slot_month_label(slot)
-            if month != current_month:
-                current_month = month
-                lines.append(f"__{month}__")
-            lines.append(f"・{_slot_line(slot)}")
+        now = datetime.now(config.TZ)
+        future_slots = sorted(
+            [slot for slot in compaction.visible if slot.end and slot.end > now],
+            key=_slot_sort_key,
+        )
+        if normalized_month is None:
+            await interaction.followup.send(
+                availability_overview_text(future_slots, cleanup_count),
+                view=AvailabilityMonthOverviewView(self, artist, future_slots, now),
+                ephemeral=True,
+            )
+            return
+        try:
+            content, view = await self._month_management_payload(
+                artist,
+                normalized_month,
+                future_slots,
+            )
+        except Exception:
+            logger.exception("讀取月份可配合時間失敗")
+            await interaction.followup.send(
+                "❌ 讀取可配合時間失敗，請稍後再試。",
+                ephemeral=True,
+            )
+            return
         await interaction.followup.send(
-            _trim_discord_message(
-                "你目前填寫的可用時段：\n"
-                + "\n".join(lines)
-                + (
-                    f"\n\n已自動整理 {cleanup_count} 筆重複、重疊或被較長時段包含的資料。"
-                    if cleanup_count else ""
-                )
-                + "\n\n月度可配合時段只供營運初步排程參考，不是正式行程。"
-                + "\n要取消或改時間：使用 `/管理可配合時間`。"
-            ),
-            view=MySlotsDeleteView(my_slots, artist),
+            content,
+            view=view,
             ephemeral=True,
         )
 

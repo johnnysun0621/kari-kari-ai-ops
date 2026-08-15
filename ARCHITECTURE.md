@@ -111,11 +111,11 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 主要指令：
 
 - `/管理可配合時間`
-- `/我的時段`
 
 主要責任：
 
-- Discord UI 選週次 / 日期 / 時間模式。
+- 跨月份總覽，以及指定月份的刪除、新增與補填。
+- Discord UI 選日期 / 時間模式。
 - 寫入 `Availability Slots`。
 - 送出時檢查正式任務衝突。
 - 支援藝人刪除自己已填的時段。

@@ -107,7 +107,7 @@ services/
   audit.py                # Audit Log 寫入（失敗不阻斷主流程）
 cogs/
   scheduling_admin.py     # /時間資訊蒐集 /從時間池建立任務
-  scheduling_artist.py    # 填寫按鈕 + Modal + /我的時段 /管理可配合時間
+  scheduling_artist.py    # 填寫按鈕 + Modal + /管理可配合時間
   tasks_artist.py         # /我的任務 /任務總覽 /任務通知重送
   submissions.py          # /提交任務 /審核提交
   bulletin.py             # /布告欄同步 + Notion 公告背景同步
