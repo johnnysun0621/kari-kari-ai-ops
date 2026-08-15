@@ -62,6 +62,27 @@ def test_command_permissions_are_scoped_to_one_channel():
     ]
 
 
+def test_existing_configured_legacy_task_channel_is_reused(monkeypatch):
+    legacy = SimpleNamespace(id=123, name="任務專用")
+    guild = SimpleNamespace(
+        text_channels=[legacy],
+        get_channel=lambda channel_id: legacy if channel_id == 123 else None,
+    )
+    spec = next(item for item in server_setup.channel_specs() if item.name == "任務查詢入口")
+    monkeypatch.setattr(server_setup.config, "TASK_CHANNEL_ID", 123)
+
+    assert server_setup.find_existing_channel(guild, spec) is legacy
+
+
+def test_legacy_task_channel_name_is_reused_without_configured_id(monkeypatch):
+    legacy = SimpleNamespace(id=123, name="任務專用")
+    guild = SimpleNamespace(text_channels=[legacy], get_channel=lambda _: None)
+    spec = next(item for item in server_setup.channel_specs() if item.name == "任務查詢入口")
+    monkeypatch.setattr(server_setup.config, "TASK_CHANNEL_ID", 0)
+
+    assert server_setup.find_existing_channel(guild, spec) is legacy
+
+
 def test_oauth_authorize_url_contains_required_scope_and_state(monkeypatch):
     monkeypatch.setattr(server_setup.config, "get_tenant", lambda: SimpleNamespace(
         discord_client_id="app-123",

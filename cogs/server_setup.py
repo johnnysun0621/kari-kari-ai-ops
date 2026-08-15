@@ -23,6 +23,14 @@ class ChannelSpec:
     admin_only: bool = False
 
 
+LEGACY_CHANNEL_NAMES: dict[str, tuple[str, ...]] = {
+    # Existing KariKari servers used these names before channel initialization
+    # was introduced. Keep their history and IDs instead of creating duplicates.
+    "任務查詢入口": ("任務專用",),
+    "營運內部通知": ("營運內部專用", "營運內部"),
+}
+
+
 def channel_specs() -> tuple[ChannelSpec, ...]:
     return (
         ChannelSpec("公告區", "ANNOUNCE_CHANNEL_ID", "公開類型 Task、時間收集與 Notion 布告欄", read_only=True),
@@ -74,6 +82,27 @@ def command_permission_entries(guild_id: int, channel_id: int) -> list[dict]:
             "permission": True,
         },
     ]
+
+
+def find_existing_channel(guild: discord.Guild, spec: ChannelSpec):
+    """Find a configured channel, then canonical or legacy name.
+
+    A configured ID is the tenant's source of truth. This is important during
+    migration: an existing channel may still have an old display name such as
+    ``任務專用`` while its ID is already configured in ``TASK_CHANNEL_ID``.
+    """
+    configured_id = getattr(config, spec.env_name, 0)
+    if configured_id:
+        channel = guild.get_channel(configured_id)
+        if channel is not None and channel in guild.text_channels:
+            return channel
+
+    names = (spec.name, *LEGACY_CHANNEL_NAMES.get(spec.name, ()))
+    for name in names:
+        channel = discord.utils.get(guild.text_channels, name=name)
+        if channel is not None:
+            return channel
+    return None
 
 
 async def sync_command_permissions(
@@ -192,7 +221,7 @@ async def initialize_guild(guild: discord.Guild, bot_member: discord.Member) -> 
 
     channel_ids: dict[str, int] = {}
     for spec in channel_specs():
-        channel = discord.utils.get(guild.text_channels, name=spec.name)
+        channel = find_existing_channel(guild, spec)
         if channel is None and spec.name == "營運內部通知":
             # Preserve the existing channel ID and message history during the rename.
             channel = discord.utils.get(guild.text_channels, name="營運內部")
