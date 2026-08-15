@@ -54,7 +54,8 @@ python bot.py
 | `ADMIN_ROLE_ID` | 控方 / 管理者身分組 ID（管理指令權限） |
 | `TASK_CHANNEL_ID` | 藝人任務查詢入口頻道 ID（留空則不限制 `/我的任務` 頻道） |
 | `AI_CHANNEL_ID` | 課程 AI 助教頻道 ID（設定後只在此頻道接受自然對話） |
-| `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（留空則用排課頻道） |
+| `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（營運內部；留空則用排課頻道） |
+| `ADMIN_COMMAND_CHANNEL_ID` | 管理操作頻道 ID（營運操作；留空則沿用管理通知頻道） |
 | `ANNOUNCE_CHANNEL_ID` | 公告區頻道 ID（留空則公告發到時間資訊彙整；建議設唯讀頻道） |
 | `BULLETIN_CHANNEL_ID` | Notion 布告欄同步到的 Discord 頻道 ID（留空則使用公告區） |
 | `NOTION_TOKEN` | Notion → Settings → Integrations 建立的 internal integration secret |
@@ -83,7 +84,7 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 - 邀請連結 scopes：`bot` + `applications.commands`
 - Bot 權限：View Channels、Send Messages、Embed Links、Mention Everyone（點名用）
 - 控方成員需具備 Discord Administrator 權限，才會看到管理端 slash commands
-- 可由控方執行 `/伺服器初始化` 建立五用途頻道與 `藝人`／`控方` 身分組；詳細步驟見 [SERVER_MIGRATION.md](SERVER_MIGRATION.md)
+- 可由控方執行 `/伺服器初始化` 建立六用途頻道與 `藝人`／`控方` 身分組；詳細步驟見 [SERVER_MIGRATION.md](SERVER_MIGRATION.md)
 - Notion integration 要能讀寫：Artists、Availability Slots、Tasks、Projects、People、Submissions、Audit Log
 - Artists 的可用藝人帳號要填 `Discord User ID`，且 `合約狀態` 為 `已簽約` 或 `洽談中`
 

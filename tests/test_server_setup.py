@@ -12,6 +12,7 @@ def test_channel_specs_cover_required_operational_areas():
         "任務查詢入口",
         "課程助教",
         "營運內部",
+        "營運操作",
     }
     assert next(item for item in specs if item.name == "公告區").read_only is True
     assert next(item for item in specs if item.name == "營運內部").admin_only is True
@@ -27,6 +28,7 @@ def test_env_summary_uses_created_resource_ids():
             "任務查詢入口": 12,
             "課程助教": 13,
             "營運內部": 14,
+            "營運操作": 15,
         },
     )
 
@@ -37,6 +39,7 @@ def test_env_summary_uses_created_resource_ids():
     assert "TASK_CHANNEL_ID=12" in text
     assert "AI_CHANNEL_ID=13" in text
     assert "ADMIN_NOTIFY_CHANNEL_ID=14" in text
+    assert "ADMIN_COMMAND_CHANNEL_ID=15" in text
     assert "BULLETIN_CHANNEL_ID=10" in text
 
 
@@ -84,3 +87,17 @@ def test_internal_channel_is_hidden_from_artists():
     assert overwrites[everyone].view_channel is False
     assert overwrites[artist].view_channel is False
     assert overwrites[admin].view_channel is True
+
+
+def test_operations_channel_is_hidden_from_artists():
+    everyone = object()
+    artist = object()
+    admin = object()
+    bot_member = object()
+    guild = SimpleNamespace(default_role=everyone)
+    spec = next(item for item in server_setup.channel_specs() if item.name == "營運操作")
+
+    overwrites = server_setup._overwrites(guild, admin, artist, bot_member, spec)
+
+    assert overwrites[artist].view_channel is False
+    assert overwrites[admin].use_application_commands is True

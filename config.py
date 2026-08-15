@@ -46,6 +46,8 @@ class TenantConfig:
     schedule_channel_id: int
     admin_role_id: int
     admin_notify_channel_id: int
+    # 控方 slash command 頻道；未設定時沿用營運通知頻道
+    admin_command_channel_id: int
     task_channel_id: int
     # 公告區（唯讀建議）：公開類型 Task 與收集/排課公告；未設定時 fallback 排課頻道
     announce_channel_id: int
@@ -120,13 +122,18 @@ def _load_karikari_from_env() -> TenantConfig:
     Data Source ID 內建預設值；Notion 端重建資料庫時才需要在 .env 覆寫。
     """
     schedule_channel_id = _env_int("SCHEDULE_CHANNEL_ID")
+    admin_notify_channel_id = _env_int("ADMIN_NOTIFY_CHANNEL_ID", schedule_channel_id)
     return TenantConfig(
         name="KariKari",
         discord_token=os.getenv("DISCORD_TOKEN", ""),
         guild_id=_env_int("GUILD_ID"),
         schedule_channel_id=schedule_channel_id,
         admin_role_id=_env_int("ADMIN_ROLE_ID"),
-        admin_notify_channel_id=_env_int("ADMIN_NOTIFY_CHANNEL_ID", schedule_channel_id),
+        admin_notify_channel_id=admin_notify_channel_id,
+        admin_command_channel_id=_env_int(
+            "ADMIN_COMMAND_CHANNEL_ID",
+            admin_notify_channel_id,
+        ),
         task_channel_id=_env_int("TASK_CHANNEL_ID"),
         announce_channel_id=_env_int("ANNOUNCE_CHANNEL_ID"),
         bulletin_channel_id=_env_int("BULLETIN_CHANNEL_ID"),
@@ -192,6 +199,7 @@ GUILD_ID = TENANT.guild_id
 SCHEDULE_CHANNEL_ID = TENANT.schedule_channel_id
 ADMIN_ROLE_ID = TENANT.admin_role_id
 ADMIN_NOTIFY_CHANNEL_ID = TENANT.admin_notify_channel_id
+ADMIN_COMMAND_CHANNEL_ID = TENANT.admin_command_channel_id
 TASK_CHANNEL_ID = TENANT.task_channel_id
 ANNOUNCE_CHANNEL_ID = TENANT.announce_channel_id
 BULLETIN_CHANNEL_ID = TENANT.bulletin_channel_id

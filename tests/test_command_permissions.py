@@ -141,7 +141,7 @@ def test_schedule_channel_restricts_when_configured(monkeypatch):
 
 
 def test_admin_channel_restricts_management_ai_when_configured(monkeypatch):
-    monkeypatch.setattr(channel_guard.config, "ADMIN_NOTIFY_CHANNEL_ID", 987)
+    monkeypatch.setattr(channel_guard.config, "ADMIN_COMMAND_CHANNEL_ID", 987)
 
     assert channel_guard.is_admin_channel(987)
     assert not channel_guard.is_admin_channel(123)

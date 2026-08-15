@@ -69,8 +69,8 @@ def is_ai_channel(channel_id: int | None) -> bool:
 
 
 def is_admin_channel(channel_id: int | None) -> bool:
-    """營運管理指令只允許在營運通知頻道；未設定時不限制。"""
-    return _is_allowed_channel(config.ADMIN_NOTIFY_CHANNEL_ID, channel_id)
+    """營運管理指令只允許在營運操作頻道；未設定時沿用通知頻道。"""
+    return _is_allowed_channel(config.ADMIN_COMMAND_CHANNEL_ID, channel_id)
 
 
 def schedule_channel_message() -> str:
@@ -86,7 +86,7 @@ def ai_channel_message() -> str:
 
 
 def admin_channel_message() -> str:
-    return _channel_message(config.ADMIN_NOTIFY_CHANNEL_ID, "營運管理")
+    return _channel_message(config.ADMIN_COMMAND_CHANNEL_ID, "營運管理")
 
 
 async def ensure_schedule_channel(interaction: discord.Interaction) -> bool:

@@ -27,7 +27,8 @@ def channel_specs() -> tuple[ChannelSpec, ...]:
         ChannelSpec("時間資訊彙整", "SCHEDULE_CHANNEL_ID", "藝人月度可配合時間回報與管理"),
         ChannelSpec("任務查詢入口", "TASK_CHANNEL_ID", "藝人查詢任務與提交作業"),
         ChannelSpec("課程助教", "AI_CHANNEL_ID", "藝人私人課程 AI 問答"),
-        ChannelSpec("營運內部", "ADMIN_NOTIFY_CHANNEL_ID", "控方任務安排、審核、提醒與營運查詢", admin_only=True),
+        ChannelSpec("營運內部", "ADMIN_NOTIFY_CHANNEL_ID", "Bot 自動推送任務、審核、排課與 SLA 通知", admin_only=True),
+        ChannelSpec("營運操作", "ADMIN_COMMAND_CHANNEL_ID", "控方 slash command 操作入口", admin_only=True),
     )
 
 
