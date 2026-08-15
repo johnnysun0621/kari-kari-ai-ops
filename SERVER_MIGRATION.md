@@ -54,6 +54,15 @@ LLM_PER_ARTIST_DAILY_TOKEN_LIMIT=0
 3. `任務查詢入口`：只開放藝人 `/我的任務`；提交由該指令內按鈕進入。
 4. `營運內部通知`：`/從時間池建立任務`、`/任務總覽`、`/任務通知重送`、`/審核提交`、`/營運查詢`、`/布告欄同步`；只允許控方。
 5. `/伺服器初始化` 只允許伺服器管理員；確認初始化後，Bot 會自動同步各 slash command 的頻道可見範圍，不需再到 Discord Integration 逐一手動設定。
+
+### Slash command 自動分流授權
+
+首次初始化需要 Discord 使用者 OAuth 授權，因為 Discord 的 Application Command Permissions API 不接受 Bot Token。
+
+1. 在 Developer Portal → OAuth2 → General 設定 Redirect URI：`http://127.0.0.1:8787/discord/oauth/callback`。
+2. `.env` 填入 `DISCORD_CLIENT_ID`、`DISCORD_CLIENT_SECRET` 與相同的 `DISCORD_OAUTH_REDIRECT_URI`。
+3. 執行 `/伺服器初始化`，按「確認初始化」後開啟授權連結。
+4. 授權完成後，Bot 自動更新指令可見範圍；密鑰不會寫入 Notion 或 Git。
 6. 課程助教不使用 slash command，藝人在指定頻道直接對話。
 
 ## 身分與資料檢查

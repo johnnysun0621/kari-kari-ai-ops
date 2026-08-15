@@ -56,6 +56,9 @@ python bot.py
 | `AI_CHANNEL_ID` | 課程 AI 助教頻道 ID（設定後只在此頻道接受自然對話） |
 | `ADMIN_NOTIFY_CHANNEL_ID` | 管理通知頻道 ID（營運內部通知；留空則用排課頻道） |
 | `ADMIN_COMMAND_CHANNEL_ID` | 管理操作頻道 ID（營運操作；留空則沿用管理通知頻道） |
+| `DISCORD_CLIENT_ID` | Discord OAuth2 Application Client ID |
+| `DISCORD_CLIENT_SECRET` | Discord OAuth2 Client Secret；只放本機 `.env`，不要提交 |
+| `DISCORD_OAUTH_REDIRECT_URI` | OAuth 回呼網址，例如 `http://127.0.0.1:8787/discord/oauth/callback` |
 | `ANNOUNCE_CHANNEL_ID` | 公告區頻道 ID（留空則公告發到時間資訊彙整；建議設唯讀頻道） |
 | `BULLETIN_CHANNEL_ID` | Notion 布告欄同步到的 Discord 頻道 ID（留空則使用公告區） |
 | `NOTION_TOKEN` | Notion → Settings → Integrations 建立的 internal integration secret |

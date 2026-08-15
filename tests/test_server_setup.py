@@ -53,6 +53,19 @@ def test_command_channel_groups_cover_each_slash_command():
     assert groups["伺服器初始化"] == ("營運操作", True)
 
 
+def test_oauth_authorize_url_contains_required_scope_and_state(monkeypatch):
+    monkeypatch.setattr(server_setup.config, "get_tenant", lambda: SimpleNamespace(
+        discord_client_id="app-123",
+        discord_oauth_redirect_uri="http://127.0.0.1:8787/discord/oauth/callback",
+    ))
+
+    url = server_setup.oauth_authorize_url("state-123")
+
+    assert "client_id=app-123" in url
+    assert "state=state-123" in url
+    assert "applications.commands.permissions.update" in url
+
+
 def test_operational_channels_are_hidden_from_unassigned_members():
     everyone = object()
     artist = object()

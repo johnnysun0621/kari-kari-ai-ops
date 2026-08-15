@@ -7,6 +7,8 @@
 """
 import logging
 import time
+from urllib.parse import urlencode
+import time
 
 from aiohttp import web as aioweb
 
@@ -14,6 +16,7 @@ import config
 from services import scheduling_sla, teacher_confirm
 
 from web import pages
+from cogs import server_setup
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,49 @@ def _verify_task_token(token: str):
     if not check.ok:
         return check, pages.result_html(check.error)
     return check, None
+
+
+async def handle_discord_oauth_callback(request: aioweb.Request) -> aioweb.Response:
+    state = request.query.get("state", "")
+    code = request.query.get("code", "")
+    bot = request.app["client"]
+    pending = bot.discord_oauth_states.pop(state, None)
+    if not pending or pending["expires_at"] < time.time():
+        return _html_response("Discord 授權連結已失效，請回 Discord 重新執行初始化。", status=400)
+    if not code:
+        return _html_response("未取得 Discord 授權碼，請回 Discord 重新執行初始化。", status=400)
+    tenant = config.get_tenant()
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                "https://discord.com/api/oauth2/token",
+                data={
+                    "client_id": tenant.discord_client_id,
+                    "client_secret": tenant.discord_client_secret,
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": tenant.discord_oauth_redirect_uri,
+                },
+            )
+            token_response.raise_for_status()
+            access_token = token_response.json()["access_token"]
+        guild = bot.get_guild(pending["guild_id"])
+        if guild is None:
+            return _html_response("找不到原本的 Discord 伺服器，請重新初始化。", status=400)
+        await server_setup.sync_command_permissions(
+            bot,
+            guild,
+            pending["channel_ids"],
+            pending["admin_role_id"],
+            access_token,
+        )
+    except Exception:
+        logger.exception("Discord OAuth 指令權限同步失敗")
+        return _html_response("Discord 授權成功，但指令權限同步失敗，請回 Discord 再試一次。", status=502)
+    return _html_response(
+        "Discord 授權完成。各頻道的 slash command 可見範圍已同步，現在可以關閉此頁面。"
+    )
 
 
 async def handle_confirm_get(request: aioweb.Request) -> aioweb.Response:
@@ -100,6 +146,7 @@ def build_app(client) -> aioweb.Application:
     app = aioweb.Application()
     app["client"] = client
     app.add_routes([
+        aioweb.get("/discord/oauth/callback", handle_discord_oauth_callback),
         aioweb.get("/confirm/{token}", handle_confirm_get),
         aioweb.post("/confirm/{token}", handle_confirm_post),
     ])

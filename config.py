@@ -42,6 +42,9 @@ class TenantConfig:
 
     # === Discord ===
     discord_token: str
+    discord_client_id: str
+    discord_client_secret: str
+    discord_oauth_redirect_uri: str
     guild_id: int
     schedule_channel_id: int
     admin_role_id: int
@@ -126,6 +129,9 @@ def _load_karikari_from_env() -> TenantConfig:
     return TenantConfig(
         name="KariKari",
         discord_token=os.getenv("DISCORD_TOKEN", ""),
+        discord_client_id=os.getenv("DISCORD_CLIENT_ID", ""),
+        discord_client_secret=os.getenv("DISCORD_CLIENT_SECRET", ""),
+        discord_oauth_redirect_uri=os.getenv("DISCORD_OAUTH_REDIRECT_URI", ""),
         guild_id=_env_int("GUILD_ID"),
         schedule_channel_id=schedule_channel_id,
         admin_role_id=_env_int("ADMIN_ROLE_ID"),

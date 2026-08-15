@@ -1,10 +1,10 @@
 """可平轉的 Discord 頻道與身分組初始化。"""
 import logging
 from dataclasses import dataclass
+from urllib.parse import urlencode
 
 import discord
 from discord import app_commands
-from discord.http import Route
 from discord.ext import commands
 
 import config
@@ -64,34 +64,47 @@ async def sync_command_permissions(
     guild: discord.Guild,
     channel_ids: dict[str, int],
     admin_role_id: int,
+    access_token: str,
 ) -> None:
-    """Make Discord's slash-command picker show commands only in their channels."""
+    """Use an authorized Discord user token to update command visibility."""
+    import httpx
+
     application_commands = await bot.tree.fetch_commands(guild=guild)
     groups = command_channel_groups()
-    for command in application_commands:
-        group = groups.get(command.name)
-        if group is None:
-            continue
-        channel_name, requires_admin = group
-        permissions = [{
-            "id": str(channel_ids[channel_name]),
-            "type": 3,  # CHANNEL
-            "permission": True,
-        }]
-        if requires_admin:
-            permissions.append({
-                "id": str(admin_role_id),
-                "type": 1,  # ROLE
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(base_url="https://discord.com/api/v10", headers=headers) as client:
+        for command in application_commands:
+            group = groups.get(command.name)
+            if group is None:
+                continue
+            channel_name, requires_admin = group
+            permissions = [{
+                "id": str(channel_ids[channel_name]),
+                "type": 3,  # CHANNEL
                 "permission": True,
-            })
-        route = Route(
-            "PUT",
-            "/applications/{application_id}/guilds/{guild_id}/commands/{command_id}/permissions",
-            application_id=bot.user.id,
-            guild_id=guild.id,
-            command_id=command.id,
-        )
-        await bot.http.request(route, json={"permissions": permissions})
+            }]
+            if requires_admin:
+                permissions.append({
+                    "id": str(admin_role_id),
+                    "type": 1,  # ROLE
+                    "permission": True,
+                })
+            response = await client.put(
+                f"/applications/{bot.user.id}/guilds/{guild.id}/commands/{command.id}/permissions",
+                json={"permissions": permissions},
+            )
+            response.raise_for_status()
+
+
+def oauth_authorize_url(state: str) -> str:
+    tenant = config.get_tenant()
+    return "https://discord.com/oauth2/authorize?" + urlencode({
+        "client_id": tenant.discord_client_id,
+        "response_type": "code",
+        "redirect_uri": tenant.discord_oauth_redirect_uri,
+        "scope": "identify applications.commands.permissions.update",
+        "state": state,
+    })
 
 
 def _overwrites(
@@ -213,31 +226,34 @@ class ServerSetupConfirmView(discord.ui.View):
             logger.exception("Discord 伺服器初始化失敗")
             await interaction.followup.send("❌ Discord 初始化失敗，請稍後再試。", ephemeral=True)
             return
-        try:
-            await sync_command_permissions(interaction.client, interaction.guild, channel_ids, admin_role.id)
-        except discord.Forbidden:
-            logger.exception("Discord slash command 權限同步失敗：Forbidden")
+        tenant = config.get_tenant()
+        if not tenant.discord_client_id or not tenant.discord_client_secret or not tenant.discord_oauth_redirect_uri:
             await interaction.followup.send(
-                "⚠️ 頻道與身分組已完成，但 slash command 可見性同步失敗。"
-                "請確認 Bot 有管理伺服器／管理應用程式指令權限後再執行一次初始化。",
+                "⚠️ 頻道與身分組已完成，但尚未設定 Discord OAuth。"
+                "請補上 DISCORD_CLIENT_ID、DISCORD_CLIENT_SECRET、DISCORD_OAUTH_REDIRECT_URI 後再試。",
                 ephemeral=True,
             )
             self.stop()
             return
-        except discord.HTTPException:
-            logger.exception("Discord slash command 權限同步失敗")
-            await interaction.followup.send(
-                "⚠️ 頻道與身分組已完成，但 slash command 可見性同步失敗，請稍後再執行一次初始化。",
-                ephemeral=True,
-            )
-            self.stop()
-            return
+        import secrets
+        import time
+        state = secrets.token_urlsafe(32)
+        interaction.client.discord_oauth_states[state] = {
+            "expires_at": time.time() + 600,
+            "requester_id": interaction.user.id,
+            "guild_id": interaction.guild.id,
+            "channel_ids": channel_ids,
+            "admin_role_id": admin_role.id,
+        }
         summary = env_summary(interaction.guild.id, admin_role.id, channel_ids)
         await interaction.followup.send(
-            "✅ 頻道、身分組與 slash command 可見範圍已建立／對齊。\n"
-            "請將以下值填入此租戶的 `.env` 後重啟 Bot：\n"
+            "✅ 頻道與身分組已完成。請開啟以下連結完成一次 Discord 授權，"
+            "授權後 Bot 會自動設定各頻道的 slash command 可見範圍：\n"
+            f"{oauth_authorize_url(state)}\n\n"
+            "授權連結 10 分鐘內有效。\n\n"
+            "目前租戶設定：\n"
             f"```env\n{summary}\n```\n"
-            "之後各頻道只會顯示對應的 slash command。",
+            "完成授權後，各頻道只會顯示對應的 slash command。",
             ephemeral=True,
         )
         self.stop()

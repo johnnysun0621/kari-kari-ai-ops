@@ -39,6 +39,7 @@ class KariKariBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
         self.teacher_web_runner = None
+        self.discord_oauth_states: dict[str, object] = {}
 
     async def setup_hook(self):
         for ext in EXTENSIONS:
