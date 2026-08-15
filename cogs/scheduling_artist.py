@@ -178,6 +178,33 @@ def _available_windows_with_impact(
     return windows, conflicts, warnings
 
 
+def _preview_availability_impact(
+    slots: list[tuple[datetime, datetime]],
+    context: repositories.ScheduleImpactContext,
+    *,
+    now: datetime | None = None,
+) -> tuple[
+    list[tuple[datetime, datetime]],
+    list[repositories.ScheduleConflict],
+    list[tuple[datetime, datetime]],
+]:
+    """Preview the exact windows that remain after fixed schedule conflicts."""
+    now = now or datetime.now(config.TZ)
+    adjusted: list[tuple[datetime, datetime]] = []
+    conflicts: list[repositories.ScheduleConflict] = []
+    blocked: list[tuple[datetime, datetime]] = []
+    for start, end in slots:
+        if end <= now:
+            continue
+        windows, slot_conflicts, _ = _available_windows_with_impact(start, end, context)
+        future_windows = [(window_start, window_end) for window_start, window_end in windows if window_end > now]
+        adjusted.extend(future_windows)
+        conflicts.extend(slot_conflicts)
+        if slot_conflicts and not future_windows:
+            blocked.append((start, end))
+    return adjusted, conflicts, blocked
+
+
 def _slot_note(base_parts: list[str], warnings: list[repositories.ScheduleWarning]) -> str:
     note_parts = list(base_parts)
     _append_note_part(note_parts, _warning_note(warnings))
@@ -541,8 +568,10 @@ async def _submit_pool_slots(
     end_text: str = "",
     excluded_day_values: set[str] | None = None,
     schedule_summary: str = "",
+    response_deferred: bool = False,
 ):
-    await interaction.response.defer(ephemeral=True, thinking=True)
+    if not response_deferred:
+        await interaction.response.defer(ephemeral=True, thinking=True)
     artist = await repositories.find_artist_by_discord_id(interaction.user.id)
     if artist is None:
         await interaction.followup.send(
@@ -776,6 +805,54 @@ class AvailabilityConfirmView(InteractionDebugView):
 
     @discord.ui.button(label="確認送出", style=discord.ButtonStyle.success, emoji="✅")
     async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if artist is None:
+            await interaction.followup.send(
+                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
+                ephemeral=True,
+            )
+            return
+        try:
+            slots = time_collection.build_mode_slots(
+                self.day_values,
+                self.mode,
+                start_text=self.start_text,
+                end_text=self.end_text,
+            )
+            context = await _schedule_impact_context(artist)
+        except (ValueError, timeparse.ParseError) as error:
+            await interaction.followup.send(f"❌ {error}", ephemeral=True)
+            return
+        except Exception:
+            logger.exception("預覽正式安排衝突失敗")
+            await interaction.followup.send(
+                "❌ 讀不到你已安排的正式任務，暫時不能送出，請稍後再試或聯絡管理者。",
+                ephemeral=True,
+            )
+            return
+
+        adjusted, conflicts, blocked = _preview_availability_impact(slots, context)
+        if conflicts:
+            view = AvailabilityConflictConfirmView(
+                self.month,
+                self.deadline_ts,
+                self.nature_code,
+                self.week_values,
+                self.day_values,
+                self.mode,
+                start_text=self.start_text,
+                end_text=self.end_text,
+                excluded_day_values=self.excluded_day_values,
+                schedule_summary=self.schedule_summary,
+                original_slots=slots,
+                adjusted_windows=adjusted,
+                conflicts=conflicts,
+                blocked_slots=blocked,
+            )
+            await interaction.edit_original_response(content=view.prompt(), view=view)
+            return
+
         await _submit_pool_slots(
             interaction,
             self.month,
@@ -788,6 +865,7 @@ class AvailabilityConfirmView(InteractionDebugView):
             end_text=self.end_text,
             excluded_day_values=self.excluded_day_values,
             schedule_summary=self.schedule_summary,
+            response_deferred=True,
         )
 
     @discord.ui.button(label="返回修改", style=discord.ButtonStyle.secondary, emoji="↩️")
@@ -803,6 +881,107 @@ class AvailabilityConfirmView(InteractionDebugView):
             schedule_summary=self.schedule_summary,
         )
         await interaction.response.edit_message(content=view.prompt(), view=view)
+
+
+class AvailabilityConflictConfirmView(AvailabilityConfirmView):
+    """Second confirmation shown only when fixed schedules trim availability."""
+
+    def __init__(
+        self,
+        month: str,
+        deadline_ts: int,
+        nature_code: str,
+        week_values: list[str],
+        day_values: list[str],
+        mode: str,
+        *,
+        original_slots: list[tuple[datetime, datetime]],
+        adjusted_windows: list[tuple[datetime, datetime]],
+        conflicts: list[repositories.ScheduleConflict],
+        blocked_slots: list[tuple[datetime, datetime]],
+        start_text: str = "",
+        end_text: str = "",
+        excluded_day_values: set[str] | None = None,
+        schedule_summary: str = "",
+    ):
+        super().__init__(
+            month,
+            deadline_ts,
+            nature_code,
+            week_values,
+            day_values,
+            mode,
+            start_text=start_text,
+            end_text=end_text,
+            excluded_day_values=excluded_day_values,
+            schedule_summary=schedule_summary,
+        )
+        self.original_slots = original_slots
+        self.adjusted_windows = adjusted_windows
+        self.conflicts = conflicts
+        self.blocked_slots = blocked_slots
+        for child in self.children:
+            if getattr(child, "label", None) in {"確認送出", "確認調整後送出"}:
+                child.label = "確認調整後送出"
+                child.disabled = not adjusted_windows
+
+    def prompt(self) -> str:
+        original_lines = [timeparse.humanize(start, end) for start, end in self.original_slots[:8]]
+        adjusted_lines = [timeparse.humanize(start, end) for start, end in self.adjusted_windows[:12]]
+        conflict_text = _conflict_text(self.conflicts).replace(
+            "⚠️ 已排除與正式安排衝突的時間：",
+            "⚠️ 將排除以下既定安排：",
+        )
+        parts = [
+            "⚠️ **選擇的時間與既定安排重疊**",
+            "",
+            "原本選擇：",
+            *[f"・{line}" for line in original_lines],
+        ]
+        if adjusted_lines:
+            parts.extend(
+                [
+                    "",
+                    "實際將寫入：",
+                    *[f"・{line}" for line in adjusted_lines],
+                ]
+            )
+        else:
+            parts.extend(["", "本次所選時段已全部被既定安排占用，不會寫入 Notion。"])
+        if self.blocked_slots and adjusted_lines:
+            blocked_lines = [timeparse.humanize(start, end) for start, end in self.blocked_slots[:8]]
+            parts.extend(
+                [
+                    "",
+                    "完全無法寫入：",
+                    *[f"・{line}" for line in blocked_lines],
+                ]
+            )
+        parts.append(conflict_text)
+        parts.append(
+            "\n確認後仍會重新檢查最新任務；需要調整請按「返回修改」。"
+            if adjusted_lines
+            else "\n請按「返回修改」重新選擇日期或時段。"
+        )
+        return "\n".join(parts)
+
+    @discord.ui.button(label="確認調整後送出", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(content="⏳ 正在重新檢查並寫入可配合時間……", view=None)
+        await _submit_pool_slots(
+            interaction,
+            self.month,
+            self.deadline_ts,
+            self.nature_code,
+            self.week_values,
+            self.day_values,
+            self.mode,
+            start_text=self.start_text,
+            end_text=self.end_text,
+            excluded_day_values=self.excluded_day_values,
+            schedule_summary=self.schedule_summary,
+            response_deferred=True,
+        )
 
 
 class ApplyModeButton(discord.ui.Button):

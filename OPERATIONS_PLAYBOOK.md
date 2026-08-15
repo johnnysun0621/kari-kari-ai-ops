@@ -145,6 +145,7 @@ Discord 頻道與 slash command 對應總表請看 [DISCORD_CHANNELS.md](DISCORD
 - 不需要請控方重發公告。
 - 刪除是同步 Notion archive，不是只在 Discord 隱藏。
 - 修改後若有重複或重疊，按「完成」時會自動整理。
+- 若所選時間撞到已有明確時間的正式 Task，Bot 會在寫入前顯示實際保留與排除時段；藝人確認後才寫入。整段都被占用時必須返回修改。
 
 ## 時間池比對 SOP
 

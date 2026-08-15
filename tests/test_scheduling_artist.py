@@ -7,7 +7,12 @@ from cogs import scheduling_artist
 import discord
 
 import config
-from cogs.scheduling_artist import AvailabilityConfirmView, DatePresetView, SchedulingArtistCog
+from cogs.scheduling_artist import (
+    AvailabilityConflictConfirmView,
+    AvailabilityConfirmView,
+    DatePresetView,
+    SchedulingArtistCog,
+)
 from services import repositories, time_collection
 
 
@@ -79,6 +84,8 @@ def test_month_overview_allows_artist_to_choose_a_month_or_cancel():
     assert len(selects) == 1
     assert any(option.value == "2026-08" for option in selects[0].options)
 
+
+class TestDatePresetInteractions:
     def test_last_day_button_page_shows_remaining_month_days(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
         view = DatePresetView(
@@ -170,6 +177,94 @@ def test_month_overview_allows_artist_to_choose_a_month_or_cancel():
         assert "返回修改" in child_labels(view)
         assert "8/12、8/13" in view.prompt()
         assert "08:00–24:00" in view.prompt()
+
+    def test_conflict_confirmation_shows_adjusted_windows_and_return(self):
+        week_values = [week.value for week in time_collection.month_week_options("2026-08")]
+        original_slots = [
+            (
+                datetime(2026, 8, 15, 8, 0, tzinfo=config.TZ),
+                datetime(2026, 8, 16, 0, 0, tzinfo=config.TZ),
+            )
+        ]
+        busy = repositories.BusyInterval(
+            source_id="task-1",
+            source_name="測試課程",
+            source_type="Task",
+            start=datetime(2026, 8, 15, 13, 30, tzinfo=config.TZ),
+            end=datetime(2026, 8, 15, 14, 30, tzinfo=config.TZ),
+        )
+        context = repositories.ScheduleImpactContext(busy_intervals=[busy])
+
+        adjusted, conflicts, blocked = scheduling_artist._preview_availability_impact(
+            original_slots,
+            context,
+            now=datetime(2026, 8, 1, tzinfo=config.TZ),
+        )
+        view = AvailabilityConflictConfirmView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            week_values,
+            ["2026-08-15"],
+            "all_day",
+            original_slots=original_slots,
+            adjusted_windows=adjusted,
+            conflicts=conflicts,
+            blocked_slots=blocked,
+        )
+
+        prompt = view.prompt()
+        assert "8/15（週六）08:00–13:30" in prompt
+        assert "8/15（週六）14:30–24:00" in prompt
+        assert "測試課程" in prompt
+        assert blocked == []
+        assert "確認調整後送出" in child_labels(view)
+        assert "返回修改" in child_labels(view)
+
+    def test_conflict_preview_marks_fully_blocked_slot(self):
+        original = (
+            datetime(2026, 8, 15, 13, 30, tzinfo=config.TZ),
+            datetime(2026, 8, 15, 14, 30, tzinfo=config.TZ),
+        )
+        context = repositories.ScheduleImpactContext(
+            busy_intervals=[
+                repositories.BusyInterval(
+                    source_id="task-1",
+                    source_name="測試課程",
+                    source_type="Task",
+                    start=original[0],
+                    end=original[1],
+                )
+            ]
+        )
+
+        adjusted, conflicts, blocked = scheduling_artist._preview_availability_impact(
+            [original],
+            context,
+            now=datetime(2026, 8, 1, tzinfo=config.TZ),
+        )
+
+        assert adjusted == []
+        assert len(conflicts) == 1
+        assert blocked == [original]
+
+        view = AvailabilityConflictConfirmView(
+            "2026-08",
+            1785600000,
+            time_collection.DEFAULT_COLLECTION_NATURE,
+            [week.value for week in time_collection.month_week_options("2026-08")],
+            ["2026-08-15"],
+            "specific",
+            start_text="13:30",
+            end_text="14:30",
+            original_slots=[original],
+            adjusted_windows=adjusted,
+            conflicts=conflicts,
+            blocked_slots=blocked,
+        )
+        confirm = next(child for child in view.children if child.label == "確認調整後送出")
+        assert confirm.disabled is True
+        assert "全部被既定安排占用" in view.prompt()
 
     def test_schedule_summary_stays_visible_across_date_interactions(self):
         week_values = [week.value for week in time_collection.month_week_options("2026-08")]
