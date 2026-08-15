@@ -7,8 +7,6 @@
 """
 import logging
 import time
-from urllib.parse import urlencode
-import time
 
 from aiohttp import web as aioweb
 

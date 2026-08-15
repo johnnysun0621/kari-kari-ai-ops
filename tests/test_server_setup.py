@@ -53,6 +53,15 @@ def test_command_channel_groups_cover_each_slash_command():
     assert groups["伺服器初始化"] == ("營運操作", True)
 
 
+def test_command_permissions_are_scoped_to_one_channel():
+    permissions = server_setup.command_permission_entries(100, 200)
+
+    assert permissions == [
+        {"id": "100", "type": 1, "permission": False},
+        {"id": "200", "type": 3, "permission": True},
+    ]
+
+
 def test_oauth_authorize_url_contains_required_scope_and_state(monkeypatch):
     monkeypatch.setattr(server_setup.config, "get_tenant", lambda: SimpleNamespace(
         discord_client_id="app-123",

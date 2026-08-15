@@ -60,6 +60,22 @@ def command_channel_groups() -> dict[str, tuple[str, bool]]:
     }
 
 
+def command_permission_entries(guild_id: int, channel_id: int) -> list[dict]:
+    """Allow a command only in one channel; command default permissions handle roles."""
+    return [
+        {
+            "id": str(guild_id),
+            "type": 1,  # @everyone role
+            "permission": False,
+        },
+        {
+            "id": str(channel_id),
+            "type": 3,  # CHANNEL
+            "permission": True,
+        },
+    ]
+
+
 async def sync_command_permissions(
     bot: commands.Bot,
     guild: discord.Guild,
@@ -78,18 +94,11 @@ async def sync_command_permissions(
             group = groups.get(command.name)
             if group is None:
                 continue
-            channel_name, requires_admin = group
-            permissions = [{
-                "id": str(channel_ids[channel_name]),
-                "type": 3,  # CHANNEL
-                "permission": True,
-            }]
-            if requires_admin:
-                permissions.append({
-                    "id": str(admin_role_id),
-                    "type": 1,  # ROLE
-                    "permission": True,
-                })
+            channel_name, _requires_admin = group
+            permissions = command_permission_entries(
+                guild.id,
+                channel_ids[channel_name],
+            )
             url = f"/applications/{bot.user.id}/guilds/{guild.id}/commands/{command.id}/permissions"
             for attempt in range(4):
                 response = await client.put(url, json={"permissions": permissions})
