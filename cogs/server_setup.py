@@ -64,8 +64,8 @@ def command_permission_entries(guild_id: int, channel_id: int) -> list[dict]:
     """Allow a command only in one channel; command default permissions handle roles."""
     return [
         {
-            "id": str(guild_id),
-            "type": 1,  # @everyone role
+            "id": str(guild_id - 1),
+            "type": 3,  # All Channels
             "permission": False,
         },
         {

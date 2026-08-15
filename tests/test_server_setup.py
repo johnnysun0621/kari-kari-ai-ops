@@ -57,7 +57,7 @@ def test_command_permissions_are_scoped_to_one_channel():
     permissions = server_setup.command_permission_entries(100, 200)
 
     assert permissions == [
-        {"id": "100", "type": 1, "permission": False},
+        {"id": "99", "type": 3, "permission": False},
         {"id": "200", "type": 3, "permission": True},
     ]
 
