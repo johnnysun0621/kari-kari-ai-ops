@@ -11,11 +11,11 @@ def test_channel_specs_cover_required_operational_areas():
         "時間資訊彙整",
         "任務查詢入口",
         "課程助教",
-        "營運內部",
+        "營運內部通知",
         "營運操作",
     }
     assert next(item for item in specs if item.name == "公告區").read_only is True
-    assert next(item for item in specs if item.name == "營運內部").admin_only is True
+    assert next(item for item in specs if item.name == "營運內部通知").admin_only is True
 
 
 def test_env_summary_uses_created_resource_ids():
@@ -27,7 +27,7 @@ def test_env_summary_uses_created_resource_ids():
             "時間資訊彙整": 11,
             "任務查詢入口": 12,
             "課程助教": 13,
-            "營運內部": 14,
+            "營運內部通知": 14,
             "營運操作": 15,
         },
     )
@@ -80,7 +80,7 @@ def test_internal_channel_is_hidden_from_artists():
     admin = object()
     bot_member = object()
     guild = SimpleNamespace(default_role=everyone)
-    spec = next(item for item in server_setup.channel_specs() if item.name == "營運內部")
+    spec = next(item for item in server_setup.channel_specs() if item.name == "營運內部通知")
 
     overwrites = server_setup._overwrites(guild, admin, artist, bot_member, spec)
 

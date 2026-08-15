@@ -186,7 +186,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 ### `cogs/operations_qa.py`
 
-控方限定的 `/營運查詢`，只允許在營運內部頻道執行。讀取 Tasks、Projects、課程／會議摘要與 Submissions 審核回饋，不修改 Notion。
+控方限定的 `/營運查詢`，只允許在營運內部通知頻道執行。讀取 Tasks、Projects、課程／會議摘要與 Submissions 審核回饋，不修改 Notion。
 
 ## Services
 

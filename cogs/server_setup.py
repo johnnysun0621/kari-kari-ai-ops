@@ -27,7 +27,7 @@ def channel_specs() -> tuple[ChannelSpec, ...]:
         ChannelSpec("時間資訊彙整", "SCHEDULE_CHANNEL_ID", "藝人月度可配合時間回報與管理"),
         ChannelSpec("任務查詢入口", "TASK_CHANNEL_ID", "藝人查詢任務與提交作業"),
         ChannelSpec("課程助教", "AI_CHANNEL_ID", "藝人私人課程 AI 問答"),
-        ChannelSpec("營運內部", "ADMIN_NOTIFY_CHANNEL_ID", "Bot 自動推送任務、審核、排課與 SLA 通知", admin_only=True),
+        ChannelSpec("營運內部通知", "ADMIN_NOTIFY_CHANNEL_ID", "Bot 自動推送任務、審核、排課與 SLA 通知", admin_only=True),
         ChannelSpec("營運操作", "ADMIN_COMMAND_CHANNEL_ID", "控方 slash command 操作入口", admin_only=True),
     )
 
@@ -110,6 +110,11 @@ async def initialize_guild(guild: discord.Guild, bot_member: discord.Member) -> 
     channel_ids: dict[str, int] = {}
     for spec in channel_specs():
         channel = discord.utils.get(guild.text_channels, name=spec.name)
+        if channel is None and spec.name == "營運內部通知":
+            # Preserve the existing channel ID and message history during the rename.
+            channel = discord.utils.get(guild.text_channels, name="營運內部")
+            if channel is not None:
+                await channel.edit(name=spec.name, reason=reason)
         overwrites = _overwrites(guild, admin_role, artist_role, bot_member, spec)
         if channel is None:
             channel = await guild.create_text_channel(

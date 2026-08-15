@@ -628,7 +628,7 @@ class SubmissionModal(discord.ui.Modal):
             after=f"{submit_type}｜任務轉待審核" + (f"｜取代 {replaced} 筆舊版" if replaced else ""),
         )
 
-        # 通知控方（營運內部）。通知失敗只記 log，不影響藝人的提交確認
+        # 通知控方（營運內部通知）。通知失敗只記 log，不影響藝人的提交確認
         internal = interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
         link_part = f"\n連結：{link_url}" if link_url else ""
         await channel_guard.try_send(
