@@ -44,6 +44,13 @@ def test_quota_message_names_system_limit():
     assert "全系統今日額度" in course_qa.quota_message(status)
 
 
+def test_course_assistant_skill_is_loaded():
+    skill = course_qa.load_course_assistant_skill()
+
+    assert "檢索優先順序" in skill
+    assert "Date" in skill
+
+
 def test_persisted_memory_drops_legacy_question_text():
     memory = _sanitize_memory({
         "last_question": "這段不應繼續保存",

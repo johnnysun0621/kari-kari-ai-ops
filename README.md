@@ -32,6 +32,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 | [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則與平展化方向 |
 | [ROADMAP.md](ROADMAP.md) | 開發進度與下一步 |
 | [RESEARCH.md](RESEARCH.md) | 需求研究與歷史脈絡 |
+| [COURSE_ASSISTANT_SKILL.md](COURSE_ASSISTANT_SKILL.md) | 課程助教固定檢索與回答規則 |
 
 ## 安裝
 
