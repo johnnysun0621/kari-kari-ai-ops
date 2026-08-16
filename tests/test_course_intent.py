@@ -27,6 +27,10 @@ def test_month_query_selects_only_matching_records():
     assert [item.page_id for item in course_intent.select_records(records, intent)] == ["july"]
 
 
+def test_colloquial_month_course_list_is_broad_query():
+    assert course_intent.is_broad_query("我八月上了啥課")
+
+
 def test_explicit_course_month_in_title_overrides_record_date():
     item = repositories.CourseMeetingRecord(
         page_id="course",

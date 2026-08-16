@@ -1,3 +1,6 @@
+from datetime import datetime
+
+import config
 from cogs.course_qa import _sanitize_memory, _split_discord_message, can_artist_use_ai
 from services import course_qa, llm_response, llm_usage, repositories
 
@@ -49,6 +52,42 @@ def test_course_assistant_skill_is_loaded():
 
     assert "檢索優先順序" in skill
     assert "Date" in skill
+
+
+def test_month_overview_is_generated_without_llm_and_includes_sources():
+    records = [
+        repositories.CourseMeetingRecord(
+            page_id="august-1",
+            url="https://notion.so/august-1",
+            title="八月歌唱課",
+            date=datetime(2026, 8, 6, tzinfo=config.TZ),
+            summary="練習呼吸與節奏",
+            content="完整課程內容",
+            artist_page_ids=("artist-1",),
+            task_page_ids=(),
+            project_page_ids=(),
+        ),
+        repositories.CourseMeetingRecord(
+            page_id="august-2",
+            url="https://notion.so/august-2",
+            title="八月表演課",
+            date=datetime(2026, 8, 3, tzinfo=config.TZ),
+            summary="",
+            content="舞台走位與表情管理\n第二段內容",
+            artist_page_ids=("artist-1",),
+            task_page_ids=(),
+            project_page_ids=(),
+        ),
+    ]
+
+    answer = course_qa.build_month_overview_answer(records, "2026-08")
+
+    assert "2026 年 8 月共有 2 筆課程紀錄" in answer
+    assert "8/3｜八月表演課" in answer
+    assert "舞台走位與表情管理" in answer
+    assert "8/6｜八月歌唱課" in answer
+    assert "練習呼吸與節奏" in answer
+    assert "[八月歌唱課](https://notion.so/august-1)" in answer
 
 
 def test_persisted_memory_drops_legacy_question_text():

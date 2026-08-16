@@ -1,6 +1,8 @@
 """課程 AI 助教：以已授權的 Notion 課程紀錄回答問題。"""
 import asyncio
+from datetime import datetime
 from pathlib import Path
+import re
 
 import httpx
 
@@ -21,6 +23,40 @@ def load_course_assistant_skill() -> str:
         return _SKILL_PATH.read_text(encoding="utf-8")[:8000]
     except OSError:
         return "遵守固定檢索順序：先依權限與月份篩選，再依課程內容回答；找不到時明確說明資料不足。"
+
+
+def _overview_date_label(record: CourseMeetingRecord, month: str) -> str:
+    if record.date and record.date.strftime("%Y-%m") == month:
+        return f"{record.date.month}/{record.date.day}"
+    match = re.search(rf"{re.escape(month)}[-/](\d{{1,2}})", record.title)
+    if match:
+        return f"{int(month[-2:])}/{int(match.group(1))}"
+    return f"{int(month[-2:])} 月"
+
+
+def _overview_summary(record: CourseMeetingRecord) -> str:
+    text = record.summary.strip()
+    if not text:
+        text = next((line.strip() for line in record.content.splitlines() if line.strip()), "")
+    return text[:100] or "尚未填寫課程摘要"
+
+
+def build_month_overview_answer(records: list[CourseMeetingRecord], month: str) -> str:
+    """Build a reliable month index without depending on generative output."""
+    year, month_number = (int(value) for value in month.split("-", 1))
+    earliest = datetime.min.replace(tzinfo=config.TZ)
+    ordered = sorted(records, key=lambda record: record.date or earliest)
+    lines = [f"你在 {year} 年 {month_number} 月共有 {len(ordered)} 筆課程紀錄："]
+    for record in ordered:
+        lines.append(
+            f"・{_overview_date_label(record, month)}｜{record.title}\n  {_overview_summary(record)}"
+        )
+    sources = "\n".join(
+        f"・[{record.title}]({record.url})" for record in ordered if record.url
+    )
+    if sources:
+        lines.extend(["", "**參考課程紀錄**", sources])
+    return "\n".join(lines)[:3900]
 
 
 class CourseQAError(Exception):

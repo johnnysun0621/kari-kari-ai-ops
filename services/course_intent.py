@@ -12,7 +12,9 @@ from services.repositories import CourseMeetingRecord
 
 
 _OTHER_FOLLOWUP_RE = re.compile(r"其他|另外|別的|其餘|更多|換一堂|換一個|下一堂|再看看")
-_BROAD_QUERY_RE = re.compile(r"上過|學過|有哪些|哪幾堂|全部|所有|總覽|統整|整理|課程紀錄|上課紀錄")
+_BROAD_QUERY_RE = re.compile(
+    r"上過|上了|學過|有哪些|哪幾堂|什麼課|啥課|全部|所有|總覽|統整|整理|課程紀錄|上課紀錄"
+)
 _EXPLICIT_DATE_RE = re.compile(
     r"(20\d{2})\s*[-年/]\s*(\d{1,2})(?:\s*月)?(?:\s*[-/日]\s*\d{1,2})?"
 )
@@ -137,6 +139,8 @@ async def classify_query(
     tenant = config.get_tenant()
     if _is_other_followup(question, memory):
         return QueryIntent(mode="compare")
+    if _month_from_text(question) and is_broad_query(question):
+        return _fallback_intent(question, records)
     if not tenant.llm_api_key or not records or not llm_usage.within_daily_limit(usage_key):
         return _fallback_intent(question, records)
     previous = json.dumps(memory or {}, ensure_ascii=False)[:1200]

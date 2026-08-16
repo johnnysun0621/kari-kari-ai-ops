@@ -232,21 +232,24 @@ class CourseQACog(commands.Cog):
             },
             ensure_ascii=False,
         )
-        try:
-            answer = await course_qa.answer_course_question(
-                artist.name,
-                question,
-                selected,
-                intent_context=intent_context,
-                attachment_names=intent.attachment_names,
-                usage_key=artist.page_id,
-            )
-        except course_qa.CourseQAError as exc:
-            logger.warning("課程助教未能回答：%s", exc)
-            return exc.user_message
-        except Exception:
-            logger.exception("課程助教回答階段發生未預期錯誤")
-            return "⚠️ 課程助教這次未能完成回答，請稍後重試。"
+        if intent.mode == "month_overview" and intent.month:
+            answer = course_qa.build_month_overview_answer(selected, intent.month)
+        else:
+            try:
+                answer = await course_qa.answer_course_question(
+                    artist.name,
+                    question,
+                    selected,
+                    intent_context=intent_context,
+                    attachment_names=intent.attachment_names,
+                    usage_key=artist.page_id,
+                )
+            except course_qa.CourseQAError as exc:
+                logger.warning("課程助教未能回答：%s", exc)
+                return exc.user_message
+            except Exception:
+                logger.exception("課程助教回答階段發生未預期錯誤")
+                return "⚠️ 課程助教這次未能完成回答，請稍後重試。"
         self._memory_by_user[str(user.id)] = {
             "mode": intent.mode,
             "month": intent.month,
