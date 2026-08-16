@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 import config
 from cogs.course_qa import _sanitize_memory, _split_discord_message, can_artist_use_ai
 from services import course_qa, llm_response, llm_usage, repositories
@@ -167,19 +169,24 @@ def test_openai_gpt_completion_options_disable_reasoning():
     assert payload["reasoning_effort"] == "none"
 
 
-def test_longcat_completion_options_keep_compatible_parameters():
-    payload = {}
+def test_longcat_base_url_is_rejected():
+    with pytest.raises(llm_response.UnsupportedLLMProviderError):
+        llm_response.configure_chat_completion(
+            {},
+            base_url="https://api.longcat.chat/openai/v1",
+            model="gpt-compatible-model",
+            max_tokens=800,
+        )
 
-    llm_response.configure_chat_completion(
-        payload,
-        base_url="https://api.longcat.chat/openai/v1",
-        model="LongCat-Flash-Chat",
-        max_tokens=800,
-    )
 
-    assert payload["max_tokens"] == 800
-    assert payload["thinking"] == {"type": "disabled"}
-    assert "reasoning_effort" not in payload
+def test_longcat_model_name_is_rejected():
+    with pytest.raises(llm_response.UnsupportedLLMProviderError):
+        llm_response.configure_chat_completion(
+            {},
+            base_url="https://api.openai.com/v1",
+            model="LongCat-Flash-Chat",
+            max_tokens=800,
+        )
 
 
 def test_course_notes_fallback_uses_notion_summaries():

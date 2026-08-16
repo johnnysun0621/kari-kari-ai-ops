@@ -4,7 +4,7 @@ from datetime import datetime
 import httpx
 
 import config
-from services import llm_usage
+from services import llm_response, llm_usage
 from services.repositories import CourseMeetingRecord, ProjectItem, SubmissionItem, TaskItem
 
 
@@ -105,11 +105,18 @@ async def answer_operations_question(
             },
         ],
     }
-    payload[
-        "max_tokens" if "longcat" in tenant.llm_base_url.lower() else "max_completion_tokens"
-    ] = tenant.llm_max_tokens
-    if "longcat" in tenant.llm_base_url.lower():
-        payload["temperature"] = 0.1
+    try:
+        llm_response.configure_chat_completion(
+            payload,
+            base_url=tenant.llm_base_url,
+            model=tenant.llm_model,
+            max_tokens=tenant.llm_max_tokens,
+        )
+    except llm_response.UnsupportedLLMProviderError as exc:
+        raise OperationsQAError(
+            str(exc),
+            "⚠️ 營運 AI 的供應商設定不受支援，請檢查系統設定。",
+        ) from exc
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
@@ -119,12 +126,14 @@ async def answer_operations_question(
             )
             response.raise_for_status()
         data = response.json()
-        answer = data["choices"][0]["message"]["content"].strip()
+        answer = llm_response.extract_text(data)
+        if not answer:
+            raise ValueError("LLM response has no answer text")
     except httpx.TimeoutException as exc:
         raise OperationsQAError("LLM timeout", "⚠️ 營運查詢逾時，請稍後再試。") from exc
     except httpx.HTTPError as exc:
         raise OperationsQAError("LLM request failed", "⚠️ 營運 AI 暫時無法連線。") from exc
-    except (KeyError, IndexError, TypeError) as exc:
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise OperationsQAError("LLM response invalid") from exc
     llm_usage.record(data.get("usage"))
     return answer[:3900]

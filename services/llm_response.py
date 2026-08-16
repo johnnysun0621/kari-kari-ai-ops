@@ -2,6 +2,18 @@
 from typing import Any
 
 
+class UnsupportedLLMProviderError(ValueError):
+    """Raised before a request when the configured provider is prohibited."""
+
+
+def reject_prohibited_provider(*, base_url: str, model: str) -> None:
+    configured_provider = f"{base_url} {model}".lower()
+    if "longcat" in configured_provider or "long cat" in configured_provider:
+        raise UnsupportedLLMProviderError(
+            "LongCat is prohibited for this project; configure an approved LLM provider."
+        )
+
+
 def configure_chat_completion(
     payload: dict[str, Any],
     *,
@@ -10,10 +22,7 @@ def configure_chat_completion(
     max_tokens: int,
 ) -> None:
     """Apply provider-compatible output settings without hiding answer tokens."""
-    if "longcat" in base_url.lower():
-        payload["max_tokens"] = max_tokens
-        payload["thinking"] = {"type": "disabled"}
-        return
+    reject_prohibited_provider(base_url=base_url, model=model)
     payload["max_completion_tokens"] = max_tokens
     if model.lower().startswith("gpt-"):
         payload["reasoning_effort"] = "none"

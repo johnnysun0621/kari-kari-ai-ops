@@ -175,14 +175,18 @@ async def answer_course_question(
             },
         ],
     }
-    llm_response.configure_chat_completion(
-        payload,
-        base_url=tenant.llm_base_url,
-        model=tenant.llm_model,
-        max_tokens=tenant.llm_max_tokens,
-    )
-    if "longcat" in tenant.llm_base_url.lower():
-        payload["temperature"] = 0.2
+    try:
+        llm_response.configure_chat_completion(
+            payload,
+            base_url=tenant.llm_base_url,
+            model=tenant.llm_model,
+            max_tokens=tenant.llm_max_tokens,
+        )
+    except llm_response.UnsupportedLLMProviderError as exc:
+        raise CourseQAError(
+            str(exc),
+            "⚠️ 課程助教的 AI 供應商設定不受支援，請聯絡控方。",
+        ) from exc
     data: dict | None = None
     answer = ""
     last_error: Exception | None = None

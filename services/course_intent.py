@@ -178,14 +178,15 @@ async def classify_query(
             },
         ],
     }
-    llm_response.configure_chat_completion(
-        payload,
-        base_url=tenant.llm_base_url,
-        model=tenant.llm_model,
-        max_tokens=220,
-    )
-    if "longcat" in tenant.llm_base_url.lower():
-        payload["temperature"] = 0
+    try:
+        llm_response.configure_chat_completion(
+            payload,
+            base_url=tenant.llm_base_url,
+            model=tenant.llm_model,
+            max_tokens=220,
+        )
+    except llm_response.UnsupportedLLMProviderError:
+        return _fallback_intent(question, records)
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(

@@ -1,5 +1,11 @@
 # Project Principles
 
+## AI 供應商
+
+- 課程助教與營運 AI 使用核准的 OpenAI 設定。
+- LongCat 永久不採用，不得作為主要供應商、備援供應商或相容 fallback。
+- URL 或模型名稱命中 LongCat 時，程式必須在網路請求送出前拒絕。
+
 ## Product Direction
 
 This project is not a one-off KariKari custom bot.

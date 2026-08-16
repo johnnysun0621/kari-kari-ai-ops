@@ -322,7 +322,7 @@ Drive 資料夾回寫驗收：
 13. 連續快速送出兩個問題，確認同一位藝人的請求依序完成，沒有互相覆蓋回答。
 14. 模擬 LLM timeout／網路錯誤／5xx，確認 Bot 最多自動重試一次；模擬空白或錯誤 JSON，確認顯示明確失敗訊息。
 15. OpenAI 環境確認 `LLM_BASE_URL=https://api.openai.com/v1`、`LLM_MODEL=gpt-5.6-luna`；用簡短問題確認呼叫 `/v1/chat/completions` 並回傳完整答案。
-16. 若切回 LongCat，才確認請求包含 `thinking.type=disabled`；OpenAI GPT Luna 不應帶入 LongCat 專用參數。
+16. 將 URL 或模型名稱暫時設成 LongCat，確認系統在發出網路請求前拒絕，並顯示供應商設定不受支援；測完立即恢復 OpenAI 設定。
 
 ### 營運 AI 驗收
 
