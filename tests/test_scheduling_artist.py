@@ -81,6 +81,22 @@ def test_availability_management_view_has_cancel_navigation():
     assert "取消" in child_labels(view)
 
 
+def test_availability_management_view_can_continue_filling_after_delete():
+    artist = repositories.Artist(
+        page_id="artist-1", name="Johnny", discord_user_id="123", status="已簽約"
+    )
+    view = scheduling_artist.ManageAvailabilityView(
+        "2026-08", 1785600000, time_collection.DEFAULT_COLLECTION_NATURE,
+        artist, [], "",
+    )
+
+    fill_view = view.fill_view(123)
+
+    assert isinstance(fill_view, DatePresetView)
+    assert "填寫方式" in fill_view.prompt()
+    assert "尚未選日期" in fill_view.prompt()
+
+
 def test_month_overview_allows_artist_to_choose_a_month_or_cancel():
     artist = repositories.Artist(
         page_id="artist-1", name="Johnny", discord_user_id="123", status="已簽約"

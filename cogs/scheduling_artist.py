@@ -2388,15 +2388,22 @@ class ManageAvailabilityView(InteractionDebugView):
             logger.exception("管理入口刪除時段失敗")
             await interaction.followup.send("❌ 刪除失敗，請稍後再試。", ephemeral=True)
             return
-        await interaction.followup.send(
-            "🗑️ 已刪除以下時段；請按原訊息的「新增／補填日期」重新填寫：\n"
-            + "\n".join(f"・{label}" for label in labels),
-            ephemeral=True,
+
+        # 刪除後直接接回同月份填寫頁，避免使用者必須重新尋找入口。
+        view = self.fill_view(interaction.user.id)
+        await interaction.edit_original_response(
+            content=(
+                "🗑️ 已刪除以下時段，現在可以直接繼續補填或重填：\n"
+                + "\n".join(f"・{label}" for label in labels)
+                + "\n\n"
+                + view.prompt()
+            ),
+            view=view,
         )
 
-    async def open_fill_flow(self, interaction: discord.Interaction):
-        groups = _drafts_for(interaction.user.id, self.month, self.deadline_ts)
-        view = DatePresetView(
+    def fill_view(self, user_id: int) -> "DatePresetView":
+        groups = _drafts_for(user_id, self.month, self.deadline_ts)
+        return DatePresetView(
             self.month,
             self.deadline_ts,
             [week.value for week in time_collection.month_week_options(self.month)],
@@ -2405,6 +2412,9 @@ class ManageAvailabilityView(InteractionDebugView):
             schedule_summary=self.schedule_summary,
             draft_count=len(groups),
         )
+
+    async def open_fill_flow(self, interaction: discord.Interaction):
+        view = self.fill_view(interaction.user.id)
         await interaction.response.edit_message(content=view.prompt(), view=view)
 
 
