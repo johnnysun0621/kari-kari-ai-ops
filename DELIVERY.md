@@ -32,7 +32,7 @@ Discord 收集月度可配合時間
 - TimeTree 無 API，未自動同步。
 - 掃描型 PDF、舊 `.doc`／`.ppt`、加密附件不保證可抽取文字。
 - 課程助教品質取決於 Notion 頁面正文、relation 與附件內容是否完整。
-- 課程助教目前使用 LongCat 官方 OpenAI 相容端點並關閉 thinking；Bot 端每日 token 護欄目前不限額，但 LongCat 帳戶額度、速率限制與服務狀態仍適用。
+- 課程助教使用可切換的 OpenAI 相容端點；目前預設為 OpenAI `gpt-5.6-luna`。LongCat 僅在使用 LongCat endpoint 時關閉 thinking；Bot 端每日 token 護欄目前不限額，供應商帳戶額度與速率限制仍適用。
 - 合約、財務、NAS、營運儀表板與多公司 onboarding 尚未建立資料模型。
 
 ## 上線與回復

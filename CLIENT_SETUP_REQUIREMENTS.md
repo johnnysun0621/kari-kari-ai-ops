@@ -77,7 +77,7 @@ Google Drive OAuth 細節見 [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md)。
 - API Key
 - 使用的 API Base URL 與模型名稱
 
-目前可使用 OpenAI 相容 API，例如 LongCat。API Key 只放在部署環境，不寫入 Notion、Discord 或 Git。
+目前使用 OpenAI API 的 `gpt-5.6-luna`。API Key 只放在部署環境，不寫入 Notion、Discord 或 Git。
 
 ### 5. 固定部署主機
 

@@ -101,7 +101,7 @@ class TenantConfig:
     # === 課程 AI 助教（可選，未設定＝功能停用）===
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "gpt-5.6-luna"
     llm_max_tokens: int = 800
     llm_daily_token_limit: int = 0
     llm_per_artist_daily_token_limit: int = 0
@@ -177,7 +177,7 @@ def _load_karikari_from_env() -> TenantConfig:
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
         llm_api_key=os.getenv("LLM_API_KEY", ""),
         llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
-        llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        llm_model=os.getenv("LLM_MODEL", "gpt-5.6-luna"),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 800),
         llm_daily_token_limit=_env_int("LLM_DAILY_TOKEN_LIMIT", 0),
         llm_per_artist_daily_token_limit=_env_int("LLM_PER_ARTIST_DAILY_TOKEN_LIMIT", 0),

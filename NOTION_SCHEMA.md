@@ -97,7 +97,7 @@ Bot／LLM 可使用的安全條件：
 - 課程助教每次提問重新同步 Notion；同步失敗才使用該藝人上次成功的快取，不跨藝人共用。
 - 檢索意圖會先限制在明確的月份、課程、老師、附件或總覽範圍；模糊問題不會把任意課程交給 LLM。
 - LLM 上下文最多 16,000 字並以完整紀錄裁切，避免來源被截斷；逾時、網路錯誤或服務端 5xx 只重試一次。
-- LongCat 使用官方 `/openai/v1/chat/completions` 並關閉 thinking；正式內容空白或格式不完整時不寫入假答案。
+- 預設使用 OpenAI `gpt-5.6-luna`；正式內容空白或格式不完整時不寫入假答案。若使用 LongCat endpoint，才會關閉 thinking。
 
 ## Availability Slots｜可用時段
 

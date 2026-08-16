@@ -67,7 +67,7 @@ python bot.py
 | `NOTION_DS_COURSE_MEETINGS` | `課程與會議記錄` Data Source ID；預設已內建 |
 | `LLM_API_KEY` | 課程助教使用的 LLM API key；留空則停用回答 |
 | `LLM_BASE_URL` | LLM API base URL，預設 `https://api.openai.com/v1`；LongCat 使用 `https://api.longcat.chat/openai/v1` |
-| `LLM_MODEL` | LLM 模型名稱，預設 `gpt-4o-mini` |
+| `LLM_MODEL` | LLM 模型名稱，預設 `gpt-5.6-luna` |
 | `LLM_MAX_TOKENS` | 單次課程助教回答上限，預設 `800` |
 | `LLM_DAILY_TOKEN_LIMIT` | 每租戶每日 token 護欄；目前預設 `0`（不限），使用量仍只記錄數字 |
 | `LLM_PER_ARTIST_DAILY_TOKEN_LIMIT` | 每位藝人每日 token 護欄；目前預設 `0`（不限） |

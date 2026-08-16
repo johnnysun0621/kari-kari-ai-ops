@@ -74,8 +74,8 @@
 - ✅ 同一位藝人的並發問題會排隊；Notion 失敗沿用本人上次成功快取。
 - ✅ LLM 上下文以完整紀錄裁切至 16,000 字，timeout／網路錯誤／5xx 自動重試一次。
 - ✅ 附件索引顯示不再中斷當次問題回答；API 空白或格式錯誤會明確回報。
-- ✅ LongCat 改用官方 `/openai/v1/chat/completions`，並支援常見 OpenAI 相容回應格式與不完整回應重試。
-- ✅ LongCat 請求關閉 thinking；HTTP 200 但正式內容空白時會重試，不會把推理內容當成回答。
+- ✅ AI runtime 改為可切換的 OpenAI 相容 `/v1/chat/completions`，目前預設 `gpt-5.6-luna`，支援常見回應格式與不完整回應重試。
+- ✅ 只有 LongCat endpoint 的請求會關閉 thinking；HTTP 200 但正式內容空白時會重試，不會把推理內容當成回答。
 
 - ✅ 課程助教頻道自然對話：不需要 slash command，也不需要 `@Bot`。
 - ✅ 依 Discord User ID 對應藝人，只讀取該藝人可見的課程與會議記錄。
