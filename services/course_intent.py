@@ -106,7 +106,6 @@ async def classify_query(
     payload = {
         "model": tenant.llm_model,
         "temperature": 0,
-        "max_tokens": 220,
         "messages": [
             {
                 "role": "system",
@@ -124,7 +123,10 @@ async def classify_query(
         ],
     }
     if "longcat" in tenant.llm_base_url.lower():
+        payload["max_tokens"] = 220
         payload["thinking"] = {"type": "disabled"}
+    else:
+        payload["max_completion_tokens"] = 220
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
