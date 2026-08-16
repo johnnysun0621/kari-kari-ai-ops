@@ -92,7 +92,6 @@ async def answer_course_question(
         )
     payload = {
         "model": tenant.llm_model,
-        "temperature": 0.2,
         "messages": [
             {
                 "role": "system",
@@ -115,6 +114,7 @@ async def answer_course_question(
         ],
     }
     if "longcat" in tenant.llm_base_url.lower():
+        payload["temperature"] = 0.2
         payload["max_tokens"] = tenant.llm_max_tokens
         payload["thinking"] = {"type": "disabled"}
     else:

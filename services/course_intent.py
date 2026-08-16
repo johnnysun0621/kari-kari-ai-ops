@@ -105,7 +105,6 @@ async def classify_query(
     previous = json.dumps(memory or {}, ensure_ascii=False)[:1200]
     payload = {
         "model": tenant.llm_model,
-        "temperature": 0,
         "messages": [
             {
                 "role": "system",
@@ -123,6 +122,7 @@ async def classify_query(
         ],
     }
     if "longcat" in tenant.llm_base_url.lower():
+        payload["temperature"] = 0
         payload["max_tokens"] = 220
         payload["thinking"] = {"type": "disabled"}
     else:

@@ -86,7 +86,6 @@ async def answer_operations_question(
         )
     payload = {
         "model": tenant.llm_model,
-        "temperature": 0.1,
         "messages": [
             {
                 "role": "system",
@@ -109,6 +108,8 @@ async def answer_operations_question(
     payload[
         "max_tokens" if "longcat" in tenant.llm_base_url.lower() else "max_completion_tokens"
     ] = tenant.llm_max_tokens
+    if "longcat" in tenant.llm_base_url.lower():
+        payload["temperature"] = 0.1
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
