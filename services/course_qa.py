@@ -4,7 +4,7 @@ import asyncio
 import httpx
 
 import config
-from services import llm_response, llm_usage
+from services import course_intent, llm_response, llm_usage
 from services.repositories import CourseMeetingRecord
 
 
@@ -28,7 +28,11 @@ def quota_message(status: llm_usage.LimitStatus) -> str:
 
 
 def _record_text(record: CourseMeetingRecord, attachment_names: tuple[str, ...] = ()) -> str:
-    date_text = record.date.strftime("%Y-%m-%d") if record.date else "未填日期"
+    labelled_months = course_intent.record_months(record)
+    if labelled_months and record.title:
+        date_text = f"頁面標示：{', '.join(sorted(labelled_months))}"
+    else:
+        date_text = record.date.strftime("%Y-%m-%d") if record.date else "未填日期"
     body = record.content or record.summary or "（沒有可讀取的內容）"
     attachment_text = "\n\n".join(
         f"【附件：{attachment.name}】\n{attachment.text[:3500]}"

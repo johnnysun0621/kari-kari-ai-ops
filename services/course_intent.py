@@ -13,6 +13,14 @@ from services.repositories import CourseMeetingRecord
 
 _OTHER_FOLLOWUP_RE = re.compile(r"其他|另外|別的|其餘|更多|換一堂|換一個|下一堂|再看看")
 _BROAD_QUERY_RE = re.compile(r"上過|學過|有哪些|哪幾堂|全部|所有|總覽|統整|整理|課程紀錄|上課紀錄")
+_EXPLICIT_DATE_RE = re.compile(
+    r"(20\d{2})\s*[-年/]\s*(\d{1,2})(?:\s*月)?(?:\s*[-/日]\s*\d{1,2})?"
+)
+_EXPLICIT_MONTH_RE = re.compile(r"(?<![\d/-])(\d{1,2})\s*月")
+_CHINESE_MONTHS = {
+    "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+    "七": 7, "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12,
+}
 MAX_SELECTED_RECORDS = 8
 
 
@@ -33,7 +41,37 @@ def _month_from_text(text: str) -> str | None:
     match = re.search(r"(?<!\d)(\d{1,2})\s*月", text)
     if match:
         return f"{datetime.now(config.get_tenant().tz).year}-{int(match.group(1)):02d}"
+    match = re.search(r"(十一|十二|一|二|三|四|五|六|七|八|九|十)\s*月", text)
+    if match:
+        return f"{datetime.now(config.get_tenant().tz).year}-{_CHINESE_MONTHS[match.group(1)]:02d}"
     return None
+
+
+def record_months(record: CourseMeetingRecord) -> set[str]:
+    """Return months explicitly labelled by the course record before its Date fallback.
+
+    KariKari's Date property may describe record creation or recording time, while
+    the page title/summary can contain the actual lesson date (for example,
+    ``測試用｜2026-08-03``).  Prefer those explicit labels for month queries.
+    """
+    months: set[str] = set()
+    for text in (record.title, record.summary):
+        for match in _EXPLICIT_DATE_RE.finditer(text):
+            year_text, month_text = match.groups()
+            month = int(month_text)
+            if not 1 <= month <= 12:
+                continue
+            months.add(f"{int(year_text):04d}-{month:02d}")
+        for match in _EXPLICIT_MONTH_RE.finditer(text):
+            month = int(match.group(1))
+            if 1 <= month <= 12:
+                year = datetime.now(config.get_tenant().tz).year
+                months.add(f"{year:04d}-{month:02d}")
+    if months:
+        return months
+    if record.date:
+        return {record.date.strftime("%Y-%m")}
+    return set()
 
 
 def _fallback_intent(question: str, records: list[CourseMeetingRecord]) -> QueryIntent:
@@ -45,8 +83,7 @@ def _fallback_intent(question: str, records: list[CourseMeetingRecord]) -> Query
                for term in normalized.split() if len(term) >= 2)
     ]
     if month:
-        matches = [record.page_id for record in records
-                   if record.date and record.date.strftime("%Y-%m") == month]
+        matches = [record.page_id for record in records if month in record_months(record)]
         return QueryIntent(
             mode="month_overview", month=month, record_ids=tuple(matches), broad=True
         )
@@ -176,8 +213,7 @@ def select_records(
     if selected:
         return selected[:MAX_SELECTED_RECORDS]
     if intent.month:
-        monthly = [record for record in records
-                   if record.date and record.date.strftime("%Y-%m") == intent.month]
+        monthly = [record for record in records if intent.month in record_months(record)]
         if monthly:
             return monthly[:MAX_SELECTED_RECORDS]
     if intent.terms:

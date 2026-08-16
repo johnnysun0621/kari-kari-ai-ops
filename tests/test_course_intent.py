@@ -27,6 +27,23 @@ def test_month_query_selects_only_matching_records():
     assert [item.page_id for item in course_intent.select_records(records, intent)] == ["july"]
 
 
+def test_explicit_course_month_in_title_overrides_record_date():
+    item = repositories.CourseMeetingRecord(
+        page_id="course",
+        url="https://notion.so/course",
+        title="測試用｜2026-08-03",
+        date=datetime(2026, 7, 22, tzinfo=config.TZ),
+        summary="課程整理",
+        content="課程正文",
+        artist_page_ids=("artist-1",),
+        task_page_ids=(),
+        project_page_ids=(),
+    )
+
+    assert course_intent.record_months(item) == {"2026-08"}
+    assert course_intent._fallback_intent("我八月上的課", [item]).record_ids == ("course",)
+
+
 def test_follow_up_uses_previous_record_context_when_query_has_no_filter():
     records = [record("july", "歌唱課", 7), record("august", "表演課", 8)]
     intent = course_intent.QueryIntent()
