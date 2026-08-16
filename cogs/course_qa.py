@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import json
+import re
 from pathlib import Path
 
 import discord
@@ -306,6 +307,10 @@ class CourseQACog(commands.Cog):
             return
         try:
             question = message.content.strip()
+            if self.bot.user is not None:
+                question = re.sub(
+                    rf"<@!?{self.bot.user.id}>\s*", "", question
+                ).strip()
             if not question or question.startswith("/"):
                 return
 
@@ -320,18 +325,21 @@ class CourseQACog(commands.Cog):
                     return
                 thread = message.channel
             else:
-                thread = await self._get_or_create_thread(message)
-                if thread is None:
-                    await message.reply(
-                        "❌ 無法建立私人課程助教對話，請確認 Bot 有「建立私人 Thread」與「管理訊息」權限。",
-                        mention_author=False,
-                    )
-                    return
+                # 先移除公開問題，避免建立私人 Thread 或 AI 回答期間曝光內容。
                 try:
                     await message.delete()
                 except (discord.Forbidden, discord.HTTPException):
-                    # 沒有管理訊息權限時仍繼續私人回答，但不在公開頻道打擾使用者。
                     logger.warning("課程助教無法刪除公開問題，請補上管理訊息權限")
+
+                thread = await self._get_or_create_thread(message)
+                if thread is None:
+                    try:
+                        await message.author.send(
+                            "❌ 無法建立私人課程助教對話，請確認 Bot 有「建立私人 Thread」與「管理訊息」權限。"
+                        )
+                    except (discord.Forbidden, discord.HTTPException):
+                        logger.exception("課程助教建立私人對話失敗，且無法私訊使用者")
+                    return
 
             if thread.id not in self._catalog_sent_threads:
                 self._catalog_sent_threads.add(thread.id)
