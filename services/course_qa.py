@@ -148,6 +148,11 @@ async def answer_course_question(
                 last_error = exc
                 if not _retryable_http_error(exc) or attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
                     body = exc.response.text[:300].replace("\n", " ")
+                    if exc.response.status_code in {401, 403}:
+                        raise CourseQAError(
+                            f"LLM API HTTP {exc.response.status_code}: {body}",
+                            "⚠️ 課程助教 API key 無效或權限不足，請聯絡控方更新 LLM_API_KEY。",
+                        ) from exc
                     raise CourseQAError(
                         f"LLM API HTTP {exc.response.status_code}: {body}",
                         "⚠️ 課程助教 API 暫時無法回應，請稍後再試。",
