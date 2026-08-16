@@ -1,6 +1,7 @@
 """課程 AI 助教：以已授權的 Notion 課程紀錄回答問題。"""
 import asyncio
 from datetime import datetime
+import logging
 from pathlib import Path
 import re
 
@@ -15,6 +16,7 @@ COURSE_QA_TIMEOUT_SECONDS = 45
 COURSE_QA_MAX_ATTEMPTS = 2
 COURSE_QA_MAX_CONTEXT_CHARS = 16000
 _SKILL_PATH = Path(__file__).resolve().parent.parent / "COURSE_ASSISTANT_SKILL.md"
+logger = logging.getLogger(__name__)
 
 
 def load_course_assistant_skill() -> str:
@@ -57,6 +59,15 @@ def build_month_overview_answer(records: list[CourseMeetingRecord], month: str) 
     if sources:
         lines.extend(["", "**參考課程紀錄**", sources])
     return "\n".join(lines)[:3900]
+
+
+def build_course_notes_fallback(records: list[CourseMeetingRecord]) -> str:
+    """Return useful Notion summaries when the model produces no visible text."""
+    lines = ["模型暫時沒有完成深入整理，先提供 Notion 課程摘要："]
+    for record in records[:12]:
+        date_label = record.date.strftime("%Y/%m/%d") if record.date else "未填日期"
+        lines.append(f"・{date_label}｜{record.title}\n  {_overview_summary(record)}")
+    return "\n".join(lines)
 
 
 class CourseQAError(Exception):
@@ -164,12 +175,14 @@ async def answer_course_question(
             },
         ],
     }
+    llm_response.configure_chat_completion(
+        payload,
+        base_url=tenant.llm_base_url,
+        model=tenant.llm_model,
+        max_tokens=tenant.llm_max_tokens,
+    )
     if "longcat" in tenant.llm_base_url.lower():
         payload["temperature"] = 0.2
-        payload["max_tokens"] = tenant.llm_max_tokens
-        payload["thinking"] = {"type": "disabled"}
-    else:
-        payload["max_completion_tokens"] = tenant.llm_max_tokens
     data: dict | None = None
     answer = ""
     last_error: Exception | None = None
@@ -185,18 +198,22 @@ async def answer_course_question(
                 parsed = response.json()
                 if not isinstance(parsed, dict):
                     raise ValueError("LLM response is not an object")
+                data = parsed
                 answer = llm_response.extract_text(parsed)
                 if answer:
-                    data = parsed
                     break
+                choice = (parsed.get("choices") or [{}])[0]
+                usage = parsed.get("usage") or {}
+                completion_details = usage.get("completion_tokens_details") or {}
                 last_error = ValueError(
-                    f"LLM response has no answer text; keys={sorted(parsed.keys())}"
+                    "LLM response has no answer text; "
+                    f"finish_reason={choice.get('finish_reason') if isinstance(choice, dict) else None}, "
+                    f"completion_tokens={usage.get('completion_tokens')}, "
+                    f"reasoning_tokens={completion_details.get('reasoning_tokens')}"
                 )
                 if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
-                    raise CourseQAError(
-                        str(last_error),
-                        "⚠️ 課程助教收到不完整回應，請稍後再試。",
-                    )
+                    logger.warning("%s；改用 Notion 摘要降級回答", last_error)
+                    answer = build_course_notes_fallback(records)
             except httpx.HTTPStatusError as exc:
                 last_error = exc
                 if not _retryable_http_error(exc) or attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
@@ -230,8 +247,9 @@ async def answer_course_question(
                         "⚠️ 課程助教收到無效回應，請稍後再試。",
                     ) from exc
             await asyncio.sleep(0.5 * (attempt + 1))
-    if data is None or not answer:
+    if not answer:
         raise CourseQAError("LLM API 沒有回傳結果") from last_error
-    llm_usage.record(data.get("usage"), user_key=usage_key)
+    if data is not None:
+        llm_usage.record(data.get("usage"), user_key=usage_key)
     sources = "\n".join(f"・[{record.title}]({record.url})" for record in records if record.url)
     return f"{answer}\n\n**參考課程紀錄**\n{sources}"[:3900]

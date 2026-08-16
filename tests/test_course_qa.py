@@ -149,3 +149,54 @@ def test_extract_llm_text_reads_common_compatible_fallbacks():
 
 def test_extract_llm_text_returns_empty_for_incomplete_response():
     assert llm_response.extract_text({"choices": [{"message": {"content": None}}]}) == ""
+
+
+def test_openai_gpt_completion_options_disable_reasoning():
+    payload = {}
+
+    llm_response.configure_chat_completion(
+        payload,
+        base_url="https://api.openai.com/v1",
+        model="gpt-5.6-luna",
+        max_tokens=800,
+    )
+
+    assert payload["max_completion_tokens"] == 800
+    assert payload["reasoning_effort"] == "none"
+
+
+def test_longcat_completion_options_keep_compatible_parameters():
+    payload = {}
+
+    llm_response.configure_chat_completion(
+        payload,
+        base_url="https://api.longcat.chat/openai/v1",
+        model="LongCat-Flash-Chat",
+        max_tokens=800,
+    )
+
+    assert payload["max_tokens"] == 800
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in payload
+
+
+def test_course_notes_fallback_uses_notion_summaries():
+    records = [
+        repositories.CourseMeetingRecord(
+            page_id="meeting-1",
+            url="https://notion.so/meeting-1",
+            title="表演藝術課",
+            date=datetime(2026, 8, 6, tzinfo=config.TZ),
+            summary="練習舞台走位與表情管理",
+            content="完整內容",
+            artist_page_ids=("artist-1",),
+            task_page_ids=(),
+            project_page_ids=(),
+        )
+    ]
+
+    answer = course_qa.build_course_notes_fallback(records)
+
+    assert "先提供 Notion 課程摘要" in answer
+    assert "表演藝術課" in answer
+    assert "練習舞台走位與表情管理" in answer

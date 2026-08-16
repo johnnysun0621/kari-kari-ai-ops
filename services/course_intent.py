@@ -162,12 +162,14 @@ async def classify_query(
             },
         ],
     }
+    llm_response.configure_chat_completion(
+        payload,
+        base_url=tenant.llm_base_url,
+        model=tenant.llm_model,
+        max_tokens=220,
+    )
     if "longcat" in tenant.llm_base_url.lower():
         payload["temperature"] = 0
-        payload["max_tokens"] = 220
-        payload["thinking"] = {"type": "disabled"}
-    else:
-        payload["max_completion_tokens"] = 220
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(

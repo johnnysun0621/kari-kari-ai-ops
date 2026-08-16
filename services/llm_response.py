@@ -2,6 +2,23 @@
 from typing import Any
 
 
+def configure_chat_completion(
+    payload: dict[str, Any],
+    *,
+    base_url: str,
+    model: str,
+    max_tokens: int,
+) -> None:
+    """Apply provider-compatible output settings without hiding answer tokens."""
+    if "longcat" in base_url.lower():
+        payload["max_tokens"] = max_tokens
+        payload["thinking"] = {"type": "disabled"}
+        return
+    payload["max_completion_tokens"] = max_tokens
+    if model.lower().startswith("gpt-"):
+        payload["reasoning_effort"] = "none"
+
+
 def _content_text(content: Any) -> str:
     if isinstance(content, str):
         return content.strip()
