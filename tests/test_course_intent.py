@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 import config
@@ -73,12 +74,26 @@ def test_other_follow_up_excludes_previous_course():
     assert [item.page_id for item in selected] == ["august"]
 
 
-def test_unrelated_question_does_not_expand_to_first_records():
+def test_open_ended_question_uses_bounded_records_for_evidence_check():
     records = [record("july", "歌唱課", 7), record("august", "表演課", 8)]
 
     intent = course_intent._fallback_intent("我想問薪資制度", records)
 
-    assert course_intent.select_records(records, intent) == []
+    assert course_intent.select_records(records, intent) == records
+
+
+def test_note_summary_followup_reuses_previous_course_scope_without_llm():
+    records = [record("july", "歌唱課", 7), record("august", "表演課", 8)]
+
+    intent = asyncio.run(course_intent.classify_query(
+        "幫我整理筆記",
+        records,
+        memory={"month": "2026-08", "record_ids": ["august"]},
+    ))
+
+    assert intent.mode == "summarize"
+    assert intent.month == "2026-08"
+    assert intent.record_ids == ("august",)
 
 
 def test_broad_question_can_select_bounded_catalog():

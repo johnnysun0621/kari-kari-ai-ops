@@ -12,6 +12,7 @@ from services.repositories import CourseMeetingRecord
 
 
 _OTHER_FOLLOWUP_RE = re.compile(r"其他|另外|別的|其餘|更多|換一堂|換一個|下一堂|再看看")
+_SUMMARY_QUERY_RE = re.compile(r"整理.*(?:筆記|重點|摘要)|(?:筆記|重點|摘要).*整理|幫我整理|複習")
 _BROAD_QUERY_RE = re.compile(
     r"上過|上了|學過|有哪些|哪幾堂|什麼課|啥課|全部|所有|總覽|統整|整理|課程紀錄|上課紀錄"
 )
@@ -96,9 +97,12 @@ def _fallback_intent(question: str, records: list[CourseMeetingRecord]) -> Query
         if attachment.name.lower() in normalized
     )
     return QueryIntent(
+        mode="summarize" if _SUMMARY_QUERY_RE.search(question) else "course_question",
         record_ids=tuple(matches),
         attachment_names=attachment_names,
-        broad=is_broad_query(question),
+        # 課程助教接受開放式問法。找不到明確關鍵字時，仍提供有限筆
+        # 本人可見紀錄給回答模型判斷是否有足夠證據，而不是直接拒答。
+        broad=bool(question.strip()),
     )
 
 
@@ -139,6 +143,13 @@ async def classify_query(
     tenant = config.get_tenant()
     if _is_other_followup(question, memory):
         return QueryIntent(mode="compare")
+    if memory and memory.get("record_ids") and _SUMMARY_QUERY_RE.search(question):
+        return QueryIntent(
+            mode="summarize",
+            month=memory.get("month"),
+            record_ids=tuple(str(value) for value in memory.get("record_ids", [])),
+            broad=True,
+        )
     if _month_from_text(question) and is_broad_query(question):
         return _fallback_intent(question, records)
     if not tenant.llm_api_key or not records or not llm_usage.within_daily_limit(usage_key):
@@ -150,10 +161,15 @@ async def classify_query(
             {
                 "role": "system",
                 "content": (
-                    "你是課程資料檢索路由器。只依據課程目錄選出相關 page_id，"
-                    "不要回答問題。回傳 JSON：mode、month、record_ids、terms、attachment_names。"
-                    "mode 可用 month_overview、course_question、transcript_search、"
-                    "task_lookup、compare。record_ids 和 attachment_names 必須來自目錄；找不到就空陣列。"
+                    "你是開放式課程資料檢索路由器。使用者可以用任何自然語句提問。"
+                    "先判斷任務，再只依據課程目錄選出需要的 page_id，不要直接回答問題。"
+                    "回傳 JSON：mode、month、record_ids、terms、attachment_names、broad。"
+                    "mode 可用 month_overview、summarize、explain、transcript_search、"
+                    "task_lookup、compare、action_plan、practice、course_question。"
+                    "明確指定月份、課程、老師、關鍵字或附件時縮小範圍；"
+                    "延續問題優先沿用上一輪；需要跨課整理時 broad=true。"
+                    "record_ids 和 attachment_names 必須來自目錄。資料可能不足時仍選最相關紀錄，"
+                    "讓回答階段根據證據說明不足，不要因為問法不在範例中就拒絕。"
                 ),
             },
             {
@@ -194,18 +210,22 @@ async def classify_query(
             if str(value) in valid_attachment_names
         )
         mode = str(data.get("mode", "course_question"))
-        if mode not in {"month_overview", "course_question", "transcript_search", "task_lookup", "compare"}:
+        if mode not in {
+            "month_overview", "summarize", "explain", "transcript_search",
+            "task_lookup", "compare", "action_plan", "practice", "course_question",
+        }:
             mode = "course_question"
         month = data.get("month") or _month_from_text(question)
         if month and not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", str(month)):
             month = _month_from_text(question)
+        broad = bool(data.get("broad")) or is_broad_query(question) or not record_ids
         return QueryIntent(
             mode=mode,
             month=month,
             record_ids=record_ids,
             terms=tuple(str(value) for value in data.get("terms", [])[:8]),
             attachment_names=attachment_names,
-            broad=is_broad_query(question),
+            broad=broad,
         )
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
         return _fallback_intent(question, records)

@@ -52,6 +52,8 @@ def test_course_assistant_skill_is_loaded():
 
     assert "檢索優先順序" in skill
     assert "Date" in skill
+    assert "開放式問題" in skill
+    assert "沿用上一輪" in skill
 
 
 def test_month_overview_is_generated_without_llm_and_includes_sources():
