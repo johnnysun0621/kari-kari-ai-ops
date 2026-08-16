@@ -347,7 +347,7 @@ class CourseQACog(commands.Cog):
                 if catalog:
                     await thread.send(catalog)
 
-            waiting = await thread.send("⏳ 我正在整理你的課程紀錄，請稍候……")
+            waiting = await thread.send("⏳ 請稍等一下喔，我看看……")
             answer = await self._answer_for_user(message.author, question)
             chunks = _split_discord_message(answer)
             artist = await repositories.find_artist_by_discord_id(message.author.id)
