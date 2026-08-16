@@ -118,7 +118,6 @@ cogs/
   submissions.py          # /我的任務內的提交操作 + /審核提交
   bulletin.py             # /布告欄同步 + Notion 公告背景同步
   course_qa.py            # 課程助教頻道自然對話
-  operations_qa.py        # /營運查詢（控方限定）
   server_setup.py         # /伺服器初始化（角色、頻道、env 清單）
   reminders.py            # 月度時間池、排課 SLA、任務與審核提醒
 tests/                    # 純函式、互動邏輯、資料層測試

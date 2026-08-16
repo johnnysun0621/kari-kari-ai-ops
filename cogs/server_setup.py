@@ -62,7 +62,6 @@ def command_channel_groups() -> dict[str, tuple[str, bool]]:
         "任務總覽": ("營運操作", True),
         "任務通知重送": ("營運操作", True),
         "審核提交": ("營運操作", True),
-        "營運查詢": ("營運操作", True),
         "布告欄同步": ("營運操作", True),
         "伺服器初始化": ("營運操作", True),
     }

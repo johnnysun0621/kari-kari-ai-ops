@@ -44,7 +44,6 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - `cogs.submissions`
 - `cogs.reminders`
 - `cogs.course_qa`
-- `cogs.operations_qa`
 - `cogs.server_setup`
 
 ## 設定層
@@ -183,10 +182,6 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - 使用 OpenAI `gpt-5.6-luna` 的 `/v1/chat/completions`。LongCat 明確禁止使用；URL 或模型名稱命中 LongCat 時，系統會在發出請求前拒絕。回應解析相容文字、content list、`choices[].text` 與 `output_text`。
 - HTTP 200 但正式內容空白或格式不完整時視為失敗並重試，不會把 reasoning content 當成藝人回答。
 - 回答附問題回報入口；只把使用者主動填寫的回報寫入 Notion 布告欄。
-
-### `cogs/operations_qa.py`
-
-控方限定的 `/營運查詢`，只允許在營運內部通知頻道執行。讀取 Tasks、Projects、課程／會議摘要與 Submissions 審核回饋，不修改 Notion。
 
 ## Services
 

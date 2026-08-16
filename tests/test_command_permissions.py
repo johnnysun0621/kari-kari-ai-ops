@@ -10,7 +10,6 @@ from cogs.bulletin import BulletinCog
 from cogs.scheduling_artist import SchedulingArtistCog
 from cogs.scheduling_admin import SchedulingAdminCog
 from cogs.tasks_artist import TasksCog
-from cogs.operations_qa import OperationsQACog
 from cogs.server_setup import ServerSetupCog
 from cogs.submissions import SubmissionsCog
 from cogs.course_qa import CourseQACog
@@ -20,7 +19,6 @@ ADMIN_COMMANDS = [
     SchedulingAdminCog.create_availability_collection,
     SchedulingAdminCog.match_availability_pool,
     TasksCog.task_overview,
-    OperationsQACog.operations_query,
     ServerSetupCog.initialize_server,
 ]
 
@@ -59,7 +57,7 @@ def test_duplicate_artist_commands_are_removed():
     assert not hasattr(CourseQACog, "course_question")
 
 
-def test_registered_cogs_expose_exactly_ten_slash_commands():
+def test_registered_cogs_expose_exactly_nine_slash_commands():
     cog_classes = (
         SchedulingAdminCog,
         SchedulingArtistCog,
@@ -67,7 +65,6 @@ def test_registered_cogs_expose_exactly_ten_slash_commands():
         SubmissionsCog,
         BulletinCog,
         CourseQACog,
-        OperationsQACog,
         ServerSetupCog,
     )
     names = {
@@ -82,7 +79,6 @@ def test_registered_cogs_expose_exactly_ten_slash_commands():
         "我的任務",
         "任務總覽",
         "任務通知重送",
-        "營運查詢",
         "時間資訊蒐集",
         "從時間池建立任務",
         "管理可配合時間",

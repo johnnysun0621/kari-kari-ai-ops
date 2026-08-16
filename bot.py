@@ -23,7 +23,6 @@ EXTENSIONS = [
     "cogs.submissions",
     "cogs.bulletin",
     "cogs.course_qa",
-    "cogs.operations_qa",
     "cogs.server_setup",
     "cogs.reminders",
 ]

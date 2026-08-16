@@ -22,7 +22,7 @@
 | 2026-07-24 | 審核與修改不能無限等待 | 審核 24h；需修改／退回後建立修改期限並提醒 | 審核 SLA | Tasks、Submissions、Audit | DM＋控方提醒 | review deadline tests | 已完成 |
 | 2026-07-24 | 回饋可含文字、批改檔、Drive | 保留三種與不需批改檔；移除截圖佐證 | 審核回饋 | Submissions、Drive | 審核 action UI | review feedback tests | 已完成 |
 | 2026-07-24 | TimeTree 既有習慣 | 無 API，控方人工補登；Notion 是正式資料 | 營運 SOP | Tasks | 無自動指令 | 人工驗收 | 已決策 |
-| 2026-07-24 | AI 成本與錯誤可治理 | 系統＋個人每日 token 護欄可設定；KariKari 目前 `0`＝不限額，仍記錄使用量；使用回饋進布告欄 | AI governance | Course Meetings、Bulletin | 回報問題／`/營運查詢` | LLM usage / feedback tests | 已完成 |
+| 2026-07-24 | AI 成本與錯誤可治理 | 系統＋個人每日 token 護欄可設定；KariKari 目前 `0`＝不限額，仍記錄使用量；使用回饋進布告欄 | AI governance | Course Meetings、Bulletin | 課程助教回報問題 | LLM usage / feedback tests | 已完成 |
 | 2026-07-24 | 正式伺服器可移轉 | 初始化角色與五用途頻道；ID 回填 env | Server setup | 無 schema 變更 | `/伺服器初始化` | server setup tests | 已完成，待目標伺服器真機 |
 
 ## 需求來源
