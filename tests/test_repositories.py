@@ -321,6 +321,7 @@ class TestFinalizedSchemaMapping:
                 "任務類型": {"select": {"name": "課程與作業"}},
                 "課程類別": {"select": {"name": "歌唱課"}},
                 "課程與會議記錄": {"relation": [{"id": "meeting-1"}]},
+                "提交期限": {"date": {"start": "2026-08-20T23:59:00+08:00"}},
             },
         }
 
@@ -328,6 +329,26 @@ class TestFinalizedSchemaMapping:
 
         assert item.course_category == "歌唱課"
         assert item.course_meeting_page_ids == ["meeting-1"]
+        assert item.submission_deadline == datetime(2026, 8, 20, 23, 59, tzinfo=config.TZ)
+        assert item.submission_deadline_has_time is True
+
+    def test_resubmission_clears_revision_deadline(self, monkeypatch):
+        calls = []
+
+        async def fake_update_page(page_id, properties):
+            calls.append((page_id, properties))
+
+        monkeypatch.setattr(repositories.notion_api, "update_page", fake_update_page)
+
+        asyncio.run(repositories.set_task_under_review("task-1", "https://notion.so/submission"))
+
+        assert calls == [
+            ("task-1", {
+                "任務狀態": {"select": {"name": "待審核"}},
+                "最新提交 URL": {"url": "https://notion.so/submission"},
+            }),
+            ("task-1", {"修改期限": {"date": None}}),
+        ]
 
     def test_teacher_options_include_teachers_and_company_members(self, monkeypatch):
         import asyncio
@@ -934,6 +955,33 @@ NOW = datetime(2026, 7, 8, 12, 0, tzinfo=config.TZ)
 
 
 class TestTaskDeadlines:
+    def test_open_submission_prefers_submission_deadline_over_course_end(self):
+        task = display_task(
+            end=datetime(2026, 7, 8, 13, 0, tzinfo=config.TZ),
+            end_has_time=True,
+        )
+        task.open_for_submission = True
+        task.submission_deadline = datetime(2026, 7, 10, 23, 59, tzinfo=config.TZ)
+        task.submission_deadline_has_time = True
+
+        deadline, has_time = repositories.task_action_deadline(task)
+
+        assert deadline == datetime(2026, 7, 10, 23, 59, tzinfo=config.TZ)
+        assert has_time is True
+        assert repositories.task_deadline_passed(task, NOW) is False
+
+    def test_needs_fix_uses_revision_flow_instead_of_submission_deadline(self):
+        task = display_task(
+            status="需修改",
+            end=datetime(2026, 7, 1, tzinfo=config.TZ),
+        )
+        task.open_for_submission = True
+        task.submission_deadline = datetime(2026, 7, 2, tzinfo=config.TZ)
+
+        assert repositories.task_action_deadline(task) == (None, False)
+        assert repositories.task_deadline_passed(task, NOW) is False
+        assert repositories.compute_due_reminder_stages(task, NOW) == []
+
     def test_date_only_deadline_valid_through_the_day(self):
         t = display_task(end=datetime(2026, 7, 8, 0, 0, tzinfo=config.TZ), end_has_time=False)
         assert repositories.task_deadline_passed(t, NOW) is False

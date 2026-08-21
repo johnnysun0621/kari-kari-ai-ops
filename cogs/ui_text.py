@@ -14,14 +14,20 @@ def trim_message(text: str, limit: int = DISCORD_MESSAGE_LIMIT) -> str:
 
 def deadline_text(task: repositories.TaskItem, now: datetime) -> str:
     """任務截止的人話描述：截止 7/15（剩 3 天）／（今天）／（已過 2 天）。"""
-    if not task.end:
+    is_revision = task.status == "需修改" and task.revision_deadline is not None
+    if is_revision:
+        deadline, has_time = task.revision_deadline, True
+    else:
+        deadline, has_time = repositories.task_action_deadline(task)
+    if not deadline:
         return "無截止日"
-    day_diff = (task.end.date() - now.date()).days
-    date_text = f"{task.end.month}/{task.end.day}"
-    if task.end_has_time:
-        date_text += task.end.strftime(" %H:%M")
+    day_diff = (deadline.date() - now.date()).days
+    date_text = f"{deadline.month}/{deadline.day}"
+    if has_time:
+        date_text += deadline.strftime(" %H:%M")
+    prefix = "修改期限" if is_revision else "截止"
     if day_diff < 0:
-        return f"截止 {date_text}（已過 {-day_diff} 天）"
+        return f"{prefix} {date_text}（已過 {-day_diff} 天）"
     if day_diff == 0:
-        return f"截止 {date_text}（今天）"
-    return f"截止 {date_text}（剩 {day_diff} 天）"
+        return f"{prefix} {date_text}（今天）"
+    return f"{prefix} {date_text}（剩 {day_diff} 天）"

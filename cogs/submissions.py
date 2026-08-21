@@ -1337,7 +1337,12 @@ class SubmissionsCog(commands.Cog):
             )
             return
         now = datetime.now(config.get_tenant().tz)
-        submittable.sort(key=lambda task: (task.end is None, task.end or now))
+        submittable.sort(
+            key=lambda task: (
+                repositories.task_action_deadline(task)[0] is None,
+                repositories.task_action_deadline(task)[0] or now,
+            )
+        )
         await interaction.edit_original_response(
             content=submit_task_intro_text(artist.name, submittable, now),
             view=SubmitTaskView(self, submittable, now),

@@ -28,13 +28,14 @@ LEGACY_CHANNEL_NAMES: dict[str, tuple[str, ...]] = {
     # was introduced. Keep their history and IDs instead of creating duplicates.
     "任務查詢入口": ("任務專用",),
     "營運內部通知": ("營運內部專用", "營運內部"),
+    "時間管理": ("時間資訊彙整",),
 }
 
 
 def channel_specs() -> tuple[ChannelSpec, ...]:
     return (
         ChannelSpec("公告區", "ANNOUNCE_CHANNEL_ID", "公開類型 Task、時間收集與 Notion 布告欄", read_only=True),
-        ChannelSpec("時間資訊彙整", "SCHEDULE_CHANNEL_ID", "藝人月度可配合時間回報與管理"),
+        ChannelSpec("時間管理", "SCHEDULE_CHANNEL_ID", "藝人月度可配合時間回報與管理"),
         ChannelSpec("任務查詢入口", "TASK_CHANNEL_ID", "藝人查詢任務與提交作業"),
         ChannelSpec("課程助教", "AI_CHANNEL_ID", "藝人私人課程 AI 問答"),
         ChannelSpec("營運內部通知", "ADMIN_NOTIFY_CHANNEL_ID", "Bot 自動推送任務、審核、排課與 SLA 通知", admin_only=True),
@@ -55,8 +56,8 @@ def env_summary(guild_id: int, admin_role_id: int, channel_ids: dict[str, int]) 
 def command_channel_groups() -> dict[str, tuple[str, bool]]:
     """Return command name -> (channel name, requires 控方 role)."""
     return {
-        "時間資訊蒐集": ("時間資訊彙整", True),
-        "管理可配合時間": ("時間資訊彙整", False),
+        "時間資訊蒐集": ("營運操作", True),
+        "管理可配合時間": ("時間管理", False),
         "我的任務": ("任務查詢入口", False),
         "從時間池建立任務": ("營運操作", True),
         "任務總覽": ("營運操作", True),
@@ -226,6 +227,10 @@ async def initialize_guild(guild: discord.Guild, bot_member: discord.Member) -> 
             channel = discord.utils.get(guild.text_channels, name="營運內部")
             if channel is not None:
                 await channel.edit(name=spec.name, reason=reason)
+        if channel is not None and channel.name != spec.name:
+            # Configured IDs are authoritative. Rename legacy channels in place so
+            # migration keeps the channel history and does not create duplicates.
+            await channel.edit(name=spec.name, reason=reason)
         overwrites = _overwrites(guild, admin_role, artist_role, bot_member, spec)
         if channel is None:
             channel = await guild.create_text_channel(

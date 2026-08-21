@@ -65,7 +65,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 重要原則：
 
 - 頻道名稱代表用途，ID 可替換。
-- `SCHEDULE_CHANNEL_ID` 是「時間資訊彙整」用途，不是 KariKari 永久 ID。
+- `SCHEDULE_CHANNEL_ID` 是「時間管理」用途，不是 KariKari 永久 ID。
 - `TASK_CHANNEL_ID` 是「任務查詢入口」用途，不是 KariKari 永久 ID。
 - 未來要平轉時，先改 `.env`，不要改核心流程。
 

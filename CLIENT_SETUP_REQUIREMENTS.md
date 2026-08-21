@@ -22,7 +22,7 @@
 2. 暫時授予初始化所需的管理頻道、管理身分組與管理應用程式指令權限。
 3. 執行 `/伺服器初始化`。
 
-Discord 頻道會依固定用途建立：公告區、時間資訊彙整、任務查詢入口、課程助教、營運內部通知、營運操作。詳細規則見 [SERVER_MIGRATION.md](SERVER_MIGRATION.md)。
+Discord 頻道會依固定用途建立：公告區、時間管理、任務查詢入口、課程助教、營運內部通知、營運操作。詳細規則見 [SERVER_MIGRATION.md](SERVER_MIGRATION.md)。
 
 ## 2. Notion 工作區
 

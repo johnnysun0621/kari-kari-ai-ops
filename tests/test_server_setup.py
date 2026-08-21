@@ -8,7 +8,7 @@ def test_channel_specs_cover_required_operational_areas():
 
     assert {item.name for item in specs} == {
         "公告區",
-        "時間資訊彙整",
+        "時間管理",
         "任務查詢入口",
         "課程助教",
         "營運內部通知",
@@ -24,7 +24,7 @@ def test_env_summary_uses_created_resource_ids():
         admin_role_id=2,
         channel_ids={
             "公告區": 10,
-            "時間資訊彙整": 11,
+            "時間管理": 11,
             "任務查詢入口": 12,
             "課程助教": 13,
             "營運內部通知": 14,
@@ -46,8 +46,8 @@ def test_env_summary_uses_created_resource_ids():
 def test_command_channel_groups_cover_each_slash_command():
     groups = server_setup.command_channel_groups()
 
-    assert groups["時間資訊蒐集"] == ("時間資訊彙整", True)
-    assert groups["管理可配合時間"] == ("時間資訊彙整", False)
+    assert groups["時間資訊蒐集"] == ("營運操作", True)
+    assert groups["管理可配合時間"] == ("時間管理", False)
     assert groups["我的任務"] == ("任務查詢入口", False)
     assert groups["從時間池建立任務"] == ("營運操作", True)
     assert groups["伺服器初始化"] == ("營運操作", True)
@@ -102,7 +102,7 @@ def test_operational_channels_are_hidden_from_unassigned_members():
     admin = object()
     bot_member = object()
     guild = SimpleNamespace(default_role=everyone)
-    spec = next(item for item in server_setup.channel_specs() if item.name == "時間資訊彙整")
+    spec = next(item for item in server_setup.channel_specs() if item.name == "時間管理")
 
     overwrites = server_setup._overwrites(guild, admin, artist, bot_member, spec)
 

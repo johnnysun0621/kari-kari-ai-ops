@@ -89,6 +89,10 @@ def test_missing_submit_method_shows_task_description_instead_of_placeholder():
 def test_assignment_notification_requires_open_submission_and_has_assignment_copy():
     task = make_task(submit_method="Drive 連結")
     task.description = "請上傳課後練習錄影。"
+    task.end = datetime(2026, 8, 14, 15, 30, tzinfo=config.TZ)
+    task.end_has_time = True
+    task.submission_deadline = datetime(2026, 8, 20, 23, 59, tzinfo=config.TZ)
+    task.submission_deadline_has_time = True
 
     assert not task_notifications.is_assignment_dispatchable(task)
     task.open_for_submission = True
@@ -97,6 +101,8 @@ def test_assignment_notification_requires_open_submission_and_has_assignment_cop
     assert "課後作業通知" in message
     assert "請上傳課後練習錄影。" in message
     assert "Drive 連結" in message
+    assert "截止：08/20 23:59" in message
+    assert "08/14 15:30" not in message
 
 
 def test_assignment_notification_state_survives_round_trip(tmp_path):

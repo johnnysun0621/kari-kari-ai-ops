@@ -1001,7 +1001,7 @@ class SchedulingAdminCog(commands.Cog):
         截止天數: app_commands.Range[int, 1, 30] = 1,
         說明: str = "",
     ):
-        if not await channel_guard.ensure_schedule_channel(interaction):
+        if not await channel_guard.ensure_admin_channel(interaction):
             return
         # 先立即確認 Discord interaction，後續 Notion、公告與 DM 操作完成後
         # 直接更新同一則回覆，避免長流程超過 Discord 的初始回應期限。

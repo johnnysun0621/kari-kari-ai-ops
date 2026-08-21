@@ -695,6 +695,8 @@ class TaskItem:
     # 任務派發通知／收件確認
     discord_notified_at: datetime | None = None
     discord_acknowledged_at: datetime | None = None
+    submission_deadline: datetime | None = None
+    submission_deadline_has_time: bool = False
     revision_deadline: datetime | None = None
 
 
@@ -769,6 +771,7 @@ def _to_project(page: dict) -> ProjectItem:
 def _to_task(page: dict) -> TaskItem:
     start = _read_date_value(page, "開始日")
     end = _read_date_value(page, "截止日")
+    submission_deadline = _read_date_value(page, "提交期限")
     created_at_raw = page.get("created_time")
     created_at = None
     if created_at_raw:
@@ -803,6 +806,8 @@ def _to_task(page: dict) -> TaskItem:
         created_at=created_at,
         discord_notified_at=_read_date_start(page, "Discord 通知時間"),
         discord_acknowledged_at=_read_date_start(page, "Discord 收到時間"),
+        submission_deadline=submission_deadline.value,
+        submission_deadline_has_time=submission_deadline.has_time,
         revision_deadline=_read_date_start(page, "修改期限"),
     )
 
@@ -1133,19 +1138,30 @@ async def get_all_tasks() -> list[TaskItem]:
     return [_to_task(page) for page in pages if not page.get("archived")]
 
 
+def task_action_deadline(task: TaskItem) -> tuple[datetime | None, bool]:
+    """回傳目前要追蹤的期限；課程時間與作業／修改期限不可混用。"""
+    if task.status == "需修改":
+        return None, False
+    if task.open_for_submission and task.submission_deadline:
+        return task.submission_deadline, task.submission_deadline_has_time
+    return task.end, task.end_has_time
+
+
 def task_deadline_passed(task: TaskItem, now: datetime) -> bool:
-    """截止日是否已過。date-only 截止視為當天整天有效，隔天才算逾期。"""
-    if not task.end:
+    """目前動作期限是否已過；date-only 期限視為當天整天有效。"""
+    deadline, has_time = task_action_deadline(task)
+    if not deadline:
         return False
-    if task.end_has_time:
-        return task.end < now
-    return now.date() > task.end.date()
+    if has_time:
+        return deadline < now
+    return now.date() > deadline.date()
 
 
 def task_due_within(task: TaskItem, now: datetime, days: int = TASK_DUE_SOON_DAYS) -> bool:
-    if not task.end or task_deadline_passed(task, now):
+    deadline, _ = task_action_deadline(task)
+    if not deadline or task_deadline_passed(task, now):
         return False
-    return (task.end.date() - now.date()).days <= days
+    return (deadline.date() - now.date()).days <= days
 
 
 def classify_tasks_for_display(tasks: list[TaskItem], now: datetime) -> dict[str, list[TaskItem]]:
@@ -1172,7 +1188,8 @@ def classify_tasks_for_display(tasks: list[TaskItem], now: datetime) -> dict[str
             buckets["open"].append(task)
 
     def _sort_key(t: TaskItem):
-        return (t.end is None, t.end or now)
+        deadline, _ = task_action_deadline(t)
+        return (deadline is None, deadline or now)
 
     for items in buckets.values():
         items.sort(key=_sort_key)
@@ -1194,11 +1211,12 @@ def compute_due_reminder_stages(task: TaskItem, now: datetime) -> list[str]:
     - 「逾期」不看規則、一律觸發（Kickoff：逾期需提醒或升級處理），
       公司沒勾規則的任務也不會默默爛掉。
     """
-    if task.status in INACTIVE_TASK_STATUSES or not task.end:
+    deadline, _ = task_action_deadline(task)
+    if task.status in INACTIVE_TASK_STATUSES or not deadline:
         return []
     if task_deadline_passed(task, now):
         return [OVERDUE_STAGE]
-    days_left = (task.end.date() - now.date()).days
+    days_left = (deadline.date() - now.date()).days
     return [
         rule for rule, days in REMINDER_RULE_DAYS.items()
         if rule in task.reminder_rules and days_left <= days
@@ -1514,10 +1532,13 @@ async def mark_previous_submissions_not_latest(task_page_id: str) -> int:
 
 async def set_task_under_review(task_page_id: str, latest_url: str) -> None:
     """提交完成：任務轉待審核並記最新提交 URL。"""
-    props: dict = {"任務狀態": _select("待審核")}
+    props: dict = {
+        "任務狀態": _select("待審核"),
+    }
     if latest_url:
         props["最新提交 URL"] = _url(latest_url)
     await notion_api.update_page(task_page_id, props)
+    await set_task_revision_deadline(task_page_id, None)
 
 
 async def set_task_revision_deadline(

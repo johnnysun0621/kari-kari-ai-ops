@@ -43,7 +43,7 @@ def announce_channel_id() -> int:
     """公告發送目標：公開類型 Task 與收集/排課公告。
 
     有設定 ANNOUNCE_CHANNEL_ID 就發公告區（唯讀頻道也能點按鈕）；
-    未設定時 fallback 回時間資訊彙整（SCHEDULE_CHANNEL_ID），行為與舊版相同。
+    未設定時 fallback 回時間管理（SCHEDULE_CHANNEL_ID），行為與舊版相同。
 
     刻意讀模組別名而非 config.get_tenant()：TenantConfig 是 frozen dataclass，
     測試無法 monkeypatch 它的欄位，可變的模組別名才是測試會換值的介面
@@ -54,7 +54,7 @@ def announce_channel_id() -> int:
 
 
 def is_schedule_channel(channel_id: int | None) -> bool:
-    """時間池 / 排課指令：有設定 SCHEDULE_CHANNEL_ID 時，只允許在時間資訊彙整使用。"""
+    """藝人時間管理指令：有設定 SCHEDULE_CHANNEL_ID 時，只允許在時間管理使用。"""
     return _is_allowed_channel(config.SCHEDULE_CHANNEL_ID, channel_id)
 
 

@@ -57,7 +57,7 @@ Avoid adding new core logic that only works because KariKari happens to use a sp
 When this product is moved to another company, most Discord and Notion IDs will change.
 The product should rely on stable operational concepts and configurable IDs:
 
-- A `時間資訊彙整`-style channel may have a different Discord channel ID in every server.
+- A `時間管理`-style channel may have a different Discord channel ID in every server.
 - A `任務查詢入口`-style channel may have a different Discord channel ID in every server.
 - Admin roles, guild IDs, Notion data source IDs, and integration tokens are tenant-specific.
 - The code should read those values from `.env` / tenant config, not hard-code KariKari IDs.

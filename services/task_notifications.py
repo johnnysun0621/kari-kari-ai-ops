@@ -69,8 +69,16 @@ def assignment_notification_message(task: TaskItem) -> str:
     if len(description) > 900:
         description = description[:897].rstrip() + "..."
     deadline = "未設定"
-    if task.end:
-        deadline = task.end.strftime("%m/%d %H:%M" if task.end_has_time else "%m/%d")
+    assignment_deadline = task.submission_deadline
+    assignment_has_time = task.submission_deadline_has_time
+    if assignment_deadline is None and task.open_for_submission:
+        # 舊資料相容：尚未新增獨立提交期限時，暫時沿用原截止日。
+        assignment_deadline = task.end
+        assignment_has_time = task.end_has_time
+    if assignment_deadline:
+        deadline = assignment_deadline.strftime(
+            "%m/%d %H:%M" if assignment_has_time else "%m/%d"
+        )
     submit_method = task.submit_method or "請依任務說明"
     return (
         f"📚 **課後作業通知**\n"
