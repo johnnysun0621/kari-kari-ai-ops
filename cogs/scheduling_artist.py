@@ -2250,6 +2250,15 @@ def availability_overview_text(
     return _trim_discord_message("\n".join(lines))
 
 
+def deletion_confirmation_text(labels: list[str]) -> str:
+    return (
+        "🗑️ 已刪除並保存以下時段：\n"
+        + "\n".join(f"・{label}" for label in labels)
+        + "\n\n若只需要刪除，到這裡就完成了；按「完成並退出」即可。"
+        + "\n若還要增加時間，再按「新增／補填日期」。\n\n"
+    )
+
+
 class AvailabilityMonthOverviewView(InteractionDebugView):
     """跨月份總覽入口；選定月份後進入同一套管理流程。"""
 
@@ -2304,8 +2313,10 @@ class ManageAvailabilityView(InteractionDebugView):
         artist: repositories.Artist,
         slots: list[repositories.AvailabilitySlot],
         schedule_summary: str,
+        cog: "SchedulingArtistCog | None" = None,
     ):
         super().__init__()
+        self.cog = cog
         self.month = month
         self.deadline_ts = deadline_ts
         self.nature_code = nature_code
@@ -2346,17 +2357,17 @@ class ManageAvailabilityView(InteractionDebugView):
         fill_button.callback = self.open_fill_flow
         self.add_item(fill_button)
 
-        cancel_button = discord.ui.Button(
-            label="取消",
+        done_button = discord.ui.Button(
+            label="完成並退出",
             style=discord.ButtonStyle.secondary,
-            emoji="✖️",
+            emoji="✅",
         )
-        cancel_button.callback = self.cancel
-        self.add_item(cancel_button)
+        done_button.callback = self.finish
+        self.add_item(done_button)
 
-    async def cancel(self, interaction: discord.Interaction):
+    async def finish(self, interaction: discord.Interaction):
         await interaction.response.edit_message(
-            content="已取消管理可配合時間，既有資料未變更。",
+            content="✅ 已完成可配合時間管理；剛才新增或刪除的資料都已保存。",
             view=None,
         )
         self.stop()
@@ -2382,20 +2393,32 @@ class ManageAvailabilityView(InteractionDebugView):
                 discord_user_id=str(interaction.user.id),
                 target_db="Availability Slots",
                 before=f"{len(page_ids)} 筆",
-                after="（已刪除，等待重新填寫）",
+                after="（已刪除並保存）",
             )
         except Exception:
             logger.exception("管理入口刪除時段失敗")
             await interaction.followup.send("❌ 刪除失敗，請稍後再試。", ephemeral=True)
             return
 
-        # 刪除後直接接回同月份填寫頁，避免使用者必須重新尋找入口。
+        # 刪除後回到同一個管理總覽（不強制進補填流程）；只有單純想刪除的人
+        # 不需要被推去選新時段，想補填的人仍可自己按「新增／補填日期」。
+        confirm_line = deletion_confirmation_text(labels)
+        if self.cog is not None:
+            try:
+                content, view = await self.cog._month_management_payload(self.artist, self.month)
+                await interaction.edit_original_response(
+                    content=_trim_discord_message(confirm_line + content),
+                    view=view,
+                )
+                return
+            except Exception:
+                logger.exception("刪除後重新載入管理總覽失敗")
+        # cog 不可用或重新載入失敗時，退回原本行為，至少讓使用者看到刪除結果。
         view = self.fill_view(interaction.user.id)
         await interaction.edit_original_response(
             content=(
-                "🗑️ 已刪除以下時段，現在可以直接繼續補填或重填：\n"
-                + "\n".join(f"・{label}" for label in labels)
-                + "\n\n"
+                confirm_line
+                + "（總覽刷新失敗，如需補填請按「新增／補填日期」）\n\n"
                 + view.prompt()
             ),
             view=view,
@@ -2463,6 +2486,7 @@ class SchedulingArtistCog(commands.Cog):
             artist,
             current_slots,
             schedule_summary,
+            cog=self,
         )
         return content, view
 

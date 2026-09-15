@@ -1,6 +1,7 @@
 """repositories.py pure helper tests."""
 
 import asyncio
+import dataclasses
 from datetime import datetime
 
 import config
@@ -331,6 +332,55 @@ class TestFinalizedSchemaMapping:
         assert item.course_meeting_page_ids == ["meeting-1"]
         assert item.submission_deadline == datetime(2026, 8, 20, 23, 59, tzinfo=config.TZ)
         assert item.submission_deadline_has_time is True
+
+    def test_task_end_falls_back_to_start_property_embedded_range(self):
+        """截止日空白，但開始日本身是 Notion 原生日期範圍（同一屬性存 start+end）。"""
+        page = {
+            "id": "task-2",
+            "url": "",
+            "properties": {
+                "任務名稱": {"title": [{"plain_text": "聽力訓練&樂理課-260915"}]},
+                "任務狀態": {"select": {"name": "尚未開始"}},
+                "任務類型": {"select": {"name": "課程與作業"}},
+                "開始日": {
+                    "date": {
+                        "start": "2026-09-15T13:00:00.000+08:00",
+                        "end": "2026-09-15T15:00:00.000+08:00",
+                    }
+                },
+                "截止日": {"date": None},
+            },
+        }
+
+        item = repositories._to_task(page)
+
+        assert item.start == datetime(2026, 9, 15, 13, 0, tzinfo=config.TZ)
+        assert item.end == datetime(2026, 9, 15, 15, 0, tzinfo=config.TZ)
+        assert item.start_has_time is True
+        assert item.end_has_time is True
+
+    def test_task_end_prefers_explicit_end_property_over_embedded_range(self):
+        """截止日欄位本身有值時，不應該被開始日的內嵌 end 覆蓋。"""
+        page = {
+            "id": "task-3",
+            "url": "",
+            "properties": {
+                "任務名稱": {"title": [{"plain_text": "錄音"}]},
+                "任務狀態": {"select": {"name": "尚未開始"}},
+                "任務類型": {"select": {"name": "錄音"}},
+                "開始日": {
+                    "date": {
+                        "start": "2026-09-15T13:00:00.000+08:00",
+                        "end": "2026-09-15T15:00:00.000+08:00",
+                    }
+                },
+                "截止日": {"date": {"start": "2026-09-16T10:00:00.000+08:00"}},
+            },
+        }
+
+        item = repositories._to_task(page)
+
+        assert item.end == datetime(2026, 9, 16, 10, 0, tzinfo=config.TZ)
 
     def test_resubmission_clears_revision_deadline(self, monkeypatch):
         calls = []
@@ -1055,6 +1105,53 @@ class TestComputeDueReminderStages:
 
         assert repositories.compute_due_reminder_stages(t, NOW) == ["3 天前"]
 
+    def test_five_days_before_rule(self):
+        """客戶要的「截止前 5 天提醒」；沿用既有機制，只是多一個規則值。"""
+        not_yet = reminder_task(["5 天前"], datetime(2026, 7, 14, tzinfo=config.TZ))  # 剩 6 天
+        due = reminder_task(["5 天前"], datetime(2026, 7, 13, tzinfo=config.TZ))      # 剩 5 天
+
+        assert repositories.compute_due_reminder_stages(not_yet, NOW) == []
+        assert repositories.compute_due_reminder_stages(due, NOW) == ["5 天前"]
+
+    def test_multiple_rules_return_far_to_near(self):
+        """同時勾多個規則時，回傳順序由遠到近，訊息才不會倒著念。"""
+        t = reminder_task(["當天", "5 天前", "1 天前"], datetime(2026, 7, 8, tzinfo=config.TZ))
+
+        assert repositories.compute_due_reminder_stages(t, NOW) == ["5 天前", "1 天前", "當天"]
+
+    def test_empty_rules_fall_back_to_default(self):
+        """控方沒勾任何規則時，套用租戶預設（5 天前），不必逐筆維護。"""
+        not_yet = reminder_task([], datetime(2026, 7, 14, tzinfo=config.TZ))  # 剩 6 天
+        due = reminder_task([], datetime(2026, 7, 13, tzinfo=config.TZ))      # 剩 5 天
+
+        assert repositories.compute_due_reminder_stages(not_yet, NOW) == []
+        assert repositories.compute_due_reminder_stages(due, NOW) == ["5 天前"]
+
+    def test_explicit_rules_override_default_entirely(self):
+        """有勾就完全以勾選為準，預設不疊加——否則控方無法把提醒收斂成只剩當天。"""
+        t = reminder_task(["當天"], datetime(2026, 7, 13, tzinfo=config.TZ))  # 剩 5 天
+
+        assert repositories.compute_due_reminder_stages(t, NOW) == []
+
+    def test_default_rules_can_be_disabled(self):
+        """租戶把預設設成空的時候，回到「沒勾就不提醒」的舊行為。"""
+        t = reminder_task([], datetime(2026, 7, 13, tzinfo=config.TZ))
+
+        assert repositories.compute_due_reminder_stages(t, NOW, default_rules=()) == []
+
+    def test_overdue_only_rule_opts_out_of_pre_deadline_reminders(self):
+        """只勾「逾期」＝「事前別吵我，逾期再講」。
+
+        「逾期」不在 REMINDER_RULE_DAYS 裡，但它讓 reminder_rules 變成非空，
+        因而擋掉預設的「5 天前」。這是控方關閉事前提醒的唯一方式，別把它當成
+        無用選項刪掉。
+        """
+        before = reminder_task(["逾期"], datetime(2026, 7, 13, tzinfo=config.TZ))  # 剩 5 天
+        after = reminder_task(["逾期"], datetime(2026, 7, 1, tzinfo=config.TZ))    # 已逾期
+
+        assert repositories.compute_due_reminder_stages(before, NOW) == []
+        assert repositories.compute_due_reminder_stages(after, NOW) == [repositories.OVERDUE_STAGE]
+
     def test_overdue_fires_regardless_of_rules(self):
         t = reminder_task([], datetime(2026, 7, 1, tzinfo=config.TZ))
 
@@ -1075,3 +1172,102 @@ class TestReviewDeadlines:
         assert repositories.compute_revision_deadline_stage(task, NOW) == "修改期限將到"
         task.status = "進行中"
         assert repositories.compute_revision_deadline_stage(task, NOW) is None
+
+
+class TestCourseMeetingHiddenTypes:
+    """會議秘書小律：排除清單內的會議類型永遠不讀取（見 QA_HIDDEN_MEETING_TYPES）；
+    其餘類型（含未來新增的任何類型）預設開放，只靠「藝人可見」逐筆把關。"""
+
+    def test_filter_excludes_configured_hidden_types_only(self, monkeypatch):
+        captured: dict = {}
+
+        async def fake_query(data_source_id, filter_=None, sorts=None):
+            if data_source_id == config.DS_COURSE_MEETINGS:
+                captured["filter"] = filter_
+            return []
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+        fake_tenant = dataclasses.replace(
+            config.get_tenant(),
+            qa_hidden_meeting_types=("課程", "課程會議", "公司例會", "管理層會議"),
+        )
+        monkeypatch.setattr(repositories.config, "get_tenant", lambda: fake_tenant)
+
+        asyncio.run(repositories.get_course_meetings_for_artist("artist-1"))
+
+        conditions = captured["filter"]["and"]
+        assert {"property": "藝人可見", "checkbox": {"equals": True}} in conditions
+        excluded = {
+            c["select"]["does_not_equal"]
+            for c in conditions
+            if "select" in c and "does_not_equal" in c["select"]
+        }
+        assert excluded == {"課程", "課程會議", "公司例會", "管理層會議"}
+        # 沒有被寫死排除的類型（例如藝人單人會議、企劃會議，或客戶未來新增的任何類型）
+        # 不會出現在條件裡——代表它們預設放行，只靠「藝人可見」把關。
+        assert "藝人單人會議" not in excluded
+        assert "企劃會議" not in excluded
+
+    def test_empty_hidden_list_still_queries_with_visibility_check_only(self, monkeypatch):
+        calls = {"n": 0}
+        captured: dict = {}
+
+        async def fake_query(data_source_id, filter_=None, sorts=None):
+            calls["n"] += 1
+            if data_source_id == config.DS_COURSE_MEETINGS:
+                captured["filter"] = filter_
+            return []
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+        fake_tenant = dataclasses.replace(config.get_tenant(), qa_hidden_meeting_types=())
+        monkeypatch.setattr(repositories.config, "get_tenant", lambda: fake_tenant)
+
+        result = asyncio.run(repositories.get_course_meetings_for_artist("artist-1"))
+
+        assert result == []
+        assert calls["n"] > 0
+        assert captured["filter"] == {
+            "and": [{"property": "藝人可見", "checkbox": {"equals": True}}]
+        }
+
+
+class TestDynamicSelectOptions:
+    """任務類型／課程類別即時讀 Notion schema，不寫死在 Bot 裡。"""
+
+    def test_get_task_type_options_reads_live_schema(self, monkeypatch):
+        async def fake_retrieve(data_source_id):
+            assert data_source_id == config.DS_TASKS
+            return {
+                "properties": {
+                    "任務類型": {
+                        "select": {"options": [{"name": "通告"}, {"name": "課程與作業"}, {"name": " "}]}
+                    }
+                }
+            }
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_data_source", fake_retrieve)
+
+        assert asyncio.run(repositories.get_task_type_options()) == ["通告", "課程與作業"]
+
+    def test_get_course_type_options_reads_live_schema(self, monkeypatch):
+        async def fake_retrieve(data_source_id):
+            assert data_source_id == config.DS_TASKS
+            return {
+                "properties": {
+                    "課程類別": {
+                        "select": {"options": [{"name": "歌唱課"}, {"name": "編曲課"}]}
+                    }
+                }
+            }
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_data_source", fake_retrieve)
+
+        assert asyncio.run(repositories.get_course_type_options()) == ["歌唱課", "編曲課"]
+
+    def test_get_course_type_options_missing_property_returns_empty(self, monkeypatch):
+        async def fake_retrieve(data_source_id):
+            return {"properties": {}}
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_data_source", fake_retrieve)
+
+        assert asyncio.run(repositories.get_course_type_options()) == []

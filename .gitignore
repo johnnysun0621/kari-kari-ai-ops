@@ -1,4 +1,7 @@
 .env
+# .env 的備份／變體同樣含 token，一律不入庫
+.env.*
+!.env.example
 .claude/
 __pycache__/
 *.pyc

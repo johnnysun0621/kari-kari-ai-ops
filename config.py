@@ -75,7 +75,6 @@ class TenantConfig:
 
     # === 業務常數 ===
     tz: ZoneInfo
-    course_types: tuple[str, ...]
     # 這些 Task 類型除了私訊藝人，也會發到公告頻道。
     public_task_types: tuple[str, ...]
     # SLA：排課需求建立後 N 小時內要完成發布通告
@@ -83,6 +82,12 @@ class TenantConfig:
     sla_hard_limit_hours: int
     # 填寫截止前幾小時開始催收
     remind_before_deadline_hours: int
+    # Tasks 沒有勾任何「提醒規則」時套用的預設規則；留空＝不提醒（維持舊行為）
+    default_reminder_rules: tuple[str, ...]
+    # 藝人未按「收到任務」時的重送間隔（小時）
+    task_ack_reminder_hours: float
+    # 提供 Drive 資料夾後，等待藝人上傳的有效期（分鐘）
+    file_upload_wait_minutes: int
     # 背景提醒 loop 間隔（分鐘）
     reminder_interval_minutes: float
     # 待審核提交的持續提醒間隔（小時）
@@ -98,18 +103,20 @@ class TenantConfig:
     # 總資料夾 ID（底下放各藝人專區）；空字串＝Drive 歸檔未啟用
     drive_root_folder_id: str = ""
 
-    # === 課程 AI 助教（可選，未設定＝功能停用）===
+    # === 會議秘書小律（可選，未設定 LLM_API_KEY＝功能停用）===
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-5.6-luna"
     llm_max_tokens: int = 800
     llm_daily_token_limit: int = 0
     llm_per_artist_daily_token_limit: int = 0
+    # 排除清單：這些「會議類型」永遠不會被小律讀取，即使藝人可見=true。
+    # 課程／課程會議已改用其他管道處理；公司例會、管理層會議是內部限定，不開放討論空間。
+    # 其餘類型（含客戶之後在 Notion 新增的任何新類型）預設開放，只靠「藝人可見」逐筆把關，
+    # 不需要客戶為了新增會議類型另外維護這份清單。
+    qa_hidden_meeting_types: tuple[str, ...] = ("課程", "課程會議", "公司例會", "管理層會議")
 
-    # === 老師外部確認連結（Phase 2）===
-    # secret 未設定＝功能停用；base_url＝Tunnel 對外網址（開發期用 trycloudflare）
-    teacher_link_secret: str = ""
-    teacher_link_base_url: str = ""
+    # === 本機 web 服務（只服務 Discord OAuth 回呼，不需要對外網域）===
     web_port: int = 8787
 
     @property
@@ -127,7 +134,7 @@ def _load_karikari_from_env() -> TenantConfig:
     schedule_channel_id = _env_int("SCHEDULE_CHANNEL_ID")
     admin_notify_channel_id = _env_int("ADMIN_NOTIFY_CHANNEL_ID", schedule_channel_id)
     return TenantConfig(
-        name="KariKari",
+        name="LURASUPA",
         discord_token=os.getenv("DISCORD_TOKEN", ""),
         discord_client_id=os.getenv("DISCORD_CLIENT_ID", ""),
         discord_client_secret=os.getenv("DISCORD_CLIENT_SECRET", ""),
@@ -156,19 +163,22 @@ def _load_karikari_from_env() -> TenantConfig:
         ds_bulletin=os.getenv("NOTION_DS_BULLETIN", "d605806f-097b-823e-ac69-07fa536ba05f"),
         ds_course_meetings=os.getenv("NOTION_DS_COURSE_MEETINGS", "0a95806f-097b-8368-bb02-8705bdfa744b"),
         tz=ZoneInfo("Asia/Taipei"),
-        # 課程類型（與 Tasks.課程類別 select 選項一致）
-        course_types=(
-            "歌唱課", "編曲課", "樂理課", "表演藝術課",
-            "舞蹈課", "音樂製作課", "聽力訓練課",
-        ),
         public_task_types=tuple(
             value.strip()
-            for value in os.getenv("PUBLIC_TASK_TYPES", "通告,演出,拍攝").split(",")
+            # 值必須是 Notion「任務類型」既有選項；「拍攝」不是，寫了也永遠不命中
+            for value in os.getenv("PUBLIC_TASK_TYPES", "通告,演出").split(",")
             if value.strip()
         ),
         sla_hours=48,
         sla_hard_limit_hours=72,
-        remind_before_deadline_hours=6,
+        remind_before_deadline_hours=_env_float("REMIND_BEFORE_DEADLINE_HOURS", 6),
+        task_ack_reminder_hours=_env_float("TASK_ACK_REMINDER_HOURS", 12),
+        file_upload_wait_minutes=_env_int("FILE_UPLOAD_WAIT_MINUTES", 180),
+        default_reminder_rules=tuple(
+            value.strip()
+            for value in os.getenv("DEFAULT_REMINDER_RULES", "5 天前").split(",")
+            if value.strip()
+        ),
         reminder_interval_minutes=_env_float("REMINDER_INTERVAL_MINUTES", 30),
         review_reminder_interval_hours=_env_float("REVIEW_REMINDER_INTERVAL_HOURS", 12),
         review_reminder_after_hours=_env_float("REVIEW_REMINDER_AFTER_HOURS", 24),
@@ -181,8 +191,13 @@ def _load_karikari_from_env() -> TenantConfig:
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 800),
         llm_daily_token_limit=_env_int("LLM_DAILY_TOKEN_LIMIT", 0),
         llm_per_artist_daily_token_limit=_env_int("LLM_PER_ARTIST_DAILY_TOKEN_LIMIT", 0),
-        teacher_link_secret=os.getenv("TEACHER_LINK_SECRET", ""),
-        teacher_link_base_url=os.getenv("TEACHER_LINK_BASE_URL", ""),
+        qa_hidden_meeting_types=tuple(
+            value.strip()
+            for value in os.getenv(
+                "QA_HIDDEN_MEETING_TYPES", "課程,課程會議,公司例會,管理層會議"
+            ).split(",")
+            if value.strip()
+        ),
         web_port=_env_int("WEB_PORT", 8787),
     )
 
@@ -226,7 +241,6 @@ DS_COURSE_MEETINGS = TENANT.ds_course_meetings
 
 # === 業務常數 ===
 TZ = TENANT.tz
-COURSE_TYPES = list(TENANT.course_types)
 PUBLIC_TASK_TYPES = list(TENANT.public_task_types)
 SLA_HOURS = TENANT.sla_hours
 SLA_HARD_LIMIT_HOURS = TENANT.sla_hard_limit_hours

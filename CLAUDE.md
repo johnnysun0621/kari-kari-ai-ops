@@ -5,18 +5,44 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 
 ## 文件地圖（先讀這些再動手）
 
+**根目錄**（入口，很少變動）：
+
 | 文件 | 內容 |
 |---|---|
-| [DELIVERY_PLAN.md](DELIVERY_PLAN.md) | **v1.0 交付衝刺執行中（D0-D8）——接手先做這裡的下一個未勾項** |
-| [HANDOFF.md](HANDOFF.md) | AI／工程師協作者接手規則、改檔對照、測試要求 |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 程式模組責任、資料邊界、平轉狀態 |
-| [TESTING.md](TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
-| [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Google Drive 資料夾、審核通知 |
-| [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔 OAuth 設定教學（含平轉重跑流程） |
-| [ROADMAP.md](ROADMAP.md) | **進度總表＋下一步**＋進度日誌＋待 Johnny 提供事項——接手先看這裡 |
-| [RESEARCH.md](RESEARCH.md) | 需求研究：Kickoff 時期資料庫盤點、Gap 分析、決策收斂紀錄 |
-| [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則（多租戶平展化、資料安全）——Johnny 親寫，架構決策的最高依據 |
 | [README.md](README.md) | 專案入口、安裝、.env 設定、常用文件 |
+
+**`docs/foundation/`**（架構基礎，很少變動）：
+
+| 文件 | 內容 |
+|---|---|
+| [HANDOFF.md](docs/foundation/HANDOFF.md) | AI／工程師協作者接手規則、改檔對照、測試要求 |
+| [ARCHITECTURE.md](docs/foundation/ARCHITECTURE.md) | 程式模組責任、資料邊界、平轉狀態 |
+| [PROJECT_PRINCIPLES.md](docs/foundation/PROJECT_PRINCIPLES.md) | 產品原則（多租戶平展化、資料安全）——Johnny 親寫，架構決策的最高依據 |
+| [NOTION_SCHEMA.md](docs/foundation/NOTION_SCHEMA.md) | Notion 資料庫交互邏輯 |
+| [FLOWCHART.md](docs/foundation/FLOWCHART.md) | Mermaid 主流程圖與資料庫責任分界 |
+
+**`docs/sop/`**（給控方與藝人的操作手冊，改行為要同步更新）：
+
+| 文件 | 內容 |
+|---|---|
+| [ADMIN_SOP.md](docs/sop/ADMIN_SOP.md) | 控方操作順序＋Notion 任務欄位對照表 |
+| [ARTIST_SOP.md](docs/sop/ARTIST_SOP.md) | 藝人四件事：回報時間、確認任務、交作業、問小律 |
+
+**`docs/operations/`**（描述系統目前實際行為，改功能要同步更新）：
+
+| 文件 | 內容 |
+|---|---|
+| [TESTING.md](docs/operations/TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
+| [SUBMISSION_FLOW.md](docs/operations/SUBMISSION_FLOW.md) | 任務提交方式、Google Drive 資料夾、審核通知 |
+| [DRIVE_OAUTH_SETUP.md](docs/operations/DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔 OAuth 設定教學（含平轉重跑流程） |
+
+**`docs/history/`**（決策當下的規劃紀錄，凍結不回頭改）：
+
+| 文件 | 內容 |
+|---|---|
+| [DELIVERY_PLAN.md](docs/history/DELIVERY_PLAN.md) | **v1.0 交付衝刺執行中（D0-D8）——接手先做這裡的下一個未勾項** |
+| [ROADMAP.md](docs/history/ROADMAP.md) | **進度總表＋下一步**＋進度日誌＋待 Johnny 提供事項——接手先看這裡 |
+| [RESEARCH.md](docs/history/RESEARCH.md) | 需求研究：Kickoff 時期資料庫盤點、Gap 分析、決策收斂紀錄 |
 
 ## 接手流程
 
@@ -63,6 +89,10 @@ python bot.py                      # 需 .env（見 README）
 - **時段去重是性質無關、較寬窗勝出**：`_slot_nature_priority` 恆回 1 是故意的；
   測試 `test_long_legacy_slot_replaces_contained_legacy_slot_without_priority` 明文保護
 - **逾期提醒不看提醒規則一律觸發**（含規則空白的任務）；截止前提醒才照規則
+- **提醒規則空白＝套用 `default_reminder_rules`（預設「5 天前」）**，不是不提醒；
+  一旦勾了任何規則就完全以勾選為準，預設不疊加（否則控方無法把提醒收斂成只剩當天）
+- **「逾期」不在 `REMINDER_RULE_DAYS` 裡，但不是無用選項**：只勾它＝規則非空、擋掉預設，
+  等於「事前別提醒，逾期再講」。這是控方關閉事前提醒的唯一方式
 - **date-only 截止日當天整天有效，隔天才算逾期**（`task_deadline_passed`）
 - 任務「待審核」優先於「逾期」分區（已交出＝球在公司，不對藝人顯示逾期）
 - 提醒去重：排課類在記憶體 `_sent`（重啟最多重發一次，可接受）；

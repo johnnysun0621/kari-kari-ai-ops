@@ -1,4 +1,4 @@
-# KariKari AI Ops Bot
+# LURASUPA SERVER
 
 Discord 作為操作入口、Notion 作為營運資料層的藝人管理公司排程與任務 bot。  
 KariKari 是第一個測試站；專案方向是可套用到多家公司，而不是一次性客製。
@@ -13,26 +13,55 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 
 ## 常用文件
 
+文件分四層：根目錄只放入口與 bot 執行時直接讀取的檔案；`docs/foundation/` 放架構基礎，很少變動；
+`docs/operations/` 描述系統**目前**實際行為，改功能要同步更新；`docs/history/` 是決策當下的規劃紀錄，凍結不回頭改。
+
+**根目錄**
+
 | 文件 | 用途 |
 |---|---|
-| [HANDOFF.md](HANDOFF.md) | AI / 工程師協作者接手指南 |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 工程架構與模組責任 |
-| [TESTING.md](TESTING.md) | 自動測試、Discord 驗收、Notion 驗收 |
-| [FLOWCHART.md](FLOWCHART.md) | Mermaid 主流程圖與資料庫責任分界 |
-| [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) | Discord 頻道組成與 slash command 對應 |
-| [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md) | Discord slash command 使用手冊 |
-| [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md) | 任務提交方式、Drive 資料夾、審核通知 |
-| [OPERATIONS_PLAYBOOK.md](OPERATIONS_PLAYBOOK.md) | 控方營運 SOP |
-| [NOTION_SCHEMA.md](NOTION_SCHEMA.md) | Notion 資料庫交互邏輯 |
-| [NOTION_VIEWS_AUDIT.md](NOTION_VIEWS_AUDIT.md) | KariKari Testing 各區與 view 稽核 |
-| [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md) | 三次會議需求、功能與測試對照 |
-| [SERVER_MIGRATION.md](SERVER_MIGRATION.md) | Discord 正式伺服器初始化與平轉 SOP |
-| [CLIENT_SETUP_REQUIREMENTS.md](CLIENT_SETUP_REQUIREMENTS.md) | 導入時客戶需要準備的帳號與權限 |
-| [DELIVERY.md](DELIVERY.md) | v1.0 交付範圍、限制與回復方式 |
-| [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md) | 產品原則與平展化方向 |
-| [ROADMAP.md](ROADMAP.md) | 開發進度與下一步 |
-| [RESEARCH.md](RESEARCH.md) | 需求研究與歷史脈絡 |
-| [COURSE_ASSISTANT_SKILL.md](COURSE_ASSISTANT_SKILL.md) | 課程助教固定檢索與回答規則 |
+| [COURSE_ASSISTANT_SKILL.md](COURSE_ASSISTANT_SKILL.md) | 會議秘書小律固定檢索與回答規則（**bot 執行時會直接讀取這份檔案**，不只是文件） |
+
+**[docs/foundation/](docs/foundation/)**
+
+| 文件 | 用途 |
+|---|---|
+| [HANDOFF.md](docs/foundation/HANDOFF.md) | AI / 工程師協作者接手指南 |
+| [ARCHITECTURE.md](docs/foundation/ARCHITECTURE.md) | 工程架構與模組責任 |
+| [FLOWCHART.md](docs/foundation/FLOWCHART.md) | Mermaid 主流程圖與資料庫責任分界 |
+| [NOTION_SCHEMA.md](docs/foundation/NOTION_SCHEMA.md) | Notion 資料庫交互邏輯 |
+| [PROJECT_PRINCIPLES.md](docs/foundation/PROJECT_PRINCIPLES.md) | 產品原則與平展化方向 |
+
+**[docs/sop/](docs/sop/)** — 給實際使用者看的操作手冊
+
+| 文件 | 用途 |
+|---|---|
+| [ADMIN_SOP.md](docs/sop/ADMIN_SOP.md) | 控方操作 SOP（含 Notion 任務欄位對照表）|
+| [ARTIST_SOP.md](docs/sop/ARTIST_SOP.md) | 藝人操作 SOP |
+
+**[docs/operations/](docs/operations/)**
+
+| 文件 | 用途 |
+|---|---|
+| [DISCORD_COMMANDS.md](docs/operations/DISCORD_COMMANDS.md) | Discord slash command 使用手冊（指令行為的權威來源） |
+| [DISCORD_CHANNELS.md](docs/operations/DISCORD_CHANNELS.md) | Discord 頻道組成與 slash command 對應 |
+| [OPERATIONS_PLAYBOOK.md](docs/operations/OPERATIONS_PLAYBOOK.md) | 控方營運 SOP（完整版，含流程背景與判斷原則）|
+| [SERVER_MIGRATION.md](docs/operations/SERVER_MIGRATION.md) | Discord 正式伺服器初始化與平轉 SOP |
+| [CLIENT_SETUP_REQUIREMENTS.md](docs/operations/CLIENT_SETUP_REQUIREMENTS.md) | 導入時客戶需要準備的帳號與權限 |
+| [SUBMISSION_FLOW.md](docs/operations/SUBMISSION_FLOW.md) | 任務提交方式、Drive 資料夾、審核通知 |
+| [DRIVE_OAUTH_SETUP.md](docs/operations/DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔 OAuth 設定教學 |
+| [TESTING.md](docs/operations/TESTING.md) | 自動測試、Discord 驗收、Notion 驗收 |
+
+**[docs/history/](docs/history/)**
+
+| 文件 | 用途 |
+|---|---|
+| [ROADMAP.md](docs/history/ROADMAP.md) | 開發進度與下一步 |
+| [DELIVERY_PLAN.md](docs/history/DELIVERY_PLAN.md) | v1.0 交付衝刺執行紀錄 |
+| [DELIVERY.md](docs/history/DELIVERY.md) | v1.0 交付範圍、限制與回復方式 |
+| [RESEARCH.md](docs/history/RESEARCH.md) | 需求研究與歷史脈絡 |
+| [REQUIREMENTS_TRACEABILITY.md](docs/history/REQUIREMENTS_TRACEABILITY.md) | 三次會議需求、功能與測試對照 |
+| [NOTION_VIEWS_AUDIT.md](docs/history/NOTION_VIEWS_AUDIT.md) | KariKari Testing 各區與 view 稽核 |
 
 ## 安裝
 
@@ -66,10 +95,10 @@ python bot.py
 | `NOTION_TOKEN` | Notion → Settings → Integrations 建立的 internal integration secret |
 | `NOTION_DS_BULLETIN` | KariKari Testing「佈告欄／留言板／使用回饋」Data Source ID；預設已內建 |
 | `NOTION_DS_COURSE_MEETINGS` | `課程與會議記錄` Data Source ID；預設已內建 |
-| `LLM_API_KEY` | 課程助教使用的 LLM API key；留空則停用回答 |
+| `LLM_API_KEY` | 小律（會議秘書）使用的 LLM API key；留空則停用回答 |
 | `LLM_BASE_URL` | LLM API base URL，使用 `https://api.openai.com/v1`；本專案禁止使用 LongCat |
 | `LLM_MODEL` | LLM 模型名稱，預設 `gpt-5.6-luna` |
-| `LLM_MAX_TOKENS` | 單次課程助教回答上限，預設 `800` |
+| `LLM_MAX_TOKENS` | 單次小律回答上限，預設 `800` |
 | `LLM_DAILY_TOKEN_LIMIT` | 每租戶每日 token 護欄；目前預設 `0`（不限），使用量仍只記錄數字 |
 | `LLM_PER_ARTIST_DAILY_TOKEN_LIMIT` | 每位藝人每日 token 護欄；目前預設 `0`（不限） |
 
@@ -89,7 +118,7 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 - 邀請連結 scopes：`bot` + `applications.commands`
 - Bot 權限：View Channels、Send Messages、Embed Links、Mention Everyone（點名用）
 - 控方成員需具備 Discord Administrator 權限，才會看到管理端 slash commands
-- 可由控方執行 `/伺服器初始化` 建立六用途頻道與 `藝人`／`控方` 身分組；詳細步驟見 [SERVER_MIGRATION.md](SERVER_MIGRATION.md)
+- 可由控方執行 `/伺服器初始化` 建立六用途頻道與 `藝人`／`控方` 身分組；詳細步驟見 [SERVER_MIGRATION.md](docs/operations/SERVER_MIGRATION.md)
 - Notion integration 要能讀寫：Artists、Availability Slots、Tasks、Projects、People、Submissions、Audit Log
 - Artists 的可用藝人帳號要填 `Discord User ID`，且 `合約狀態` 為 `已簽約` 或 `洽談中`
 
@@ -112,12 +141,12 @@ services/
   timeparse.py            # Modal 輸入解析、候選時段文字格式
   audit.py                # Audit Log 寫入（失敗不阻斷主流程）
 cogs/
-  scheduling_admin.py     # /時間資訊蒐集 /從時間池建立任務
+  scheduling_admin.py     # /時間資訊蒐集 /從時間池建立任務 /時間交集查詢
   scheduling_artist.py    # 填寫按鈕 + Modal + /管理可配合時間
   tasks_artist.py         # /我的任務 /任務總覽 /任務通知重送
   submissions.py          # /我的任務內的提交操作 + /審核提交
   bulletin.py             # /布告欄同步 + Notion 公告背景同步
-  course_qa.py            # 課程助教頻道自然對話
+  course_qa.py            # 小律（會議秘書）頻道自然對話
   server_setup.py         # /伺服器初始化（角色、頻道、env 清單）
   reminders.py            # 月度時間池、排課 SLA、任務與審核提醒
 tests/                    # 純函式、互動邏輯、資料層測試

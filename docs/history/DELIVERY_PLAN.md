@@ -2,7 +2,7 @@
 
 > **給接手的 AI（Codex／Claude）**：這是 2026-07-17 與 Johnny 收斂核准的交付計劃。
 > 依 D0→D8 順序執行；每個 D 完成即跑驗證、commit（訊息帶 D 編號）、更新本檔勾選與 ROADMAP 日誌。
-> 開工前先讀 [CLAUDE.md](CLAUDE.md)（鐵則＋刻意設計清單）與 [HANDOFF.md](HANDOFF.md)。
+> 開工前先讀 [CLAUDE.md](../../CLAUDE.md)（鐵則＋刻意設計清單）與 [HANDOFF.md](../foundation/HANDOFF.md)。
 > 需求源：7/11 會議「DC × Notion 功能展示與需求確認」（Notion Meetings 內）。
 
 ## 背景與已收斂決策

@@ -45,6 +45,7 @@ from cogs.submissions import (
     submit_method_label,
     parse_revision_days,
 )
+from cogs import ui_text
 from services import repositories
 
 
@@ -249,6 +250,24 @@ class TestSubmitTaskFirstStepText:
         assert "貼連結" in text
         assert "老師要求" in text
         assert "PDF" in text
+
+    def test_intro_stays_within_discord_limit_when_descriptions_are_long(self):
+        """任務說明很長時，固定列 10 筆會超過 Discord 上限；應該改成依長度收斂並誠實說明還有幾筆。"""
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
+        tasks = [
+            task(
+                submit_method="檔案",
+                task_type="課程作業",
+                description="老師要求：" + "請詳細說明本次作業的完成方式與注意事項。" * 6,
+            )
+            for _ in range(12)
+        ]
+
+        text = submit_task_intro_text("Johnny", tasks, now)
+
+        assert len(text) <= ui_text.DISCORD_MESSAGE_LIMIT
+        assert "...清單過長已截斷" not in text
+        assert "請用下方選單查看" in text
 
     def test_option_description_shows_method_type_and_deadline(self):
         now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)

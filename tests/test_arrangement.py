@@ -1,13 +1,6 @@
 from services import arrangement
 
 
-def test_only_course_requires_teacher_confirmation():
-    assert arrangement.requires_teacher_confirmation("課程") is True
-    assert arrangement.requires_teacher_confirmation("錄音") is False
-    assert arrangement.requires_teacher_confirmation("通告") is False
-    assert arrangement.requires_teacher_confirmation("其他") is False
-
-
 def test_non_course_arrangements_create_unpublished_task_drafts():
     assert arrangement.creates_unpublished_task_draft("錄音") is True
     assert arrangement.creates_unpublished_task_draft("通告") is True

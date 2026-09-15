@@ -10,7 +10,7 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, ui_text
 from cogs.scheduling_artist import make_pool_availability_view
-from services import audit, overlap, repositories, scheduling_sla, teacher_confirm, time_collection, timeparse
+from services import audit, overlap, repositories, scheduling_sla, time_collection, timeparse
 from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
@@ -53,30 +53,48 @@ def _duration_candidates(
     return candidates
 
 
-def _format_candidate_groups(candidates: list[overlap.Interval]) -> list[str]:
-    """依日期分組候選時段，讓 Discord 訊息保持短而容易掃讀。"""
+def _candidate_date_blocks(candidates: list[overlap.Interval]) -> list[list[str]]:
+    """依日期分組候選時段；同一天的標題與時段行放在同一個 block 內，
+    讓訊息太長需要截斷時可以整天整天地留，不會切壞單一天的內容。"""
     weekday_names = ("一", "二", "三", "四", "五", "六", "日")
     grouped: dict[date, list[str]] = {}
     for start, end in candidates:
         grouped.setdefault(start.date(), []).append(f"{start:%H:%M}–{end:%H:%M}")
 
-    lines: list[str] = []
+    blocks: list[list[str]] = []
     for candidate_date, times in grouped.items():
         weekday = weekday_names[candidate_date.weekday()]
-        lines.append(f"**{candidate_date.month}/{candidate_date.day}（週{weekday}）**")
+        block = [f"**{candidate_date.month}/{candidate_date.day}（週{weekday}）**"]
         for index in range(0, len(times), 3):
-            lines.append("　" + "　".join(times[index:index + 3]))
+            block.append("　" + "　".join(times[index:index + 3]))
+        blocks.append(block)
+    return blocks
+
+
+def _format_candidate_groups(candidates: list[overlap.Interval]) -> list[str]:
+    """依日期分組候選時段，讓 Discord 訊息保持短而容易掃讀。"""
+    lines: list[str] = []
+    for block in _candidate_date_blocks(candidates):
+        lines.extend(block)
     return lines
 
 
-def _monthly_pool_result_text(
+def _missing_artist_names(
+    artists: list[repositories.Artist],
+    result: repositories.MonthlyPoolMatchResult,
+) -> list[str]:
+    name_of = {artist.page_id: artist.name for artist in artists}
+    return [name_of[pid] for pid in result.missing_artist_page_ids if pid in name_of]
+
+
+def _monthly_pool_header_lines(
     month: str,
     duration_minutes: int,
     artists: list[repositories.Artist],
     result: repositories.MonthlyPoolMatchResult,
-) -> str:
-    name_of = {artist.page_id: artist.name for artist in artists}
-    missing = [name_of[pid] for pid in result.missing_artist_page_ids if pid in name_of]
+) -> list[str]:
+    """比對結果的開頭摘要（月份、藝人、已填狀況）；建立任務與唯讀查詢共用。"""
+    missing = _missing_artist_names(artists, result)
     filled_count = len(artists) - len(missing)
     lines = [
         f"**{month} 時間池比對**｜需要 {repositories.format_duration_hours(duration_minutes)}",
@@ -85,6 +103,47 @@ def _monthly_pool_result_text(
     ]
     if missing:
         lines.append(f"⚠️ 未填：{ '、'.join(missing) }")
+    return lines
+
+
+def _overlap_query_pages(
+    month: str,
+    duration_minutes: int,
+    artists: list[repositories.Artist],
+    result: repositories.MonthlyPoolMatchResult,
+) -> list[str]:
+    """/時間交集查詢 的唯讀結果：切成多頁，讓控方可以翻頁看完「全部」候選時段。"""
+    header = _monthly_pool_header_lines(month, duration_minutes, artists, result)
+    candidates = _duration_candidates(result.windows, duration_minutes)
+    date_blocks = _candidate_date_blocks(candidates)
+    # 250 字保留給每頁的標題、頁碼與結尾說明。
+    budget = ui_text.DISCORD_MESSAGE_LIMIT - len("\n".join(header)) - 250
+    block_pages = ui_text.paginate_blocks(date_blocks, budget)
+
+    texts: list[str] = []
+    for index, block_lines in enumerate(block_pages):
+        lines = list(header)
+        lines.append("")
+        lines.append(
+            f"符合 {repositories.format_duration_hours(duration_minutes)} 的候選時段"
+            f"（第 {index + 1}/{len(block_pages)} 頁）："
+        )
+        lines.extend(block_lines)
+        lines.append("")
+        lines.append(f"候選時段共 {len(candidates)} 個、{len(date_blocks)} 天；用「上一頁／下一頁」可看完全部。")
+        lines.append("這裡只列候選，不會建立 Notion Project / Task。")
+        texts.append(ui_text.trim_message("\n".join(lines)))
+    return texts
+
+
+def _monthly_pool_result_text(
+    month: str,
+    duration_minutes: int,
+    artists: list[repositories.Artist],
+    result: repositories.MonthlyPoolMatchResult,
+) -> str:
+    lines = _monthly_pool_header_lines(month, duration_minutes, artists, result)
+    missing = _missing_artist_names(artists, result)
 
     if not result.windows:
         lines.append("")
@@ -98,8 +157,31 @@ def _monthly_pool_result_text(
     candidates = _duration_candidates(result.windows, duration_minutes)
     lines.append("")
     lines.append(f"符合 {repositories.format_duration_hours(duration_minutes)} 的候選時段：")
-    lines.extend(_format_candidate_groups(candidates))
-    lines.append(f"候選時段共 {len(candidates)} 個，以下全部列出並可分頁選擇。")
+
+    # 依日期整天整天地加入，寧可少列幾天也不要在訊息長度上限中間把單一天切壞；
+    # 200 字是給截斷提示與結尾說明保留的緩衝空間。
+    date_blocks = _candidate_date_blocks(candidates)
+    header_len = len("\n".join(lines))
+    budget = ui_text.DISCORD_MESSAGE_LIMIT - header_len - 200
+
+    shown_lines: list[str] = []
+    shown_dates = 0
+    used = 0
+    for block in date_blocks:
+        block_text = "\n".join(block)
+        added = len(block_text) + 1
+        if shown_dates and used + added > budget:
+            break
+        shown_lines.extend(block)
+        used += added
+        shown_dates += 1
+
+    lines.extend(shown_lines)
+    if shown_dates < len(date_blocks):
+        lines.append(f"（訊息太長，僅顯示前 {shown_dates}／{len(date_blocks)} 天的候選）")
+        lines.append("這份文字只是預覽，不影響候選範圍；請透過下方畫面繼續操作，可用選單分頁瀏覽全部候選。")
+    else:
+        lines.append(f"候選時段共 {len(candidates)} 個，以下全部列出並可分頁選擇。")
     lines.append("")
     lines.append("這裡只列候選，不會建立 Notion Project / Task。正式安排請由營運判斷後建立。")
     return ui_text.trim_message("\n".join(lines))
@@ -116,23 +198,40 @@ def _cleanup_preview_text(
         f"會合併更新：{len(compaction.updates)} 筆",
         f"建議封存重複 / 冗餘：{len(compaction.redundant)} 筆",
     ]
+    # 兩個區塊共用剩餘長度：筆數上限之外還要看實際字數，否則長備註仍會把預覽切壞。
+    # 120 字保留給結尾說明。
+    budget = ui_text.DISCORD_MESSAGE_LIMIT - len("\n".join(lines)) - 120
     if compaction.updates:
-        lines.append("\n**會合併更新**")
+        update_lines = []
         for update in compaction.updates[:AVAILABILITY_CLEANUP_PREVIEW_LIMIT]:
             slot = slot_by_id.get(update.page_id)
             before = _admin_slot_line(slot) if slot else update.page_id
             after = time_collection.format_slot_summary(
                 update.start, update.end, slot.note if slot else ""
             )
-            lines.append(f"・{before}\n　→ {after}")
-        if len(compaction.updates) > AVAILABILITY_CLEANUP_PREVIEW_LIMIT:
-            lines.append(f"・另有 {len(compaction.updates) - AVAILABILITY_CLEANUP_PREVIEW_LIMIT} 筆合併更新")
+            update_lines.append(f"・{before}\n　→ {after}")
+        title = "\n**會合併更新**"
+        shown, _ = ui_text.fit_items(update_lines, budget - len(title))
+        lines.append(title)
+        lines.extend(shown)
+        budget -= len(title) + len("\n".join(shown)) + 2
+        hidden_updates = len(compaction.updates) - len(shown)
+        if hidden_updates > 0:
+            note = f"・另有 {hidden_updates} 筆合併更新"
+            lines.append(note)
+            budget -= len(note) + 1
     if compaction.redundant:
-        lines.append("\n**建議封存**")
-        for slot in compaction.redundant[:AVAILABILITY_CLEANUP_PREVIEW_LIMIT]:
-            lines.append(f"・{_admin_slot_line(slot)}")
-        if len(compaction.redundant) > AVAILABILITY_CLEANUP_PREVIEW_LIMIT:
-            lines.append(f"・另有 {len(compaction.redundant) - AVAILABILITY_CLEANUP_PREVIEW_LIMIT} 筆建議封存")
+        redundant_lines = [
+            f"・{_admin_slot_line(slot)}"
+            for slot in compaction.redundant[:AVAILABILITY_CLEANUP_PREVIEW_LIMIT]
+        ]
+        title = "\n**建議封存**"
+        shown, _ = ui_text.fit_items(redundant_lines, budget - len(title))
+        lines.append(title)
+        lines.extend(shown)
+        hidden_redundant = len(compaction.redundant) - len(shown)
+        if hidden_redundant > 0:
+            lines.append(f"・另有 {hidden_redundant} 筆建議封存")
     if not compaction.updates and not compaction.redundant:
         lines.append("\n目前沒有需要整理的重複或重疊資料。")
     else:
@@ -204,6 +303,168 @@ class AvailabilityCleanupPreviewView(discord.ui.View):
     async def cancel_cleanup(self, interaction: discord.Interaction, _: discord.ui.Button):
         await interaction.response.edit_message(content="已取消時間池整理，Notion 未變更。", view=None)
         self.stop()
+
+
+class OverlapQueryResultView(discord.ui.View):
+    """/時間交集查詢 的結果：唯讀列出共同空檔，需要時才接到既有的建立任務流程。"""
+
+    def __init__(
+        self,
+        month: str,
+        duration_minutes: int,
+        chosen_artists: list[repositories.Artist],
+        windows: list[overlap.Interval],
+        operator: discord.abc.User,
+        available_artists: list[repositories.Artist],
+        summary_text: str,
+        pages: list[str] | None = None,
+    ):
+        super().__init__(timeout=600)
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.chosen_artists = chosen_artists
+        self.windows = windows
+        self.operator = operator
+        self.operator_id = operator.id
+        self.available_artists = available_artists
+        self.summary_text = summary_text
+        # 候選時段可能長到一則訊息放不下；切成多頁讓控方翻完全部，而不是只看到被截斷的前幾天。
+        self.pages = pages or [summary_text]
+        self.page = 0
+        self._sync_page_buttons()
+
+    @property
+    def page_count(self) -> int:
+        return len(self.pages)
+
+    def _sync_page_buttons(self) -> None:
+        single_page = self.page_count <= 1
+        self.previous_page.disabled = single_page or self.page == 0
+        self.next_page.disabled = single_page or self.page >= self.page_count - 1
+
+    async def _change_page(self, interaction: discord.Interaction, page: int) -> None:
+        self.page = max(0, min(page, self.page_count - 1))
+        self._sync_page_buttons()
+        await interaction.response.edit_message(content=self.pages[self.page], view=self)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個查詢結果只能由原本執行指令的人操作。", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="上一頁", style=discord.ButtonStyle.secondary, row=1)
+    async def previous_page(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await self._change_page(interaction, self.page - 1)
+
+    @discord.ui.button(label="下一頁", style=discord.ButtonStyle.secondary, row=1)
+    async def next_page(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await self._change_page(interaction, self.page + 1)
+
+    @discord.ui.button(label="直接建立任務", style=discord.ButtonStyle.primary, emoji="📝")
+    async def create_task(self, interaction: discord.Interaction, _: discord.ui.Button):
+        # 接到既有的 /從時間池建立任務 後段流程；不修改原指令，只是共用同一組畫面。
+        await interaction.response.edit_message(
+            content=self.summary_text + "\n\n⬇️ 先勾選要安排的候選時段，再選擇安排類型：",
+            view=MonthlyPoolCandidateSelectView(
+                self.month, self.duration_minutes, self.chosen_artists,
+                _duration_candidates(self.windows, self.duration_minutes), self.operator,
+                available_artists=self.available_artists,
+                summary_text=self.summary_text,
+            ),
+        )
+        self.stop()
+
+    @discord.ui.button(label="關閉", style=discord.ButtonStyle.secondary, emoji="✖️")
+    async def close(self, interaction: discord.Interaction, _: discord.ui.Button):
+        # 留下目前翻到的那一頁，避免關閉後看到的內容跳回第一頁。
+        await interaction.response.edit_message(content=self.pages[self.page], view=None)
+        self.stop()
+
+
+class OverlapQueryArtistSelectView(discord.ui.View):
+    """/時間交集查詢 的第二步：選藝人後只做唯讀比對，不寫入 Notion。"""
+
+    def __init__(
+        self,
+        artists: list[repositories.Artist],
+        month: str,
+        duration_minutes: int,
+        operator: discord.abc.User,
+    ):
+        super().__init__(timeout=600)
+        self.artists = {artist.page_id: artist for artist in artists}
+        self.month = month
+        self.duration_minutes = duration_minutes
+        self.operator = operator
+        self.operator_id = operator.id
+        options = [
+            discord.SelectOption(
+                label=artist.name[:100],
+                value=artist.page_id,
+                description=(artist.status or "合約狀態未填")[:100],
+            )
+            for artist in artists[:25]
+        ]
+        self.select = discord.ui.Select(
+            placeholder="選擇要查詢交集的藝人（可多選）…",
+            options=options,
+            min_values=1,
+            max_values=len(options),
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, row=1, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(content="已關閉時間交集查詢。", view=None)
+        self.stop()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message("❌ 這個查詢選單只能由原本執行指令的人操作。", ephemeral=True)
+        return False
+
+    async def on_select(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        chosen = [self.artists[page_id] for page_id in self.select.values]
+        artist_page_ids = [artist.page_id for artist in chosen]
+        try:
+            # 唯讀查詢：不做時間池整理（不寫 Notion），純粹快速看交集。
+            slots = await repositories.get_monthly_pool_slots_for_artists(artist_page_ids)
+            busy_by_artist: dict[str, list[repositories.BusyInterval]] = {}
+            for artist_page_id in artist_page_ids:
+                context = await repositories.get_schedule_impact_context_for_artist(artist_page_id)
+                busy_by_artist[artist_page_id] = context.busy_intervals
+            result = repositories.match_monthly_pool_windows(
+                slots=slots,
+                artist_page_ids=artist_page_ids,
+                month=self.month,
+                duration_minutes=self.duration_minutes,
+                busy_by_artist_page_id=busy_by_artist,
+            )
+        except Exception:
+            logger.exception("時間交集查詢失敗")
+            await interaction.followup.send("❌ 交集查詢失敗，請稍後再試或查看 bot log。", ephemeral=True)
+            return
+
+        result_text = _monthly_pool_result_text(self.month, self.duration_minutes, chosen, result)
+        if result.windows:
+            # 唯讀查詢要能看完全部候選，所以用分頁而不是截斷。
+            pages = _overlap_query_pages(self.month, self.duration_minutes, chosen, result)
+            await interaction.followup.send(
+                pages[0],
+                view=OverlapQueryResultView(
+                    self.month, self.duration_minutes, chosen, result.windows,
+                    self.operator, list(self.artists.values()), result_text,
+                    pages=pages,
+                ),
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(result_text, ephemeral=True)
+        # 保留原選單，方便直接換一組藝人再查一次。
 
 
 class MonthlyPoolArtistSelectView(discord.ui.View):
@@ -457,9 +718,9 @@ class MonthlyPoolCandidateSelectView(discord.ui.View):
 
 
 class CourseTypeView(discord.ui.View):
-    """課程安排的第二層選擇，沿用租戶既有課程類型設定。"""
+    """課程安排的第二層選擇，即時讀取 Notion Tasks 的「課程類別」選項。"""
 
-    def __init__(self, month, duration_minutes, artists, windows, operator, task_types, *, available_artists=None, candidate_windows=None):
+    def __init__(self, month, duration_minutes, artists, windows, operator, task_types, course_types, *, available_artists=None, candidate_windows=None):
         super().__init__(timeout=600)
         self.month = month
         self.duration_minutes = duration_minutes
@@ -468,12 +729,12 @@ class CourseTypeView(discord.ui.View):
         self.operator_id = operator.id
         self.operator = operator
         self.task_types = task_types
+        self.course_types = course_types
         self.available_artists = available_artists or list(artists)
         self.candidate_windows = candidate_windows or windows
-        course_types = config.get_tenant().course_types[:25]
         self.select = discord.ui.Select(
             placeholder="選擇課程類型…",
-            options=[discord.SelectOption(label=course_type, value=course_type) for course_type in course_types],
+            options=[discord.SelectOption(label=course_type, value=course_type) for course_type in course_types[:25]],
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
@@ -576,11 +837,27 @@ class CourseProjectSelectView(discord.ui.View):
 
     @discord.ui.button(label="返回課程類型", style=discord.ButtonStyle.secondary, row=1, emoji="↩️")
     async def back_to_course_type(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.edit_message(
+        await interaction.response.defer()
+        try:
+            course_types = await repositories.get_course_type_options()
+        except Exception:
+            logger.exception("讀取 Tasks 課程類別選項失敗")
+            await interaction.followup.send(
+                "❌ 讀取 Notion Tasks 的課程類別失敗，請確認 Bot 有讀取 Tasks schema 的權限。",
+                ephemeral=True,
+            )
+            return
+        if not course_types:
+            await interaction.followup.send(
+                "❌ Notion Tasks 的「課程類別」目前沒有可用選項。",
+                ephemeral=True,
+            )
+            return
+        await interaction.edit_original_response(
             content="請重新選擇具體課程類型：",
             view=CourseTypeView(
                 self.month, self.duration_minutes, self.artists, self.windows,
-                self.operator, self.task_types,
+                self.operator, self.task_types, course_types,
                 available_artists=self.available_artists,
                 candidate_windows=self.candidate_windows,
             ),
@@ -698,12 +975,10 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
             logger.exception("建立課程 Task 失敗")
             await interaction.followup.send("❌ 建立課程 Task 失敗，請確認 Tasks 欄位與 Notion 權限。", ephemeral=True)
             return
-        teacher_deadline_ts = int(time.time()) + teacher_confirm.TOKEN_TTL_HOURS * 3600
         scheduling_sla.register_task(
             task.page_id,
             self.month,
             created_ts=int(time.time()),
-            teacher_deadline_ts=teacher_deadline_ts,
         )
         await audit.log_event(
             event_name=f"建立課程 Task｜{request_name}",
@@ -713,30 +988,14 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
             after=f"課程與作業｜{self.course_type}｜老師 {self.teacher_name}｜{len(teacher_windows)} 個候選｜{names}",
         )
         lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in teacher_windows)
-        teacher_link = ""
-        if teacher_confirm.can_generate_links():
-            expires_at = teacher_deadline_ts
-            token = teacher_confirm.sign_task_token(
-                task.page_id,
-                expires_at,
-                task_name=request_name,
-                course_type=self.course_type,
-                duration_text=repositories.format_duration_hours(self.duration_minutes),
-                teacher=self.teacher_name,
-                participants=[artist.name for artist in self.artists],
-                windows=[timeparse.humanize(start, end) for start, end in teacher_windows],
-            )
-            teacher_link = (
-                f"\n\n🔗 老師填寫表單（{teacher_confirm.TOKEN_TTL_HOURS} 小時有效）：\n"
-                f"{teacher_confirm.confirm_url(token)}\n"
-                "請把這個連結傳給老師；老師可多選，最後由控方在 Task 決定正式時間。"
-            )
+        task_link = f"\n🔗 [開啟 Notion Task，填正式時間]({task.url})" if task.url else ""
         await interaction.followup.send(
             f"✅ 已建立課程 Task「**{request_name}**」。\n"
             f"課程類別：{self.course_type}｜老師：{self.teacher_name}\n"
-            f"候選時段：\n{lines}\n\n"
-            "目前不會通知藝人；請先把老師回覆的時段傳給控方，再到 Notion 的 Task 頁面填正式開始／結束時間。確認內容完整後勾選 `Discord 顯示=true`，Bot 會自動通知藝人。課程作業也在同一筆 Task 管理。"
-            f"{teacher_link}",
+            f"候選時段：\n{lines}"
+            f"{task_link}\n\n"
+            "目前不會通知藝人；請自行與老師協調確認時間，再到 Notion 的 Task 頁面填正式開始／結束時間。"
+            "確認內容完整後勾選 `Discord 顯示=true`，Bot 會自動通知藝人。課程作業也在同一筆 Task 管理。",
             ephemeral=True,
         )
 
@@ -772,11 +1031,26 @@ class TaskTypeView(discord.ui.View):
         await interaction.response.defer(ephemeral=True, thinking=True)
         task_type = self.select.values[0]
         if task_type == "課程與作業":
+            try:
+                course_types = await repositories.get_course_type_options()
+            except Exception:
+                logger.exception("讀取 Tasks 課程類別選項失敗")
+                await interaction.followup.send(
+                    "❌ 讀取 Notion Tasks 的課程類別失敗，請確認 Bot 有讀取 Tasks schema 的權限。",
+                    ephemeral=True,
+                )
+                return
+            if not course_types:
+                await interaction.followup.send(
+                    "❌ Notion Tasks 的「課程類別」目前沒有可用選項。",
+                    ephemeral=True,
+                )
+                return
             await interaction.followup.send(
                 content="請選擇具體課程類型：",
                 view=CourseTypeView(
                     self.month, self.duration_minutes, self.artists,
-                    self.windows, interaction.user, self.task_types,
+                    self.windows, interaction.user, self.task_types, course_types,
                     available_artists=self.available_artists,
                     candidate_windows=self.candidate_windows,
                 ), ephemeral=True,
@@ -971,11 +1245,12 @@ class DirectArrangementModal(discord.ui.Modal, title="建立安排 Task 草稿")
             target_db="Tasks", target_url=task.url,
             after=f"{self.arrangement_type}｜{timeparse.humanize(start, end)}｜Discord 顯示=false",
         )
+        task_link = f"🔗 [開啟 Notion Task，補齊內容]({task.url})\n" if task.url else ""
         await interaction.followup.send(
             f"✅ 已建立 **{self.arrangement_type}** Task 草稿，尚未通知藝人。\n"
             f"**{task.name}**｜{timeparse.humanize(start, end)}\n"
             f"任務類型：{self.task_type}\n"
-            f"🔗 [開啟 Notion Task，補齊內容]({task.url})\n"
+            f"{task_link}"
             "請先在 Notion 補齊任務內容；確認後勾選 `Discord 顯示=true`，Bot 會自動通知藝人。",
             ephemeral=True,
         )
@@ -1097,6 +1372,57 @@ class SchedulingAdminCog(commands.Cog):
         )
         await interaction.edit_original_response(
             content=f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}"
+        )
+
+    # ---------- /時間交集查詢 ----------
+    @app_commands.command(name="時間交集查詢", description="只查看藝人共同空檔，不建立任何任務")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(
+        月份="要查詢的月份，例：2026-08",
+        時長分鐘="需要連續可安排的時長，例：60、90、240",
+    )
+    @is_admin()
+    async def query_availability_overlap(
+        self,
+        interaction: discord.Interaction,
+        月份: str,
+        時長分鐘: app_commands.Range[int, 15, 600],
+    ):
+        if not await channel_guard.ensure_admin_channel(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        month = time_collection.normalize_month(月份)
+        if month is None:
+            await interaction.followup.send("❌ 月份格式請用 `2026-08`。", ephemeral=True)
+            return
+        try:
+            artists = await repositories.get_active_artists()
+        except Exception:
+            logger.exception("讀取藝人清單失敗")
+            await interaction.followup.send(
+                "❌ 讀不到 Notion 藝人資料，請確認 NOTION_TOKEN 與資料庫已 share 給 integration。",
+                ephemeral=True,
+            )
+            return
+        if not artists:
+            await interaction.followup.send(
+                "❌ Artists 裡沒有可查詢的藝人，請先到 Notion 補 Discord User ID。",
+                ephemeral=True,
+            )
+            return
+        limit_note = ""
+        if len(artists) > 25:
+            limit_note = "\n⚠️ Discord 單次選單最多顯示 25 位，這次先列前 25 位可排課藝人。"
+        await interaction.followup.send(
+            (
+                f"查詢 **{month}** 的共同空檔（唯讀，不會建立任何任務）。\n"
+                f"需要連續時長：{repositories.format_duration_hours(時長分鐘)}"
+                f"{limit_note}"
+            ),
+            view=OverlapQueryArtistSelectView(
+                artists[:25], month, 時長分鐘, interaction.user,
+            ),
+            ephemeral=True,
         )
 
     # ---------- /從時間池建立任務 ----------

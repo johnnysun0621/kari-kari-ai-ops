@@ -368,15 +368,22 @@ async def _page_content(
 
 
 async def get_course_meetings_for_artist(artist_page_id: str) -> list[CourseMeetingRecord]:
-    """只回傳已勾選藝人可見，且與該藝人有直接或間接關聯的課程紀錄。"""
+    """只回傳已勾選藝人可見，且會議類型不在排除清單內、與該藝人有直接或間接關聯的紀錄。
+
+    排除清單（QA_HIDDEN_MEETING_TYPES）刻意用排除清單而非允許清單：客戶在 Notion
+    新增會議類型（例如以後新增的合作類型）預設就會開放，只靠「藝人可見」逐筆把關，
+    不需要客戶為了新類型另外維護設定。清單裡固定寫死的幾種類型（課程、課程會議、
+    公司例會、管理層會議）是產品層級的安全預設，不是客戶日常會調整的東西。
+    """
+    hidden_types = config.get_tenant().qa_hidden_meeting_types
     pages = await notion_api.query_data_source(
         config.DS_COURSE_MEETINGS,
         filter_={"and": [
             {"property": "藝人可見", "checkbox": {"equals": True}},
-            {"or": [
-                {"property": "會議類型", "select": {"equals": "課程"}},
-                {"property": "會議類型", "select": {"equals": "課程會議"}},
-            ]},
+            *[
+                {"property": "會議類型", "select": {"does_not_equal": meeting_type}}
+                for meeting_type in hidden_types
+            ],
         ]},
         sorts=[{"property": "Date", "direction": "descending"}],
     )
@@ -607,6 +614,14 @@ async def get_task_type_options() -> list[str]:
     return [option["name"].strip() for option in options if option.get("name", "").strip()]
 
 
+async def get_course_type_options() -> list[str]:
+    """讀取 Tasks 的「課程類別」select 選項，避免把租戶課程分類寫死在 Bot。"""
+    schema = await notion_api.retrieve_data_source(config.DS_TASKS)
+    property_schema = schema.get("properties", {}).get("課程類別", {})
+    options = property_schema.get("select", {}).get("options", [])
+    return [option["name"].strip() for option in options if option.get("name", "").strip()]
+
+
 @dataclass(frozen=True)
 class PersonItem:
     page_id: str
@@ -752,9 +767,18 @@ class ScheduleImpactContext:
     warnings: list[ScheduleWarning] = field(default_factory=list)
 
 
+def _read_start_end(page: dict, start_property: str, end_property: str) -> tuple[DateValue, DateValue]:
+    """讀開始/截止兩個獨立日期欄位；截止欄位空白時，退回讀開始欄位自己內嵌的
+    結束時間（Notion 原生日期範圍選擇器會把整段時間存在同一個屬性裡）。"""
+    start = _read_date_value(page, start_property)
+    end = _read_date_value(page, end_property)
+    if end.value is None:
+        end = _read_date_value(page, start_property, key="end")
+    return start, end
+
+
 def _to_project(page: dict) -> ProjectItem:
-    start = _read_date_value(page, "開始日")
-    end = _read_date_value(page, "截止日")
+    start, end = _read_start_end(page, "開始日", "截止日")
     return ProjectItem(
         page_id=page["id"],
         name=_read_title(page, "專案名稱"),
@@ -769,8 +793,7 @@ def _to_project(page: dict) -> ProjectItem:
 
 
 def _to_task(page: dict) -> TaskItem:
-    start = _read_date_value(page, "開始日")
-    end = _read_date_value(page, "截止日")
+    start, end = _read_start_end(page, "開始日", "截止日")
     submission_deadline = _read_date_value(page, "提交期限")
     created_at_raw = page.get("created_time")
     created_at = None
@@ -1199,15 +1222,23 @@ def classify_tasks_for_display(tasks: list[TaskItem], now: datetime) -> dict[str
 # ---------- P0-4 任務提醒 ----------
 
 # Tasks.提醒規則 multi-select 的合法值 → 對應「截止日前幾天」
-REMINDER_RULE_DAYS = {"3 天前": 3, "1 天前": 1, "當天": 0}
+# 由遠到近排列，compute_due_reminder_stages 的回傳順序跟著這裡走。
+# 新增值時 Notion 的「提醒規則」多選欄位也要加同名選項，否則控方選不到。
+REMINDER_RULE_DAYS = {"5 天前": 5, "3 天前": 3, "1 天前": 1, "當天": 0}
 OVERDUE_STAGE = "逾期"
 
 
-def compute_due_reminder_stages(task: TaskItem, now: datetime) -> list[str]:
+def compute_due_reminder_stages(
+    task: TaskItem,
+    now: datetime,
+    default_rules: tuple[str, ...] | None = None,
+) -> list[str]:
     """回傳此刻該觸發的提醒階段（去重由呼叫端的 _once 處理）。
 
-    - 「3 天前 / 1 天前 / 當天」完全依任務的提醒規則設定，且用 <= 判斷：
+    - 「5 天前 / 3 天前 / 1 天前 / 當天」依任務的提醒規則設定，且用 <= 判斷：
       loop 每 30 分鐘跑一次，若 bot 停機錯過整點，補跑時仍會觸發一次。
+    - 任務**沒勾任何規則**時套用 `default_reminder_rules`（預設「5 天前」），
+      讓控方不必逐筆勾也有基本提醒；勾了就完全以勾選為準，不再疊加預設。
     - 「逾期」不看規則、一律觸發（Kickoff：逾期需提醒或升級處理），
       公司沒勾規則的任務也不會默默爛掉。
     """
@@ -1216,10 +1247,13 @@ def compute_due_reminder_stages(task: TaskItem, now: datetime) -> list[str]:
         return []
     if task_deadline_passed(task, now):
         return [OVERDUE_STAGE]
+    if default_rules is None:
+        default_rules = config.get_tenant().default_reminder_rules
+    active_rules = task.reminder_rules or list(default_rules)
     days_left = (deadline.date() - now.date()).days
     return [
         rule for rule, days in REMINDER_RULE_DAYS.items()
-        if rule in task.reminder_rules and days_left <= days
+        if rule in active_rules and days_left <= days
     ]
 
 

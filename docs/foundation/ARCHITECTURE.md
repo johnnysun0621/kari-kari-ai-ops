@@ -1,7 +1,7 @@
 # 工程架構
 
 這份文件給工程師與 AI 協作者理解程式切分方式。  
-操作 SOP 看 [OPERATIONS_PLAYBOOK.md](OPERATIONS_PLAYBOOK.md)，Discord 指令看 [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md)，Notion 欄位看 [NOTION_SCHEMA.md](NOTION_SCHEMA.md)。
+操作 SOP 看 [OPERATIONS_PLAYBOOK.md](../operations/OPERATIONS_PLAYBOOK.md)，Discord 指令看 [DISCORD_COMMANDS.md](../operations/DISCORD_COMMANDS.md)，Notion 欄位看 [NOTION_SCHEMA.md](NOTION_SCHEMA.md)。
 
 ## 系統定位
 
@@ -9,11 +9,11 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 目前主流程：
 
-`/時間資訊蒐集` → 藝人填月度可配合時段 → `/從時間池建立任務` → 控方選安排類型 → 課程走老師確認；錄音／通告／其他建立隱藏 Task 草稿 → 控方填正式時間並勾選 `Discord 顯示=true` → Bot 自動通知
+`/時間資訊蒐集` → 藝人填月度可配合時段 → `/從時間池建立任務` → 控方選安排類型 → 不論課程或其他類型都建立 `Discord 顯示=false` 的隱藏 Task 草稿 → 控方填正式時間並勾選 `Discord 顯示=true` → Bot 自動通知
 
-老師確認表單是課程 Task 流程的一部分：
+只想先看藝人共同空檔、還不確定要不要建任務時，可以用唯讀的 `/時間交集查詢`；它不寫入 Notion，看完可以直接接「建立任務」按鈕轉進 `/從時間池建立任務` 的流程。
 
-`/從時間池建立任務` 選候選 → 課程直接建立 `Tasks`，其他安排建立隱藏 Task 草稿
+課程正式時間如有異動，改為控方與老師人工協調後直接在 Task 更新開始／結束時間；沒有自動化的老師確認表單或對外連結。
 
 ## 核心資料邊界
 
@@ -58,7 +58,9 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - Notion token、Data Source ID
 - 時區
 - SLA / reminder 常數
-- 課程或活動類型
+- 小律查詢排除的會議類型（`qa_hidden_meeting_types`）
+
+課程類型、任務類型不放在 `TenantConfig`：這兩個下拉選單改為執行時直接讀 Notion 對應 select 屬性的選項（`services/repositories.py` 的 `get_course_type_options()` / `get_task_type_options()`），避免 Notion 新增選項後還要改設定才會同步。
 
 目前 KariKari 是第一個租戶。程式還不是完整多租戶，但新的公司特定值應放在 `.env` / `TenantConfig`，不要寫死在功能邏輯中。
 
@@ -80,9 +82,24 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 | `ensure_schedule_channel()` | 時間池 / 排課指令只允許在 `SCHEDULE_CHANNEL_ID` |
 | `ensure_task_channel()` | 任務指令只允許在 `TASK_CHANNEL_ID` |
 
+### `cogs/ui_text.py`、`cogs/paging.py`
+
+共用的訊息長度處理（Discord 單則訊息 2000 字上限）。
+
+| 函式 / 類別 | 用途 |
+|---|---|
+| `ui_text.trim_message()` | 最後一道保險：超長時在整行邊界截斷，不會把一行切一半 |
+| `ui_text.fit_items()` | 有下拉選單可看完整資料時，文字預覽依實際長度收斂並回報剩餘筆數 |
+| `ui_text.paginate_blocks()` | 把「不可切開的區塊」（例如同一天的候選時段）分頁 |
+| `ui_text.paginate_sections()` | 把「分區標題＋內容」分頁；跨頁會重印標題並標示「（續）」 |
+| `paging.PagedTextView` | 共用翻頁 View（上一頁／下一頁），只有一頁時按鈕停用 |
+
+原則：清單型畫面**寧可分頁也不要截斷**。只有在下拉選單本來就能看到完整資料時，才用
+`fit_items` 做預覽收斂，並誠實顯示還有幾筆。
+
 ### `cogs/server_setup.py`
 
-`/伺服器初始化` 以預覽／確認兩階段建立或對齊可平轉的角色與五用途頻道。未指派身分組的成員預設看不到營運區；完成後只回傳 `.env` 清單，不直接改本機秘密檔。
+`/伺服器初始化` 以預覽／確認兩階段建立或對齊可平轉的角色與六用途頻道。未指派身分組的成員預設看不到營運區；完成後只回傳 `.env` 清單，不直接改本機秘密檔。
 
 若對應 channel ID 留空，該類指令不限制頻道，方便新租戶初期測試。
 
@@ -94,6 +111,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 - `/時間資訊蒐集`
 - `/從時間池建立任務`
+- `/時間交集查詢`（唯讀，只看共同空檔不寫入 Notion；查完可接「建立任務」按鈕轉進 `/從時間池建立任務`）
 
 主要責任：
 
@@ -101,7 +119,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - 讓控方選藝人比對共同空檔。
 - 預覽與套用時間池整理。
 - 舊 Schedule Request / Course Session 流程已從程式與設定完整移除；主流程只使用 Tasks。
-- 月度時間池候選依課程／錄音／通告／其他分流；非課程先寫隱藏 Task 草稿。
+- 月度時間池候選依課程／錄音／通告／其他分流；一律先寫 `Discord 顯示=false` 的隱藏 Task 草稿。
 
 ### `cogs/scheduling_artist.py`
 
@@ -154,7 +172,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - 將 Task 轉為 `待審核` 並回寫 `最新提交 URL`。
 - 審核最新版提交，回寫審核欄位，依結果更新 Task 並 DM 藝人。
 
-完整產品規則見 [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)。
+完整產品規則見 [SUBMISSION_FLOW.md](../operations/SUBMISSION_FLOW.md)。
 
 ### `cogs/reminders.py`
 
@@ -170,11 +188,12 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 ### `cogs/course_qa.py`
 
-課程助教的 Discord 入口。
+小律（會議秘書）的 Discord 入口。
 
 - `AI_CHANNEL_ID` 頻道支援自然語言，不需要 slash command 或 mention Bot。
 - 每位藝人使用自己的私人 Thread，並以 Discord User ID 對應 Notion Artists。
-- 新 Thread 首次先顯示課程附件索引；索引顯示後仍處理當次問題，後續可指定課程頁／檔案進行內容問答。
+- 查詢範圍是已標記藝人可見、且 `會議類型` 不在 `qa_hidden_meeting_types` 排除清單內的會議紀錄，不限於課程。
+- 新 Thread 首次先顯示附件索引；索引顯示後仍處理當次問題，後續可指定頁面／檔案進行內容問答。
 - 每次提問重新讀取 Notion；Notion 暫時失敗時才退回上次成功快取。
 - 長回覆會切成 Discord 可接受的多則訊息。
 - 公開問題刪除失敗只寫 log，不把權限錯誤洗到頻道。
@@ -280,33 +299,30 @@ Audit Log 寫入。
 - 寫入重要操作紀錄。
 - 失敗不阻斷主流程。
 
-### `services/teacher_confirm.py`
+### `services/scheduling_sla.py`
 
-老師外部確認連結 token 層。
+排課 SLA 狀態層（`TaskWorkflow` / `CollectionWorkflow`）。
 
 責任：
 
-- HMAC-SHA256 簽名與驗證。
-- 24 小時有效期。
-- 成功確認後一次性使用，狀態寫入 `.state/teacher_confirm.json`。
-- 依 `TenantConfig.teacher_link_secret` / `teacher_link_base_url` 判斷功能是否啟用。
+- 追蹤時間收集與任務建立的進度時間戳，供 `reminders.py` 判斷是否要提醒控方。
+- 舊老師確認相關欄位已從 dataclass 移除；讀舊 `.state/scheduling_sla.json` 時會忽略已不存在的欄位，不會因為 schema 變動而炸掉。
 
 ## Web
 
 ### `web/server.py`
 
-老師外部確認頁。
+只暴露 Discord OAuth callback，供 `/伺服器初始化` 同步各頻道 slash command 可見範圍時接住 Discord 的授權回呼。
 
 責任：
 
-- `GET /confirm/{token}`：驗證 Task token、讀簽名候選時段、顯示 HTML 表單。
-- `POST /confirm/{token}`：老師選時段或回覆都不行。
-- 確認成功後通知控方，由控方在 Task 定案。
+- `GET /discord/oauth/callback`：接收 Discord OAuth 授權碼並完成初始化流程。
 
 安全邊界：
 
-- 本機只綁 `127.0.0.1`；對外由 Cloudflare Tunnel 或正式反向代理處理。
-- token 只存 Task ID、候選顯示資料與過期時間，不包含 Notion token 或 Discord token。
+- 只需要 `127.0.0.1` 本機可達，不對外開放，不需要對外網域或 Tunnel。
+- 未設定 `DISCORD_CLIENT_SECRET` 時整個服務不啟動。
+- 老師外部確認頁（`/confirm/{token}`）與相關 token 簽名機制已移除，不再有對外暴露的 HTTP 表單。
 
 ## Discord 互動限制
 

@@ -11,10 +11,6 @@ TASK_TYPE_BY_ARRANGEMENT = {
 }
 
 
-def requires_teacher_confirmation(arrangement_type: str) -> bool:
-    return arrangement_type == "課程"
-
-
 def creates_unpublished_task_draft(arrangement_type: str) -> bool:
     return arrangement_type in {"錄音", "通告", "其他"}
 

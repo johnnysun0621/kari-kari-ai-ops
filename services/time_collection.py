@@ -219,8 +219,8 @@ def reload_state_for_tests() -> None:
 def availability_announcement_copy(month: str) -> str:
     return (
         "請提供這個月方便安排的時段，\n"
-        "供 Kari 行政安排課程、錄音或通告參考。\n"
-        "正式安排前，Kari 行政會再向你確認。\n\n"
+        "供 LURASUPA 行政安排課程、錄音或通告參考。\n"
+        "正式安排前，LURASUPA 行政會再向你確認。\n\n"
         "請點選「選擇可配合時段」開始填寫。"
     )
 

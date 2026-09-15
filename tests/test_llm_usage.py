@@ -1,3 +1,5 @@
+import json
+
 from services import llm_usage
 
 
@@ -51,8 +53,9 @@ def test_legacy_integer_state_remains_readable(monkeypatch, tmp_path):
     state_path = tmp_path / "usage.json"
     monkeypatch.setattr(llm_usage, "STATE_PATH", state_path)
     day = llm_usage._today()
+    tenant_name = llm_usage.config.get_tenant().name
     state_path.write_text(
-        '{"KariKari": {"' + day + '": 321}}',
+        json.dumps({tenant_name: {day: 321}}),
         encoding="utf-8",
     )
 

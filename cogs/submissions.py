@@ -20,7 +20,13 @@ logger = logging.getLogger(__name__)
 LINK_PREFIXES = ("http://", "https://")
 FREE_DISCORD_UPLOAD_MB = 10
 MAX_UPLOAD_MB = FREE_DISCORD_UPLOAD_MB  # 標準流程假設藝人使用 Discord 免費方案
-FILE_UPLOAD_WAIT_MINUTES = 180
+def _file_upload_wait_minutes() -> int:
+    """Drive 上傳等待時間；租戶可用 FILE_UPLOAD_WAIT_MINUTES 調整。"""
+    return config.get_tenant().file_upload_wait_minutes
+
+
+# 向後相容別名：既有測試與文案沿用這個名稱讀當前租戶設定
+FILE_UPLOAD_WAIT_MINUTES = _file_upload_wait_minutes()
 REVIEW_RESULTS = ("通過", "需修改", "退回")
 FILENAME_COMPONENT_LIMIT = 60
 ORIGINAL_FILENAME_LIMIT = 120
@@ -123,7 +129,8 @@ def direct_upload_size_error(size_bytes: int) -> str | None:
     )
 
 
-def file_upload_wait_label(minutes: int = FILE_UPLOAD_WAIT_MINUTES) -> str:
+def file_upload_wait_label(minutes: int | None = None) -> str:
+    minutes = _file_upload_wait_minutes() if minutes is None else minutes
     if minutes % 60 == 0:
         return f"{minutes // 60} 小時"
     return f"{minutes} 分鐘"
@@ -490,14 +497,19 @@ def submit_task_intro_text(
         "先選任務；選定後我才會依 Notion 指定方式要求你上傳檔案、貼連結或填文字。",
         "",
     ]
-    for task in tasks[:10]:
-        lines.append(
-            f"・{task.name}｜{submit_method_label(task.submit_method)}｜"
-            f"{task.task_type or '任務'}｜{ui_text.deadline_text(task, now)}"
-            f"{_teacher_requirement_text(task)}"
-        )
-    if len(tasks) > 10:
-        lines.append(f"...另 {len(tasks) - 10} 筆請用下方選單查看")
+    task_lines = [
+        f"・{task.name}｜{submit_method_label(task.submit_method)}｜"
+        f"{task.task_type or '任務'}｜{ui_text.deadline_text(task, now)}"
+        f"{_teacher_requirement_text(task)}"
+        for task in tasks
+    ]
+    # 任務說明可能很長，固定筆數仍會超過 Discord 上限；改成看實際長度放得下幾筆，
+    # 放不下的用下方選單查看（選單本來就列出全部可提交任務）。
+    budget = ui_text.DISCORD_MESSAGE_LIMIT - len("\n".join(lines)) - 150
+    shown, remaining = ui_text.fit_items(task_lines, budget)
+    lines.extend(shown)
+    if remaining:
+        lines.append(f"...另 {remaining} 筆請用下方選單查看")
     if any(task.submit_method in ("檔案", "混合") for task in tasks):
         lines.append("")
         lines.append(
@@ -1027,7 +1039,7 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
         owner_id: int | None = None,
         drive_only: bool = False,
     ):
-        super().__init__(timeout=FILE_UPLOAD_WAIT_MINUTES * 60)
+        super().__init__(timeout=_file_upload_wait_minutes() * 60)
         self.cog = cog
         self.task = task
         self.folder_url = folder_url
@@ -1060,7 +1072,7 @@ class ReviewFeedbackLargeFileChoiceView(discord.ui.View):
         targets: list[ReviewFeedbackDriveTarget],
         owner_id: int | None = None,
     ):
-        super().__init__(timeout=FILE_UPLOAD_WAIT_MINUTES * 60)
+        super().__init__(timeout=_file_upload_wait_minutes() * 60)
         self.cog = cog
         self.submission = submission
         self.result = result
@@ -1375,7 +1387,7 @@ class SubmissionsCog(commands.Cog):
             )
             return
         now = datetime.now(config.get_tenant().tz)
-        expires_at = now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES)
+        expires_at = now + timedelta(minutes=_file_upload_wait_minutes())
         folder_url = ""
         folder_base_id = ""
         folder_path: list[str] = []
@@ -1538,7 +1550,7 @@ class SubmissionsCog(commands.Cog):
         """審核後在同一頻道等待老師批改檔，避免要求控方跳私訊或重跑流程。"""
         await interaction.response.defer(ephemeral=True, thinking=True)
         now = datetime.now(config.get_tenant().tz)
-        expires_at = now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES)
+        expires_at = now + timedelta(minutes=_file_upload_wait_minutes())
         self.pending_review_feedback_files[interaction.user.id] = PendingReviewFeedbackFile(
             submission=submission,
             result=result,
@@ -1998,7 +2010,9 @@ class SubmissionsCog(commands.Cog):
                     logger.exception("審核通知時間回寫失敗，請確認 Submissions 審核欄位已建立")
                 await audit.log_event(
                     event_name=f"審核結果通知｜{submission.name}",
-                    action_type="通知", operator="System", source="Notion",
+                    # 「提醒」是 Notion 操作類型既有的選項；寫沒有的值 Notion 會自動新增，
+                    # 會讓下拉多出未定義選項，也讓同類事件散在兩個名字下。
+                    action_type="提醒", operator="System", source="Notion",
                     target_db="Submissions & File Index", target_url=submission.url,
                     after=f"{submission.status}｜通知 {sent} 位藝人",
                 )

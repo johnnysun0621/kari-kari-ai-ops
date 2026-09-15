@@ -86,7 +86,7 @@ def test_month_overview_is_generated_without_llm_and_includes_sources():
 
     answer = course_qa.build_month_overview_answer(records, "2026-08")
 
-    assert "2026 年 8 月共有 2 筆課程紀錄" in answer
+    assert "2026 年 8 月共有 2 筆會議紀錄" in answer
     assert "8/3｜八月表演課" in answer
     assert "舞台走位與表情管理" in answer
     assert "8/6｜八月歌唱課" in answer
@@ -206,6 +206,6 @@ def test_course_notes_fallback_uses_notion_summaries():
 
     answer = course_qa.build_course_notes_fallback(records)
 
-    assert "先提供 Notion 課程摘要" in answer
+    assert "先提供 Notion 會議摘要" in answer
     assert "表演藝術課" in answer
     assert "練習舞台走位與表情管理" in answer

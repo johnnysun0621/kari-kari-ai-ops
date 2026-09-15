@@ -1,4 +1,4 @@
-"""課程助教的需求收斂與輕量檢索。"""
+"""會議秘書小律的需求收斂與輕量檢索。"""
 import json
 import re
 from dataclasses import dataclass
@@ -15,6 +15,7 @@ _OTHER_FOLLOWUP_RE = re.compile(r"其他|另外|別的|其餘|更多|換一堂|�
 _SUMMARY_QUERY_RE = re.compile(r"整理.*(?:筆記|重點|摘要)|(?:筆記|重點|摘要).*整理|幫我整理|複習")
 _BROAD_QUERY_RE = re.compile(
     r"上過|上了|學過|有哪些|哪幾堂|什麼課|啥課|全部|所有|總覽|統整|整理|課程紀錄|上課紀錄"
+    r"|開過會|開了會|討論過|聊過|會議紀錄|談過"
 )
 _EXPLICIT_DATE_RE = re.compile(
     r"(20\d{2})\s*[-年/]\s*(\d{1,2})(?:\s*月)?(?:\s*[-/日]\s*\d{1,2})?"
@@ -100,14 +101,14 @@ def _fallback_intent(question: str, records: list[CourseMeetingRecord]) -> Query
         mode="summarize" if _SUMMARY_QUERY_RE.search(question) else "course_question",
         record_ids=tuple(matches),
         attachment_names=attachment_names,
-        # 課程助教接受開放式問法。找不到明確關鍵字時，仍提供有限筆
+        # 會議秘書小律接受開放式問法。找不到明確關鍵字時，仍提供有限筆
         # 本人可見紀錄給回答模型判斷是否有足夠證據，而不是直接拒答。
         broad=bool(question.strip()),
     )
 
 
 def is_broad_query(question: str) -> bool:
-    """只允許明確的總覽問題擴大到課程目錄，避免模糊問題誤讀資料。"""
+    """只允許明確的總覽問題擴大到會議目錄，避免模糊問題誤讀資料。"""
     return bool(_BROAD_QUERY_RE.search(question))
 
 
@@ -161,20 +162,21 @@ async def classify_query(
             {
                 "role": "system",
                 "content": (
-                    "你是開放式課程資料檢索路由器。使用者可以用任何自然語句提問。"
-                    "先判斷任務，再只依據課程目錄選出需要的 page_id，不要直接回答問題。"
+                    "你是開放式會議資料檢索路由器。使用者可以用任何自然語句提問。"
+                    "這些紀錄不限於課程，也包含藝人單人會議、企劃會議、A&R 會議等類型。"
+                    "先判斷任務，再只依據會議目錄選出需要的 page_id，不要直接回答問題。"
                     "回傳 JSON：mode、month、record_ids、terms、attachment_names、broad。"
                     "mode 可用 month_overview、summarize、explain、transcript_search、"
                     "task_lookup、compare、action_plan、practice、course_question。"
-                    "明確指定月份、課程、老師、關鍵字或附件時縮小範圍；"
-                    "延續問題優先沿用上一輪；需要跨課整理時 broad=true。"
+                    "明確指定月份、會議主題、負責人、關鍵字或附件時縮小範圍；"
+                    "延續問題優先沿用上一輪；需要跨會議整理時 broad=true。"
                     "record_ids 和 attachment_names 必須來自目錄。資料可能不足時仍選最相關紀錄，"
                     "讓回答階段根據證據說明不足，不要因為問法不在範例中就拒絕。"
                 ),
             },
             {
                 "role": "user",
-                "content": f"上一輪摘要：{previous}\n問題：{question}\n課程目錄：\n{_catalog(records)}",
+                "content": f"上一輪摘要：{previous}\n問題：{question}\n會議目錄：\n{_catalog(records)}",
             },
         ],
     }

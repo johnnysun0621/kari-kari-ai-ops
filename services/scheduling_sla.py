@@ -1,7 +1,7 @@
 """月度時間池到正式 Task 發布的持久化 SLA 狀態。"""
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -24,8 +24,6 @@ class TaskWorkflow:
     task_page_id: str
     month: str
     started_ts: int
-    teacher_deadline_ts: int = 0
-    teacher_responded_ts: int = 0
     completed_ts: int = 0
 
 
@@ -40,6 +38,13 @@ _tasks: dict[str, TaskWorkflow] = {}
 _sent_events: set[str] = set()
 
 
+def _known_fields(cls, item: dict) -> dict:
+    """只取目前 dataclass 還存在的欄位；舊狀態檔留下的欄位（例如已移除的老師確認
+    時間）直接忽略，避免改 schema 後讀舊檔就整個崩掉。"""
+    allowed = {f.name for f in fields(cls)}
+    return {key: value for key, value in item.items() if key in allowed}
+
+
 def _load() -> None:
     global _loaded
     if _loaded:
@@ -50,10 +55,10 @@ def _load() -> None:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return
     for item in raw.get("collections", []):
-        workflow = CollectionWorkflow(**item)
+        workflow = CollectionWorkflow(**_known_fields(CollectionWorkflow, item))
         _collections[workflow.workflow_id] = workflow
     for item in raw.get("tasks", []):
-        workflow = TaskWorkflow(**item)
+        workflow = TaskWorkflow(**_known_fields(TaskWorkflow, item))
         _tasks[workflow.task_page_id] = workflow
     _sent_events.update(str(value) for value in raw.get("sent_events", []))
 
@@ -104,7 +109,6 @@ def register_task(
     task_page_id: str,
     month: str,
     created_ts: int,
-    teacher_deadline_ts: int = 0,
 ) -> None:
     _load()
     collections = [item for item in _collections.values() if item.month == month]
@@ -115,17 +119,7 @@ def register_task(
         task_page_id=task_page_id,
         month=month,
         started_ts=started_ts,
-        teacher_deadline_ts=teacher_deadline_ts,
     )
-    _save()
-
-
-def mark_teacher_responded(task_page_id: str, responded_ts: int) -> None:
-    _load()
-    workflow = _tasks.get(task_page_id)
-    if workflow is None:
-        return
-    workflow.teacher_responded_ts = responded_ts
     _save()
 
 
@@ -155,17 +149,6 @@ def due_events(now_ts: int) -> list[SLAEvent]:
     for workflow in _tasks.values():
         if workflow.completed_ts:
             continue
-        if (
-            workflow.teacher_deadline_ts
-            and not workflow.teacher_responded_ts
-            and now_ts >= workflow.teacher_deadline_ts
-        ):
-            key = f"task:{workflow.task_page_id}:teacher_overdue"
-            if key not in _sent_events:
-                events.append(SLAEvent(
-                    key,
-                    f"🔴 課程 Task 老師確認已超過 24 小時：<https://www.notion.so/{workflow.task_page_id.replace('-', '')}>",
-                ))
         age = now_ts - workflow.started_ts
         if age >= 48 * 3600:
             key = f"task:{workflow.task_page_id}:sla_48h"

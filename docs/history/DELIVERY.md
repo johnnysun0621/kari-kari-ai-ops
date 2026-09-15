@@ -15,7 +15,7 @@ Discord 收集月度可配合時間
 
 任務則由 Notion Tasks 派送到 Discord，支援逐筆收到確認、每 12 小時未確認重送、提交、Drive 歸檔、指定審核與修改期限。
 
-目前程式註冊 10 個 slash commands；完整角色與頻道對應見 [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md)。藝人檔案提交從 `/我的任務` 進入並統一使用 Google Drive；Discord 附件只保留在老師批改檔等獨立審核流程。
+目前程式註冊 10 個 slash commands；完整角色與頻道對應見 [DISCORD_CHANNELS.md](../operations/DISCORD_CHANNELS.md)。藝人檔案提交從 `/我的任務` 進入並統一使用 Google Drive；Discord 附件只保留在老師批改檔等獨立審核流程。
 
 ## 系統邊界
 
@@ -37,8 +37,8 @@ Discord 收集月度可配合時間
 
 ## 上線與回復
 
-- 上線前依 [SERVER_MIGRATION.md](SERVER_MIGRATION.md) 真機驗收。
-- 每次部署先跑 [TESTING.md](TESTING.md) 的完整驗證。
+- 上線前依 [SERVER_MIGRATION.md](../operations/SERVER_MIGRATION.md) 真機驗收。
+- 每次部署先跑 [TESTING.md](../operations/TESTING.md) 的完整驗證。
 - 發生回歸時切回上一個已驗證 commit；Notion 破壞性整理採封存而非刪除。
 - 秘密只保留在 `.env` 或部署平台 secret，不進 Git。
 
@@ -46,6 +46,6 @@ Discord 收集月度可配合時間
 
 - [會議需求追蹤矩陣](REQUIREMENTS_TRACEABILITY.md)
 - [Notion Views 稽核](NOTION_VIEWS_AUDIT.md)
-- [Notion Schema](NOTION_SCHEMA.md)
-- [Discord 指令](DISCORD_COMMANDS.md)
-- [營運 SOP](OPERATIONS_PLAYBOOK.md)
+- [Notion Schema](../foundation/NOTION_SCHEMA.md)
+- [Discord 指令](../operations/DISCORD_COMMANDS.md)
+- [營運 SOP](../operations/OPERATIONS_PLAYBOOK.md)

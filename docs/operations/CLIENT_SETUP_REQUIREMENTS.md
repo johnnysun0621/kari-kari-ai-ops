@@ -71,7 +71,7 @@ Google Drive OAuth 細節見 [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md)。
 
 ### 4. LLM API 帳號
 
-只有啟用課程助教或營運 AI 查詢時才需要：
+只有啟用小律（會議秘書）或營運 AI 查詢時才需要：
 
 - 客戶自己的 LLM API 帳號
 - API Key
@@ -85,9 +85,8 @@ Google Drive OAuth 細節見 [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md)。
 
 - 公司固定 Mac／Windows 電腦，保持開機並執行 Bot
 - 雲端 VM 或部署平台
-- 公司自己的 Tunnel／固定網域，供老師確認表單或 OAuth callback 使用
 
-本機測試可使用 `127.0.0.1`；正式環境建議使用固定主機與固定 HTTPS 網域。
+`/伺服器初始化` 的 Discord OAuth callback 只需要本機 `127.0.0.1` 可達，不需要對外網域或 Tunnel。
 
 ### 6. TimeTree
 
@@ -103,7 +102,7 @@ Google Drive OAuth 細節見 [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md)。
 - [ ] Notion 欄位與資料庫已定稿
 - [ ] 公司 Google Drive 根資料夾已建立
 - [ ] Google 帳號持有人可完成 OAuth
-- [ ] 是否啟用課程助教與 LLM API
+- [ ] 是否啟用小律（會議秘書）與 LLM API
 - [ ] Bot 要部署在本機還是固定雲端主機
 - [ ] 老師與藝人的 Discord User ID 已填入 Notion People／Artists
 
@@ -125,4 +124,4 @@ Google Drive OAuth 細節見 [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md)。
 3. Artists、People 的 Discord User ID。
 4. 一台能持續執行 Bot 的電腦。
 
-Google Drive 與 LLM API 可在需要檔案提交或課程助教時再啟用。
+Google Drive 與 LLM API 可在需要檔案提交或小律（會議秘書）時再啟用。

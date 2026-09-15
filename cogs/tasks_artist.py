@@ -1,5 +1,6 @@
 """P0-2 任務查詢：藝人 /我的任務、管理端 /任務總覽。"""
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import discord
@@ -7,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from cogs import channel_guard, ui_text
+from cogs import channel_guard, paging, ui_text
 from services.permissions import is_admin
 from services import audit, repositories, task_notifications
 
@@ -190,6 +191,29 @@ def _task_line(task: repositories.TaskItem, now: datetime, extra: str = "") -> s
     return line
 
 
+def task_bucket_sections(
+    buckets: dict[str, list[repositories.TaskItem]],
+    now: datetime,
+    name_of_artist: dict[str, str] | None = None,
+) -> list[tuple[str, list[str]]]:
+    """把分區結果整理成 (分區標題, 任務行) ；供直接輸出或分頁使用。"""
+    sections: list[tuple[str, list[str]]] = []
+    for key, title in SECTION_ORDER:
+        tasks = buckets.get(key, [])
+        if not tasks:
+            continue
+        task_lines: list[str] = []
+        for task in tasks:
+            extra = ""
+            if name_of_artist is not None:
+                names = [name_of_artist.get(pid, "") for pid in task.artist_page_ids]
+                names = [n for n in names if n]
+                extra = "、".join(names) or "（未關聯藝人）"
+            task_lines.append(_task_line(task, now, extra))
+        sections.append((f"**{title}**（{len(tasks)}）", task_lines))
+    return sections
+
+
 def format_task_buckets(
     buckets: dict[str, list[repositories.TaskItem]],
     now: datetime,
@@ -197,33 +221,52 @@ def format_task_buckets(
 ) -> str:
     """把分區結果排成 Discord 訊息；name_of_artist 給管理端顯示藝人名。"""
     lines: list[str] = []
-    for key, title in SECTION_ORDER:
-        tasks = buckets.get(key, [])
-        if not tasks:
-            continue
-        lines.append(f"**{title}**（{len(tasks)}）")
-        for task in tasks:
-            extra = ""
-            if name_of_artist is not None:
-                names = [name_of_artist.get(pid, "") for pid in task.artist_page_ids]
-                names = [n for n in names if n]
-                extra = "、".join(names) or "（未關聯藝人）"
-            lines.append(_task_line(task, now, extra))
+    for title, task_lines in task_bucket_sections(buckets, now, name_of_artist):
+        lines.append(title)
+        lines.extend(task_lines)
         lines.append("")
     return "\n".join(lines).strip()
 
 
-class MyTasksView(discord.ui.View):
-    """藝人任務總覽的操作入口。"""
+def task_list_pages(
+    header: str,
+    buckets: dict[str, list[repositories.TaskItem]],
+    now: datetime,
+    name_of_artist: dict[str, str] | None = None,
+) -> list[str]:
+    """把任務清單切成多頁訊息，讓任務多的時候可以翻頁看完，而不是被截斷。"""
+    sections = task_bucket_sections(buckets, now, name_of_artist)
+    # 60 字保留給頁碼與標題後的空行。
+    budget = ui_text.DISCORD_MESSAGE_LIMIT - len(header) - 60
+    line_pages = ui_text.paginate_sections(sections, budget)
+    total = len(line_pages)
+    pages: list[str] = []
+    for index, lines in enumerate(line_pages):
+        page_header = header if total == 1 else f"{header}（第 {index + 1}/{total} 頁）"
+        body = "\n".join(lines).strip()
+        pages.append(ui_text.trim_message(f"{page_header}\n\n{body}"))
+    return pages
 
-    def __init__(self, cog: "TasksCog", submittable_count: int):
-        super().__init__(timeout=600)
+
+class MyTasksView(paging.PagedTextView):
+    """藝人任務總覽的操作入口；任務多時可翻頁看完全部。"""
+
+    def __init__(
+        self,
+        cog: "TasksCog",
+        submittable_count: int,
+        *,
+        pages: list[str] | None = None,
+        operator_id: int = 0,
+    ):
+        super().__init__(pages or [""], operator_id, timeout=600)
         self.cog = cog
         if submittable_count > 0:
             button = discord.ui.Button(
                 label=f"提交任務（{submittable_count}）",
                 style=discord.ButtonStyle.primary,
                 emoji="📤",
+                row=0,
             )
             button.callback = self.open_submissions
             self.add_item(button)
@@ -233,6 +276,75 @@ class MyTasksView(discord.ui.View):
         await self.cog.open_submissions(interaction)
 
 
+@dataclass
+class DispatchOutcome:
+    """單筆任務派發通知的結果；供背景 loop 與 /任務通知重送 共用同一套發送邏輯。"""
+    notifyable_artists: list[repositories.Artist] = field(default_factory=list)
+    sent: int = 0
+
+    @property
+    def is_complete(self) -> bool:
+        return bool(self.notifyable_artists) and self.sent == len(self.notifyable_artists)
+
+
+async def send_task_notification(bot, task: repositories.TaskItem) -> DispatchOutcome | None:
+    """對任務關聯的藝人送出派發通知（私訊＋公開類型另發公告頻道）。
+
+    回傳 None 代表沒有找到任何有效收件人（沒有關聯藝人，或藝人缺 Discord User ID）；
+    呼叫端各自決定要怎麼提示（背景 loop 發警告到管理頻道，重送指令直接回覆操作者）。
+    """
+    artists = await repositories.get_artists_by_ids(task.artist_page_ids)
+    notifyable_artists = [artist for artist in artists if artist.discord_user_id]
+    if not notifyable_artists:
+        return None
+    sent = 0
+    for artist in artists:
+        if not artist.discord_user_id:
+            continue
+        try:
+            user = await bot.fetch_user(int(artist.discord_user_id))
+            view = discord.ui.View(timeout=None)
+            view.add_item(TaskReceiptButton(task.page_id))
+            view.add_item(TaskConcernButton(task.page_id))
+            if task.url:
+                view.add_item(
+                    discord.ui.Button(
+                        label="查看任務內容",
+                        style=discord.ButtonStyle.link,
+                        url=task.url,
+                        emoji="📄",
+                    )
+                )
+            await user.send(task_notifications.notification_message(task), view=view)
+            sent += 1
+        except Exception:
+            logger.exception("任務派發通知失敗：%s／%s", task.name, artist.name)
+    if sent == len(notifyable_artists):
+        logger.info("任務派發通知成功：%s，已通知 %s 位藝人", task.name, sent)
+        if task_notifications.is_public_announcement_task(
+            task, config.get_tenant().public_task_types
+        ):
+            announce_channel = bot.get_channel(config.get_tenant().resolved_announce_channel_id)
+            if announce_channel is not None:
+                try:
+                    await announce_channel.send(task_notifications.public_announcement_message(task))
+                    await audit.log_event(
+                        event_name=f"任務公開通知｜{task.name}",
+                        action_type="建立",
+                        operator="System",
+                        target_db="Tasks",
+                        target_url=task.url,
+                        after=f"公告頻道 {announce_channel.id}",
+                    )
+                except Exception:
+                    logger.exception("任務公開公告發送失敗：%s", task.name)
+        try:
+            await repositories.mark_task_discord_notified(task.page_id)
+        except Exception:
+            logger.exception("任務通知時間寫入 Notion 失敗：%s", task.page_id)
+    return DispatchOutcome(notifyable_artists=notifyable_artists, sent=sent)
+
+
 class TaskResendSelect(discord.ui.Select):
     def __init__(self, tasks: list[repositories.TaskItem]):
         self.tasks = {task.page_id: task for task in tasks}
@@ -240,7 +352,11 @@ class TaskResendSelect(discord.ui.Select):
             discord.SelectOption(
                 label=(task.name or "未命名任務")[:100],
                 value=task.page_id,
-                description=f"狀態：{task.status or '未設定'}"[:100],
+                # 標出藝人確認狀態：已確認的重送會要求對方重新按一次。
+                description=(
+                    f"{'✅ 已確認' if task.discord_acknowledged_at else '⏳ 未確認'}"
+                    f"｜狀態：{task.status or '未設定'}"
+                )[:100],
             )
             for task in tasks[:25]
         ]
@@ -268,24 +384,40 @@ class TaskResendView(discord.ui.View):
         task = self.select.tasks[self.select.values[0]]
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
+            # 清掉舊的通知／收到時間，讓這次重送視為全新一輪，藝人需要重新按「收到任務」。
             await repositories.reset_task_discord_notification(task.page_id)
-            await audit.log_event(
-                event_name=f"重送任務通知｜{task.name}",
-                action_type="更新",
-                operator=str(interaction.user),
-                discord_user_id=str(interaction.user.id),
-                target_db="Tasks",
-                target_url=task.url,
-                after="清除 Discord 通知／收到時間，等待下一輪重新派發",
-            )
         except Exception:
             logger.exception("重送任務通知設定失敗：%s", task.page_id)
             await interaction.followup.send("❌ 重送設定失敗，請稍後再試。", ephemeral=True)
             return
-        await interaction.followup.send(
-            f"✅ 已排入重送：**{task.name}**。Bot 將在下一輪背景檢查（目前每 30 秒）重新通知。",
-            ephemeral=True,
+        # 重送是操作者當下主動要求的動作，直接送出，不等下一輪背景檢查。
+        outcome = await send_task_notification(interaction.client, task)
+        if outcome is None:
+            await interaction.followup.send(
+                f"❌ **{task.name}** 找不到有效的關聯藝人或 Discord User ID，請先回 Notion 補齊後再重送。",
+                ephemeral=True,
+            )
+            return
+        await audit.log_event(
+            event_name=f"重送任務通知｜{task.name}",
+            action_type="更新",
+            operator=str(interaction.user),
+            discord_user_id=str(interaction.user.id),
+            target_db="Tasks",
+            target_url=task.url,
+            after=f"立即重新通知 {outcome.sent}／{len(outcome.notifyable_artists)} 位藝人",
         )
+        if outcome.is_complete:
+            await interaction.followup.send(
+                f"✅ 已重新通知：**{task.name}**（{outcome.sent} 位藝人）。",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                f"⚠️ **{task.name}** 部分通知失敗（成功 {outcome.sent}／應通知 "
+                f"{len(outcome.notifyable_artists)}），請稍後再試一次 `/任務通知重送`。",
+                ephemeral=True,
+            )
         self.stop()
 
     @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️")
@@ -311,16 +443,18 @@ class TasksCog(commands.Cog):
         tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
         now = datetime.now(config.get_tenant().tz)
         buckets = repositories.classify_tasks_for_display(tasks, now)
-        body = format_task_buckets(buckets, now)
         submittable_count = sum(
             1 for task in tasks if repositories.is_task_submittable(task)
         )
-        if not body:
-            content = "🎉 目前沒有進行中的任務。"
-        else:
-            content = ui_text.trim_message(f"📑 {artist.name} 的任務：\n\n{body}")
-        view = MyTasksView(self, submittable_count) if submittable_count else None
-        return content, view
+        if not any(buckets.get(key) for key, _ in SECTION_ORDER):
+            return "🎉 目前沒有進行中的任務。", None
+        pages = task_list_pages(f"📑 {artist.name} 的任務：", buckets, now)
+        if submittable_count == 0 and len(pages) == 1:
+            return pages[0], None
+        view = MyTasksView(
+            self, submittable_count, pages=pages, operator_id=discord_user_id,
+        )
+        return view.current_text(), view
 
     async def open_submissions(self, interaction: discord.Interaction) -> None:
         submissions_cog = self.bot.get_cog("SubmissionsCog")
@@ -359,7 +493,7 @@ class TasksCog(commands.Cog):
             logger.exception("讀取藝人任務失敗")
             await interaction.followup.send("❌ 讀取任務失敗，請稍後再試。", ephemeral=True)
             return
-        await interaction.followup.send(content, view=view, ephemeral=True)
+        await interaction.followup.send(content, view=view or discord.utils.MISSING, ephemeral=True)
 
     @app_commands.command(name="任務總覽", description="管理端：全部未結案任務（待審核／逾期／即將到期）")
     @app_commands.default_permissions(administrator=True)
@@ -378,24 +512,35 @@ class TasksCog(commands.Cog):
         now = datetime.now(config.get_tenant().tz)
         buckets = repositories.classify_tasks_for_display(tasks, now)
         name_of = {pid: a.name for pid, a in artist_map.items()}
-        body = format_task_buckets(buckets, now, name_of_artist=name_of)
-        if not body:
+        if not any(buckets.get(key) for key, _ in SECTION_ORDER):
             await interaction.followup.send("目前沒有未結案的任務。", ephemeral=True)
             return
         total = sum(len(v) for v in buckets.values())
-        await interaction.followup.send(
-            ui_text.trim_message(f"📋 未結案任務總覽（{total} 筆）：\n\n{body}"), ephemeral=True
+        pages = task_list_pages(
+            f"📋 未結案任務總覽（{total} 筆）：", buckets, now, name_of_artist=name_of,
         )
+        # 任務多到一頁放不下時給翻頁按鈕，讓控方能看完全部而不是只看到前面幾筆。
+        view = (
+            paging.PagedTextView(pages, interaction.user.id)
+            if len(pages) > 1
+            else discord.utils.MISSING
+        )
+        await interaction.followup.send(pages[0], view=view, ephemeral=True)
 
     @app_commands.command(name="任務通知重送", description="管理端：選擇任務重新通知關聯藝人")
     @app_commands.default_permissions(administrator=True)
     @is_admin()
-    async def resend_task_notification(self, interaction: discord.Interaction):
+    @app_commands.describe(關鍵字="用任務名稱片段縮小範圍；任務多的時候用這個比翻頁快")
+    async def resend_task_notification(
+        self,
+        interaction: discord.Interaction,
+        關鍵字: str | None = None,
+    ):
         if not await channel_guard.ensure_admin_channel(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            tasks = [
+            resendable = [
                 task for task in await repositories.get_active_tasks()
                 if task_notifications.is_resendable_task(task)
             ]
@@ -403,14 +548,32 @@ class TasksCog(commands.Cog):
             logger.exception("讀取可重送任務失敗")
             await interaction.followup.send("❌ 讀取任務失敗，請稍後再試。", ephemeral=True)
             return
-        if not tasks:
+        if not resendable:
             await interaction.followup.send("目前沒有開啟 Discord 顯示的任務。", ephemeral=True)
             return
-        await interaction.followup.send(
-            "請選擇要重新通知的任務。這只會清除通知紀錄，不會修改任務內容。",
-            view=TaskResendView(tasks),
-            ephemeral=True,
-        )
+
+        matched = task_notifications.filter_tasks_by_keyword(resendable, 關鍵字)
+        if not matched:
+            await interaction.followup.send(
+                f"找不到名稱含「{關鍵字}」的任務。目前可重送的共 {len(resendable)} 筆，"
+                "換個關鍵字或留空重試。",
+                ephemeral=True,
+            )
+            return
+        tasks = task_notifications.sort_resendable_tasks(matched)
+
+        header = "請選擇要重新通知的任務。這只會清除通知紀錄，不會修改任務內容。\n" \
+                 "已按過「收到任務」的任務也可以重送（標示 ✅），重送後藝人需要重新確認一次。"
+        if 關鍵字:
+            header += f"\n🔍 關鍵字「{關鍵字}」：符合 {len(tasks)} 筆（共 {len(resendable)} 筆可重送）。"
+        # Discord 下拉硬上限 25；未確認的已排前面，被截掉的要講出來而不是默默消失。
+        hidden = max(0, len(tasks) - 25)
+        if hidden:
+            header += (
+                f"\n⚠️ 僅列出前 25 筆（另有 {hidden} 筆未列出）。"
+                "請用 `關鍵字` 參數縮小範圍，例如 `/任務通知重送 關鍵字:編曲`。"
+            )
+        await interaction.followup.send(header, view=TaskResendView(tasks), ephemeral=True)
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error):
         if isinstance(error, app_commands.CheckFailure):

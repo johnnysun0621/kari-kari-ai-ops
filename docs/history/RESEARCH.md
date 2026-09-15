@@ -1,7 +1,7 @@
 # KariKari AI Ops｜需求研究與現況分析（2026-07-08）
 
 > 本文件是「完全體」規劃前的完整研究紀錄：客戶需求 → 資料層現況 → 程式碼現況 → Gap 分析 → 決策收斂。
-> 執行計劃見 [ROADMAP.md](ROADMAP.md)；產品原則見 [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md)。
+> 執行計劃見 [ROADMAP.md](ROADMAP.md)；產品原則見 [PROJECT_PRINCIPLES.md](../foundation/PROJECT_PRINCIPLES.md)。
 
 ## 一、需求源：2026-06-29 Kickoff（客戶需求逐字稿整理）
 

@@ -1,9 +1,9 @@
 # KariKari AI Ops｜完全體開發路線圖與進度
 
 > 目標：把系統開發到「完全體」＝可販售的 showcase。KariKari 是第一個落地站，
-> 架構全程遵守 [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md)（多租戶平展化：架構不擋路）。
+> 架構全程遵守 [PROJECT_PRINCIPLES.md](../foundation/PROJECT_PRINCIPLES.md)（多租戶平展化：架構不擋路）。
 > 需求源：2026-06-29 Kickoff 會議——完整研究與 Gap 分析見 [RESEARCH.md](RESEARCH.md)。
-> AI 協作者接手流程見 [CLAUDE.md](CLAUDE.md)。
+> AI 協作者接手流程見 [CLAUDE.md](../../CLAUDE.md)。
 
 ## 驗收標準（Kickoff MVP Definition of Done）
 
@@ -85,7 +85,7 @@
 - ✅ PDF、DOCX、PPTX、XLSX 與常見文字檔文字抽取；附件正文分離，避免未指定檔案影響回答。
 - ✅ 移除 15 秒提問冷卻；長回覆自動分段。
 - ✅ 公開問題刪除失敗改為只記 log，不在頻道顯示權限警告。
-- ✅ 相關測試目前 213 passed；完整指令見 [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md)。
+- ✅ 相關測試目前 213 passed；完整指令見 [DISCORD_COMMANDS.md](../operations/DISCORD_COMMANDS.md)。
 
 目前限制：掃描圖片 PDF、舊版 `.doc`／`.ppt`、加密檔案尚未支援；刪除公開問題仍需要 Bot 的 `管理訊息` 權限，但不影響私人 Thread 問答。
 

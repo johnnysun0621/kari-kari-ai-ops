@@ -69,7 +69,7 @@ class TestDatePresetView:
         assert "整天可：08:00–24:00" in view.prompt()
 
 
-def test_availability_management_view_has_cancel_navigation():
+def test_availability_management_view_has_clear_finish_navigation():
     artist = repositories.Artist(
         page_id="artist-1", name="Johnny", discord_user_id="123", status="已簽約"
     )
@@ -78,7 +78,20 @@ def test_availability_management_view_has_cancel_navigation():
         artist, [], "",
     )
 
-    assert "取消" in child_labels(view)
+    labels = child_labels(view)
+    assert "完成並退出" in labels
+    assert "取消" not in labels
+
+
+def test_deletion_confirmation_says_delete_is_saved_and_refill_is_optional():
+    text = scheduling_artist.deletion_confirmation_text(
+        ["9/15（週二） 08:00-24:00｜月度可配合時段"]
+    )
+
+    assert "已刪除並保存" in text
+    assert "只需要刪除，到這裡就完成了" in text
+    assert "完成並退出" in text
+    assert "新增／補填日期" in text
 
 
 def test_availability_management_view_can_continue_filling_after_delete():

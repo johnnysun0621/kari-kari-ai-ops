@@ -43,7 +43,7 @@ def _split_discord_message(content: str, limit: int = _DISCORD_MESSAGE_LIMIT) ->
     return chunks or [""]
 
 
-class AIAnswerFeedbackModal(discord.ui.Modal, title="回報課程助教回答"):
+class AIAnswerFeedbackModal(discord.ui.Modal, title="回報小律的回答"):
     feedback = discord.ui.TextInput(
         label="問題說明",
         placeholder="例如：來源連結錯誤、回答漏掉某堂課，或內容不正確",
@@ -195,7 +195,7 @@ class CourseQACog(commands.Cog):
             logger.warning("改用上次成功快取的課程紀錄：%s", artist.name)
             records = cached_records
         if not records:
-            return artist, [], "目前沒有可供你查詢的課程紀錄。請確認控方已勾選 Notion 的「藝人可見」。"
+            return artist, [], "目前沒有可供你查詢的會議紀錄。請確認控方已勾選 Notion 的「藝人可見」。"
         return artist, records, None
 
     async def _answer_for_user(self, user: discord.abc.User, question: str) -> str:
@@ -221,7 +221,7 @@ class CourseQACog(commands.Cog):
             intent = course_intent._fallback_intent(question, records)
         selected = course_intent.select_records(records, intent, memory)
         if not selected:
-            return "請指定月份、課程名稱、老師、附件名稱或關鍵字，我才能縮小查詢範圍。"
+            return "請指定月份、會議主題、負責人、附件名稱或關鍵字，我才能縮小查詢範圍。"
         intent_context = json.dumps(
             {
                 "mode": intent.mode,
@@ -257,7 +257,7 @@ class CourseQACog(commands.Cog):
             "attachment_names": list(intent.attachment_names),
         }
         self._save_memory_state()
-        return f"🤖 **課程助教**\n\n{answer}"
+        return f"🤖 **會議秘書小律**\n\n{answer}"
 
     async def _attachment_catalog_for_user(self, user: discord.abc.User) -> str | None:
         artist, records, error = await self._load_records_for_user(user)
@@ -272,9 +272,9 @@ class CourseQACog(commands.Cog):
         if not pages:
             return None
         return (
-            f"📚 **{artist.name} 的課程檔案索引**\n\n"
+            f"📚 **{artist.name} 的會議附件索引**\n\n"
             + "\n".join(pages)
-            + "\n\n請直接說明你要查哪個課程頁或檔案，再自由提問。"
+            + "\n\n請直接說明你要查哪個會議記錄或檔案，再自由提問。"
         )
 
     async def _get_or_create_thread(self, message: discord.Message) -> discord.Thread | None:
@@ -289,11 +289,11 @@ class CourseQACog(commands.Cog):
             return None
         try:
             thread = await parent.create_thread(
-                name=f"課程助教｜{message.author.display_name}"[:100],
+                name=f"會議秘書小律｜{message.author.display_name}"[:100],
                 type=discord.ChannelType.private_thread,
                 auto_archive_duration=1440,
                 invitable=False,
-                reason="課程助教私人對話",
+                reason="會議秘書小律私人對話",
             )
             await thread.add_user(message.author)
         except (discord.Forbidden, discord.HTTPException):
@@ -338,10 +338,10 @@ class CourseQACog(commands.Cog):
                 if thread is None:
                     try:
                         await message.author.send(
-                            "❌ 無法建立私人課程助教對話，請確認 Bot 有「建立私人 Thread」與「管理訊息」權限。"
+                            "❌ 無法建立私人的會議秘書小律對話，請確認 Bot 有「建立私人 Thread」與「管理訊息」權限。"
                         )
                     except (discord.Forbidden, discord.HTTPException):
-                        logger.exception("課程助教建立私人對話失敗，且無法私訊使用者")
+                        logger.exception("會議秘書小律建立私人對話失敗，且無法私訊使用者")
                     return
 
             if thread.id not in self._catalog_sent_threads:
@@ -363,11 +363,11 @@ class CourseQACog(commands.Cog):
             for chunk in chunks[1:]:
                 await thread.send(chunk)
         except Exception:
-            logger.exception("課程助教訊息處理失敗")
+            logger.exception("會議秘書小律訊息處理失敗")
             try:
-                await message.channel.send("⚠️ 課程助教處理失敗，請稍後再試；Bot 仍在運作。")
+                await message.channel.send("⚠️ 會議秘書小律處理失敗，請稍後再試；Bot 仍在運作。")
             except (discord.Forbidden, discord.HTTPException):
-                logger.exception("課程助教錯誤通知也發送失敗")
+                logger.exception("會議秘書小律錯誤通知也發送失敗")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(CourseQACog(bot))

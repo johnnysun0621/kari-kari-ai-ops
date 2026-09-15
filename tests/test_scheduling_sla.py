@@ -21,15 +21,12 @@ def test_matched_collection_does_not_remind(tmp_path):
     assert scheduling_sla.due_events(999999) == []
 
 
-def test_task_emits_teacher_48h_and_72h_events_until_completed(tmp_path):
+def test_task_emits_48h_and_72h_events_until_completed(tmp_path):
     scheduling_sla.reset_for_tests(tmp_path / "sla.json")
-    scheduling_sla.register_task(
-        "task-1", "2026-08", created_ts=1000, teacher_deadline_ts=1000 + 24 * 3600,
-    )
+    scheduling_sla.register_task("task-1", "2026-08", created_ts=1000)
 
     keys = {event.key for event in scheduling_sla.due_events(1000 + 72 * 3600)}
     assert keys == {
-        "task:task-1:teacher_overdue",
         "task:task-1:sla_48h",
         "task:task-1:stale_72h",
     }
@@ -38,12 +35,16 @@ def test_task_emits_teacher_48h_and_72h_events_until_completed(tmp_path):
     assert scheduling_sla.due_events(1000 + 80 * 3600) == []
 
 
-def test_teacher_response_suppresses_only_teacher_deadline(tmp_path):
-    scheduling_sla.reset_for_tests(tmp_path / "sla.json")
-    scheduling_sla.register_task(
-        "task-1", "2026-08", created_ts=1000, teacher_deadline_ts=1000 + 24 * 3600,
+def test_old_state_file_with_removed_teacher_fields_still_loads(tmp_path):
+    """舊狀態檔留有已移除的老師確認欄位時，載入不應該整個炸掉。"""
+    state_path = tmp_path / "sla.json"
+    state_path.write_text(
+        '{"collections": [], "tasks": [{"task_page_id": "task-1", "month": "2026-08",'
+        ' "started_ts": 1000, "teacher_deadline_ts": 5000, "teacher_responded_ts": 0,'
+        ' "completed_ts": 0}], "sent_events": []}',
+        encoding="utf-8",
     )
-    scheduling_sla.mark_teacher_responded("task-1", 2000)
+    scheduling_sla.reset_for_tests(state_path)
 
     keys = {event.key for event in scheduling_sla.due_events(1000 + 48 * 3600)}
     assert keys == {"task:task-1:sla_48h"}

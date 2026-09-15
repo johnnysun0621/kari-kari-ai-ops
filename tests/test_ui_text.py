@@ -24,3 +24,57 @@ def test_needs_fix_displays_revision_deadline_instead_of_original_submission_dea
 
     assert text == "修改期限 8/18 12:00（剩 2 天）"
     assert "8/10" not in text
+
+
+def test_trim_message_cuts_on_line_boundary_instead_of_mid_line():
+    text = "\n".join(f"第 {index} 行的內容" for index in range(400))
+
+    trimmed = ui_text.trim_message(text)
+
+    assert len(trimmed) <= ui_text.DISCORD_MESSAGE_LIMIT
+    body, _, note = trimmed.rpartition("\n")
+    assert note == "...清單過長已截斷"
+    assert body.split("\n")[-1] in text.split("\n"), "最後一行被切成破碎文字"
+
+
+def test_fit_items_keeps_whole_items_and_reports_the_rest():
+    items = [f"・項目 {index}" for index in range(50)]
+
+    kept, remaining = ui_text.fit_items(items, budget=60)
+
+    assert kept == items[:len(kept)]
+    assert remaining == len(items) - len(kept)
+    assert len("\n".join(kept)) <= 60
+
+
+def test_fit_items_keeps_at_least_one_item_even_when_over_budget():
+    kept, remaining = ui_text.fit_items(["非常長的一筆資料" * 20], budget=10)
+
+    assert len(kept) == 1
+    assert remaining == 0
+
+
+def test_paginate_sections_repeats_title_with_continued_marker_across_pages():
+    sections = [("**逾期**（40）", [f"・任務 {index}" for index in range(40)])]
+
+    pages = ui_text.paginate_sections(sections, budget=120)
+
+    assert len(pages) > 1
+    assert pages[0][0] == "**逾期**（40）"
+    for page in pages[1:]:
+        assert page[0] == "**逾期**（40）（續）", "跨頁的分區必須重印標題，不能出現孤兒清單"
+    listed = [line for page in pages for line in page if line.startswith("・")]
+    assert listed == [f"・任務 {index}" for index in range(40)], "分頁後有項目遺失"
+
+
+def test_paginate_blocks_never_splits_a_block():
+    blocks = [[f"**第 {index} 組**", "　內容一", "　內容二"] for index in range(30)]
+
+    pages = ui_text.paginate_blocks(blocks, budget=100)
+
+    assert len(pages) > 1
+    for page in pages:
+        # 每個 block 的標題後面一定跟著自己的兩行內容，不會被拆到別頁。
+        titles = [line for line in page if line.startswith("**")]
+        assert len(page) == len(titles) * 3
+    assert sum(len(page) for page in pages) == sum(len(block) for block in blocks)

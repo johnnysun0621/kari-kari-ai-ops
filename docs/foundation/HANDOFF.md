@@ -5,20 +5,20 @@
 
 ## 先讀順序
 
-1. [README.md](README.md)：專案入口與啟動方式。
+1. [README.md](../../README.md)：專案入口與啟動方式。
 2. [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md)：產品原則與平轉要求。
-3. [ROADMAP.md](ROADMAP.md)：目前進度與下一步。
-4. [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md)：Discord 頻道組成與 slash command 分流。
-5. [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md)：每個 slash command 用途與 Notion 互動。
-6. [SUBMISSION_FLOW.md](SUBMISSION_FLOW.md)：任務提交方式、Drive 資料夾、審核通知。
+3. [ROADMAP.md](../history/ROADMAP.md)：目前進度與下一步。
+4. [DISCORD_CHANNELS.md](../operations/DISCORD_CHANNELS.md)：Discord 頻道組成與 slash command 分流。
+5. [DISCORD_COMMANDS.md](../operations/DISCORD_COMMANDS.md)：每個 slash command 用途與 Notion 互動。
+6. [SUBMISSION_FLOW.md](../operations/SUBMISSION_FLOW.md)：任務提交方式、Drive 資料夾、審核通知。
 7. [NOTION_SCHEMA.md](NOTION_SCHEMA.md)：Notion 資料庫交互邏輯。
 8. [ARCHITECTURE.md](ARCHITECTURE.md)：工程架構與程式責任切分。
-9. [TESTING.md](TESTING.md)：測試與驗收方式。
-10. [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md)：會議需求與完成狀態。
-11. [NOTION_VIEWS_AUDIT.md](NOTION_VIEWS_AUDIT.md)：定稿 workspace 的 view 稽核。
-12. [SERVER_MIGRATION.md](SERVER_MIGRATION.md)：正式伺服器初始化與平轉。
+9. [TESTING.md](../operations/TESTING.md)：測試與驗收方式。
+10. [REQUIREMENTS_TRACEABILITY.md](../history/REQUIREMENTS_TRACEABILITY.md)：會議需求與完成狀態。
+11. [NOTION_VIEWS_AUDIT.md](../history/NOTION_VIEWS_AUDIT.md)：定稿 workspace 的 view 稽核。
+12. [SERVER_MIGRATION.md](../operations/SERVER_MIGRATION.md)：正式伺服器初始化與平轉。
 
-課程助教近期新增規則：先顯示藝人自己的課程檔案索引，再依使用者指定的課程頁／檔案檢索；不要把所有附件文字預先混入回答 context。索引顯示不會中斷當次問題的回答。詳見 `DISCORD_COMMANDS.md`、`NOTION_SCHEMA.md` 的課程助教段落。
+會議秘書小律的附件規則：先顯示藝人自己有權限的檔案索引，再依使用者指定的頁面／檔案檢索；不要把所有附件文字預先混入回答 context。索引顯示不會中斷當次問題的回答。詳見 [DISCORD_COMMANDS.md「會議秘書小律」](../operations/DISCORD_COMMANDS.md#會議秘書小律)、`NOTION_SCHEMA.md` 的「課程與會議記錄」段落。
 
 目前 AI runtime：OpenAI `gpt-5.6-luna`，使用 `https://api.openai.com/v1`；空白或不完整回應會重試。系統與個人每日 token 護欄目前皆為 `0`（不限額），使用量仍記錄在本機狀態檔。API key 只放 `.env`，不得寫入 Git 或文件。
 
@@ -43,8 +43,8 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 1. 控方在 `營運操作` 執行 `/時間資訊蒐集`。
 2. 藝人填月度可配合時段。
 3. 藝人用 `/管理可配合時間` 查看、整理、刪除及補填未來時段。
-4. 控方在 `營運內部通知` 用 `/從時間池建立任務` 找共同空檔。
-5. 課程由 Bot 建立 Task；其他安排建立隱藏 Task 草稿，控方補齊後勾選 `Discord 顯示=true`。
+4. 控方在 `營運內部通知` 用 `/從時間池建立任務` 找共同空檔（只想先看空檔、還沒決定要不要建任務時，可以改用唯讀的 `/時間交集查詢`）。
+5. 不論課程或其他安排，Bot 都建立 `Discord 顯示=false` 的隱藏 Task 草稿，控方補齊內容後勾選 `Discord 顯示=true`。
 
 任務流程：
 
@@ -55,7 +55,7 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 5. 需要交作業／作品時，藝人執行 `/我的任務` → `提交任務`，Bot 依 Notion `提交方式` 引導。
 6. 控方在 `營運內部通知` 用 `/審核提交` 回覆通過／需修改／退回，Bot DM 藝人審核結果。
 
-目前共有 9 個 slash commands；藝人從 `/我的任務` 的「提交任務」按鈕進入提交流程，課程助教則在指定頻道直接對話。頻道與角色對應以 [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md) 為準。藝人作業檔案不走 Discord 附件，統一上傳至 Bot 建立的公司 Drive 指定資料夾；老師批改附件是獨立流程。
+目前共有 10 個 slash commands；藝人從 `/我的任務` 的「提交任務」按鈕進入提交流程，小律則在指定頻道直接對話。頻道與角色對應以 [DISCORD_CHANNELS.md](../operations/DISCORD_CHANNELS.md) 為準。藝人作業檔案不走 Discord 附件，統一上傳至 Bot 建立的公司 Drive 指定資料夾；老師批改附件是獨立流程。
 
 舊 `/排課*`、`Schedule Requests` 與 `Course Sessions` 已從程式、設定與文件介面移除。
 `/從時間池建立任務` 的課程分流會選擇課程培訓 Project、課程類別、老師與自訂名稱，直接建立 `Tasks`；候選時段寫入任務說明，正式時間由營運填回 Task。
@@ -93,14 +93,14 @@ pgrep -fl "python.*bot.py"
 
 ### 應該做
 
-- 改 slash command 時，同步更新 [DISCORD_COMMANDS.md](DISCORD_COMMANDS.md)。
-- 改頻道分流時，同步更新 [DISCORD_CHANNELS.md](DISCORD_CHANNELS.md)。
+- 改 slash command 時，同步更新 [DISCORD_COMMANDS.md](../operations/DISCORD_COMMANDS.md)。
+- 改頻道分流時，同步更新 [DISCORD_CHANNELS.md](../operations/DISCORD_CHANNELS.md)。
 - 改 Notion 讀寫欄位時，同步更新 [NOTION_SCHEMA.md](NOTION_SCHEMA.md)。
-- 改營運流程時，同步更新 [OPERATIONS_PLAYBOOK.md](OPERATIONS_PLAYBOOK.md)。
+- 改營運流程時，同步更新 [OPERATIONS_PLAYBOOK.md](../operations/OPERATIONS_PLAYBOOK.md)。
 - 改架構或模組責任時，同步更新 [ARCHITECTURE.md](ARCHITECTURE.md)。
-- 改驗收流程時，同步更新 [TESTING.md](TESTING.md)。
+- 改驗收流程時，同步更新 [TESTING.md](../operations/TESTING.md)。
 - 改產品方向或平轉原則時，同步更新 [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md)。
-- 改進度或下一步時，同步更新 [ROADMAP.md](ROADMAP.md)。
+- 改進度或下一步時，同步更新 [ROADMAP.md](../history/ROADMAP.md)。
 
 ## 程式責任邊界
 
@@ -114,7 +114,8 @@ pgrep -fl "python.*bot.py"
 | 任務 / 作業提交 / 審核通知 | `cogs/submissions.py`、`SUBMISSION_FLOW.md` |
 | Drive 歸檔路徑 | `services/drive_archive.py` |
 | Google Drive 上傳 | `services/drive_api.py`、`DRIVE_OAUTH_SETUP.md` |
-| 老師確認連結 | `services/teacher_confirm.py`、`web/server.py` |
+| 排課 SLA、時間交集查詢 | `services/scheduling_sla.py`、`cogs/scheduling_admin.py` |
+| Discord OAuth callback（僅供 `/伺服器初始化` 用） | `web/server.py` |
 | 共同時段演算法 | `services/overlap.py` |
 | 時間解析 / 顯示 | `services/timeparse.py` |
 | Audit Log | `services/audit.py` |
@@ -184,7 +185,7 @@ pgrep -fl "python.*bot.py"
 - 尚未完整多租戶；目前一次跑一個 `TenantConfig`。
 - Notion property names 仍偏 KariKari schema，未抽成 mapping。
 - Discord command 在錯頻道「不出現」需要 Discord App / Integration 權限設定，不是程式可完全控制。
-- 課程老師確認表單已接回 Task 流程；老師可多選候選時段，表單只通知控方，正式時間由控方填回 Tasks。
+- 課程老師確認表單已移除，不再自動產生連結或 Tunnel；老師時段如有異動，由控方與老師人工協調後直接在 Task 填正式開始／結束時間。
 
 ## 接手時的安全提醒
 

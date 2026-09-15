@@ -10,6 +10,13 @@ STATE_PATH = Path(".state/task_dispatch_notifications.json")
 ASSIGNMENT_STATE_PATH = Path(".state/task_assignment_notifications.json")
 
 
+def format_reminder_interval(minutes: float) -> str:
+    """把 REMINDER_INTERVAL_MINUTES 轉成給人看的文字；避免訊息寫死跟設定值脫節。"""
+    if minutes < 1:
+        return f"{round(minutes * 60)} 秒"
+    return f"{minutes:g} 分鐘"
+
+
 def notification_message(task: TaskItem) -> str:
     is_formal_event = bool(
         task.start and task.end and task.start_has_time and task.end_has_time
@@ -157,12 +164,39 @@ def acknowledgement_reminder_message(tasks: list[TaskItem]) -> str:
 
 
 def is_resendable_task(task: TaskItem) -> bool:
-    """管理端重送清單：只列仍未按「收到任務」的可見任務。"""
+    """管理端重送清單：所有仍在進行的可見任務。
+
+    刻意**包含**藝人已按過「收到任務」的任務——控方改了時間或內容後需要重發，
+    這是正常營運需求。排除已確認的話，控方只能手動清空 Notion 的兩個時間欄位
+    才叫得出來，那是很糟的工作流。
+
+    重送時 `reset_task_discord_notification` 會清掉通知與收到時間，
+    所以藝人會被要求重新確認一次。
+    """
     return (
         task.discord_visible
-        and task.discord_acknowledged_at is None
         and task.status not in {"已完成", "已取消", "已封存"}
     )
+
+
+def sort_resendable_tasks(tasks: list[TaskItem]) -> list[TaskItem]:
+    """未確認的排前面——那是最常見的重送對象；Discord 下拉最多只放得下 25 個。"""
+    return sorted(
+        tasks,
+        key=lambda task: (task.discord_acknowledged_at is not None, task.name or ""),
+    )
+
+
+def filter_tasks_by_keyword(tasks: list[TaskItem], keyword: str | None) -> list[TaskItem]:
+    """依任務名稱過濾（不分大小寫、比對片段）。
+
+    進行中的任務一多，25 個下拉選項就不夠用；控方要重送時通常已經知道是哪一筆，
+    用關鍵字直接縮小範圍比翻頁實際。
+    """
+    if not keyword or not keyword.strip():
+        return tasks
+    needle = keyword.strip().casefold()
+    return [task for task in tasks if needle in (task.name or "").casefold()]
 
 
 def should_run_acknowledgement_scan(

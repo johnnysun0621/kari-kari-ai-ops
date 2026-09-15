@@ -57,7 +57,7 @@ def test_duplicate_artist_commands_are_removed():
     assert not hasattr(CourseQACog, "course_question")
 
 
-def test_registered_cogs_expose_exactly_nine_slash_commands():
+def test_registered_cogs_expose_exactly_ten_slash_commands():
     cog_classes = (
         SchedulingAdminCog,
         SchedulingArtistCog,
@@ -79,6 +79,7 @@ def test_registered_cogs_expose_exactly_nine_slash_commands():
         "我的任務",
         "任務總覽",
         "任務通知重送",
+        "時間交集查詢",
         "時間資訊蒐集",
         "從時間池建立任務",
         "管理可配合時間",
@@ -94,6 +95,7 @@ def test_management_task_commands_use_admin_channel_guard(monkeypatch):
     async def run():
         cases = (
             (SchedulingAdminCog.match_availability_pool, ("2026-08", 60)),
+            (SchedulingAdminCog.query_availability_overlap, ("2026-08", 60)),
             (TasksCog.task_overview, ()),
             (TasksCog.resend_task_notification, ()),
             (SubmissionsCog.review_submission, ()),

@@ -28,8 +28,6 @@ def review_reminder_due(
 
 
 class RemindersCog(commands.Cog):
-    TASK_ACK_REMINDER_HOURS = 12
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         # 每筆需求已送過的提醒階段（in-memory，重啟後最多重發一次，可接受）
@@ -234,12 +232,13 @@ class RemindersCog(commands.Cog):
         )
         self._task_dispatch_state = next_state
         task_notifications.save_state(next_state)
+        from cogs.tasks_artist import send_task_notification
+
         for task in unseen:
             if not task.discord_visible:
                 continue
-            artists = await repositories.get_artists_by_ids(task.artist_page_ids)
-            notifyable_artists = [artist for artist in artists if artist.discord_user_id]
-            if not notifyable_artists:
+            outcome = await send_task_notification(self.bot, task)
+            if outcome is None:
                 if task.page_id not in self._dispatch_warning_sent:
                     admin_channel = (
                         self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
@@ -262,63 +261,14 @@ class RemindersCog(commands.Cog):
                     )
                 continue
             self._dispatch_warning_sent.discard(task.page_id)
-            sent = 0
-            for artist in artists:
-                if not artist.discord_user_id:
-                    continue
-                try:
-                    user = await self.bot.fetch_user(int(artist.discord_user_id))
-                    view = discord.ui.View(timeout=None)
-                    from cogs.tasks_artist import TaskConcernButton, TaskReceiptButton
-                    view.add_item(TaskReceiptButton(task.page_id))
-                    view.add_item(TaskConcernButton(task.page_id))
-                    if task.url:
-                        view.add_item(
-                            discord.ui.Button(
-                                label="查看任務內容",
-                                style=discord.ButtonStyle.link,
-                                url=task.url,
-                                emoji="📄",
-                            )
-                        )
-                    await user.send(task_notifications.notification_message(task), view=view)
-                    sent += 1
-                except Exception:
-                    logger.exception("任務派發通知失敗：%s／%s", task.name, artist.name)
-            if notifyable_artists and sent == len(notifyable_artists):
-                logger.info("任務派發通知成功：%s，已通知 %s 位藝人", task.name, sent)
-                if task_notifications.is_public_announcement_task(
-                    task, config.get_tenant().public_task_types
-                ):
-                    announce_channel = self.bot.get_channel(
-                        config.get_tenant().resolved_announce_channel_id
-                    )
-                    if announce_channel is not None:
-                        try:
-                            await announce_channel.send(
-                                task_notifications.public_announcement_message(task)
-                            )
-                            await audit.log_event(
-                                event_name=f"任務公開通知｜{task.name}",
-                                action_type="建立",
-                                operator="System",
-                                target_db="Tasks",
-                                target_url=task.url,
-                                after=f"公告頻道 {announce_channel.id}",
-                            )
-                        except Exception:
-                            logger.exception("任務公開公告發送失敗：%s", task.name)
-                try:
-                    await repositories.mark_task_discord_notified(task.page_id)
-                except Exception:
-                    logger.exception("任務通知時間寫入 Notion 失敗：%s", task.page_id)
+            if outcome.is_complete:
                 await audit.log_event(
                     event_name=f"任務派發通知｜{task.name}",
                     action_type="提醒",
                     operator="System",
                     target_db="Tasks",
                     target_url=task.url,
-                    after=f"通知 {sent} 位藝人",
+                    after=f"通知 {outcome.sent} 位藝人",
                 )
             else:
                 # 私訊失敗時不要永久標記已處理，下一輪會重新嘗試。
@@ -329,8 +279,8 @@ class RemindersCog(commands.Cog):
                 logger.warning(
                     "任務派發未完成，將於下一輪重試：%s（成功 %s／應通知 %s）",
                     task.name,
-                    sent,
-                    len(notifyable_artists),
+                    outcome.sent,
+                    len(outcome.notifyable_artists),
                 )
 
     async def _check_task_assignment_notifications(self):
@@ -386,12 +336,12 @@ class RemindersCog(commands.Cog):
                 )
 
     async def _check_unacknowledged_task_notifications(self):
-        """每 12 小時掃描一次，重新推送所有尚未確認的任務。"""
+        """依 TASK_ACK_REMINDER_HOURS 掃描一次，重新推送所有尚未確認的任務。"""
         now = datetime.now(config.get_tenant().tz)
         if not task_notifications.should_run_acknowledgement_scan(
             self._last_unacknowledged_scan_at,
             now,
-            self.TASK_ACK_REMINDER_HOURS,
+            config.get_tenant().task_ack_reminder_hours,
         ):
             return
         self._last_unacknowledged_scan_at = now
