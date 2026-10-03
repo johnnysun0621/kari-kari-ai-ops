@@ -98,7 +98,8 @@ def deadline_text(task: repositories.TaskItem, now: datetime) -> str:
     date_text = f"{deadline.month}/{deadline.day}"
     if has_time:
         date_text += deadline.strftime(" %H:%M")
-    prefix = "修改期限" if is_revision else "截止"
+    # 提前交件任務追的是交件死線，不是對外發布日；藝人看到「交件 9/25」才不會誤以為還有五天。
+    prefix = "修改期限" if is_revision else repositories.task_deadline_kind(task)
     if day_diff < 0:
         return f"{prefix} {date_text}（已過 {-day_diff} 天）"
     if day_diff == 0:

@@ -46,7 +46,7 @@ from cogs.submissions import (
     parse_revision_days,
 )
 from cogs import ui_text
-from services import repositories
+from services import notion_links, repositories
 
 
 def task(
@@ -478,7 +478,8 @@ class TestReviewDisplayHelpers:
         assert "副歌再修" in text
         assert "批改檔：https://drive/a、https://drive/b" in text
 
-    def test_review_result_dm_includes_related_notion_task_link(self):
+    def test_review_result_dm_gives_no_notion_entry_point_to_the_artist(self):
+        """任務頁往上翻就是整個 Tasks，藝人端的審核 DM 一律不附 Notion 連結。"""
         submission = repositories.SubmissionItem(
             page_id="submission-1",
             name="Johnny｜編曲作業",
@@ -494,8 +495,11 @@ class TestReviewDisplayHelpers:
             reviewer="A 老師",
         )
 
-        assert "查看 Notion 任務" in text
-        assert "https://www.notion.so/3b55806f097b81e8b430e9b9ce902f2a" in text
+        assert not notion_links.contains_notion_link(text)
+        # 藝人仍要知道審的是哪一筆、老師說了什麼，以及下一步怎麼做。
+        assert "測試課程" in text
+        assert "請調整音量" in text
+        assert "/我的任務" in text
 
     def test_finishing_review_disables_every_action_in_the_view(self):
         class Item:
@@ -603,8 +607,9 @@ class TestReviewDisplayHelpers:
         assert "批改檔" in text
         assert "通過" in text
         assert "做得很好" in text
+        # Drive 批改檔連結是藝人該拿到的；只有 Notion 入口不給。
         assert "https://drive/review" in text
-        assert "查看 Notion 任務" in text
+        assert not notion_links.contains_notion_link(text)
 
 
 class TestReviewResultMapping:

@@ -2,7 +2,7 @@ from datetime import datetime
 
 import config
 from cogs.bulletin import bulletin_fingerprint, format_bulletin
-from services import repositories
+from services import notion_links, repositories
 from services.repositories import BulletinItem
 
 
@@ -25,12 +25,13 @@ def test_bulletin_fingerprint_changes_when_status_changes():
     assert bulletin_fingerprint(_item()) != bulletin_fingerprint(_item(status="已結案"))
 
 
-def test_format_bulletin_contains_operational_fields_and_link():
+def test_format_bulletin_contains_operational_fields_without_notion_link():
     text = format_bulletin(_item(pinned=True))
     assert "📌 **測試公告**" in text
     assert "類別：📢 公告｜狀態：未處理" in text
     assert "人員：Johnny" in text
-    assert "https://notion.so/page-1" in text
+    # 公告區藝人看得到；從任一 Notion 頁面都能往上翻到整個 workspace。
+    assert not notion_links.contains_notion_link(text)
 
 
 def test_ai_feedback_uses_usage_feedback_category_without_question_text():

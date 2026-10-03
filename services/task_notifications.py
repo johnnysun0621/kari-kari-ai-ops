@@ -139,16 +139,96 @@ def is_public_announcement_task(task: TaskItem, public_task_types: tuple[str, ..
 
 
 def public_announcement_message(task: TaskItem) -> str:
-    """產生公開公告；不放入藝人私訊用的提交按鈕與私人內容。"""
+    """產生公開公告；不放入藝人私訊用的提交按鈕與私人內容。
+
+    公告區藝人看得到，所以不附 Notion 連結——任務頁往上翻就是整個 Tasks。
+    """
     time_text = "時間待定"
     if task.start and task.end:
         time_text = f"{task.start:%m/%d %H:%M}–{task.end:%H:%M}"
     return (
         f"📢 **{task.task_type or '正式安排'}公告**\n"
         f"任務：**{task.name}**\n"
-        f"時間：{time_text}\n"
-        f"{task.url or ''}"
+        f"時間：{time_text}"
     ).strip()
+
+
+# ---------- 截止前提醒（T-5／當天）與藝人確認 ----------
+
+# Discord custom_id 上限 100 字且要能被 regex 抓，所以階段用短代碼；
+# 中文階段名只在給人看的地方出現。
+REMINDER_STAGE_CODES = {"5 天前": "d5", "3 天前": "d3", "1 天前": "d1", "當天": "d0"}
+_STAGE_BY_CODE = {code: stage for stage, code in REMINDER_STAGE_CODES.items()}
+REMINDER_SENT_MARK = "已發送給"
+
+
+def reminder_stage_code(stage: str) -> str | None:
+    """「當天」→ "d0"；逾期沒有確認按鈕，回 None。"""
+    return REMINDER_STAGE_CODES.get(stage)
+
+
+def reminder_stage_from_code(code: str) -> str | None:
+    return _STAGE_BY_CODE.get(code)
+
+
+def reminder_message(task: TaskItem, stage: str, deadline_text: str) -> str:
+    """截止前提醒的私訊內容。
+
+    藝人手上已經沒有 Notion 連結（藝人端零 Notion 入口），所以提醒必須自帶任務說明
+    和提交方式，不能只丟一個任務名稱。deadline_text 由呼叫端用 ui_text 產生，
+    這裡不重算，避免兩邊的「交件／截止」稱呼不一致。
+    """
+    description = _artist_facing_description(task.description)
+    if len(description) > 700:
+        description = description[:697].rstrip() + "..."
+    lines = [f"⏰ **任務提醒（{stage}）**", f"任務：**{task.name}**", deadline_text]
+    if task.submit_method:
+        lines.append(f"提交方式：{task.submit_method}")
+    if description:
+        lines.append(f"\n**任務內容**\n{description}")
+    lines.append("\n看到這則提醒請按下方「收到通知」，讓控方知道你已掌握進度。")
+    return "\n".join(lines)
+
+
+def format_reminder_ack_line(stage: str, when: datetime, artist_name: str) -> str:
+    """寫進 Notion「提醒確認」的一行：`當天｜09/25 09:12｜Johnny`。"""
+    return f"{stage}｜{when:%m/%d %H:%M}｜{artist_name}"
+
+
+def format_reminder_sent_line(stage: str, when: datetime, count: int) -> str:
+    """提醒送出時也記一行，讓控方分得出「還沒發」和「發了沒人按」。"""
+    return f"{stage}｜{when:%m/%d %H:%M}｜{REMINDER_SENT_MARK} {count} 人"
+
+
+def acknowledged_artists(reminder_ack: str, stage: str) -> set[str]:
+    """從「提醒確認」文字撈出某個階段已確認的藝人名字（不含「已發送給」那行）。"""
+    names: set[str] = set()
+    for line in reminder_ack.splitlines():
+        parts = [part.strip() for part in line.split("｜")]
+        if len(parts) != 3 or parts[0] != stage:
+            continue
+        if parts[2].startswith(REMINDER_SENT_MARK):
+            continue
+        names.add(parts[2])
+    return names
+
+
+def reminder_ack_summary(task: TaskItem, artist_names: list[str]) -> str:
+    """給 /任務總覽 用的一行：`提醒確認：1/3 ✓（Johnny）`；沒發過提醒就回空字串。"""
+    if not task.reminder_ack.strip():
+        return ""
+    latest_stage = None
+    for line in task.reminder_ack.splitlines():
+        parts = [part.strip() for part in line.split("｜")]
+        if len(parts) == 3:
+            latest_stage = parts[0]
+    if latest_stage is None:
+        return ""
+    confirmed = acknowledged_artists(task.reminder_ack, latest_stage)
+    ordered = [name for name in artist_names if name in confirmed]
+    total = len(artist_names) or len(confirmed)
+    names_text = f"（{'、'.join(ordered)}）" if ordered else ""
+    return f"提醒確認（{latest_stage}）：{len(ordered)}/{total} ✓{names_text}"
 
 
 def acknowledgement_reminder_message(tasks: list[TaskItem]) -> str:

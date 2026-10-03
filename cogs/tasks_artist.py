@@ -77,11 +77,86 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
         content = (
             f"✅ 已收到「{task.name}」\n"
             "狀態：進行中\n"
-            "請依原任務通知完成；需要查看詳細內容，請按原通知的「查看任務內容」。"
+            "請依原任務通知完成；要再看一次內容可以用 `/我的任務`。"
         )
-        if task.url:
-            content += f"\n📄 {task.url}"
         await interaction.followup.send(content, ephemeral=True)
+
+
+class ReminderAckButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"reminder_ack:(?P<task_id>[\w-]+):(?P<stage_code>d\d)",
+):
+    """截止前提醒（T-5／當天）的持久化「收到通知」按鈕。
+
+    跟「收到任務」不同：這個不改任務狀態，只在 Notion「提醒確認」追加一行
+    「階段｜時間｜藝人」，讓控方分得出誰看到了提醒、誰沒反應。逾期通知沒有這顆。
+    """
+
+    def __init__(self, task_id: str, stage_code: str):
+        super().__init__(
+            discord.ui.Button(
+                label="收到通知",
+                style=discord.ButtonStyle.success,
+                emoji="👌",
+                custom_id=f"reminder_ack:{task_id}:{stage_code}",
+            )
+        )
+        self.task_id = task_id
+        self.stage_code = stage_code
+
+    @classmethod
+    async def from_custom_id(
+        cls,
+        interaction: discord.Interaction,
+        item: discord.ui.Button,
+        match,
+    ) -> "ReminderAckButton":
+        return cls(match.group("task_id"), match.group("stage_code"))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        stage = task_notifications.reminder_stage_from_code(self.stage_code)
+        task = await repositories.get_task(self.task_id)
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if (
+            stage is None
+            or task is None
+            or artist is None
+            or artist.page_id not in task.artist_page_ids
+        ):
+            await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
+            return
+        now = datetime.now(config.TZ)
+        line = task_notifications.format_reminder_ack_line(stage, now, artist.name)
+        try:
+            stored = await repositories.append_reminder_ack_line(task.page_id, line)
+            await audit.log_event(
+                event_name=f"藝人確認提醒｜{task.name}",
+                action_type="更新",
+                operator=artist.name,
+                discord_user_id=str(interaction.user.id),
+                target_db="Tasks",
+                target_url=task.url,
+                after=line + ("" if stored else "｜Notion 尚無提醒確認欄位，只留此紀錄"),
+            )
+        except Exception:
+            logger.exception("提醒確認寫入失敗：%s", self.task_id)
+            await interaction.followup.send("❌ 確認寫入失敗，請稍後再試。", ephemeral=True)
+            return
+        await interaction.followup.send(
+            f"👌 已記錄你收到「{task.name}」的{stage}提醒。",
+            ephemeral=True,
+        )
+
+
+def reminder_view(task_id: str, stage: str) -> discord.ui.View | None:
+    """截止前提醒用的 View；逾期階段沒有確認按鈕，回 None。"""
+    code = task_notifications.reminder_stage_code(stage)
+    if code is None:
+        return None
+    view = discord.ui.View(timeout=None)
+    view.add_item(ReminderAckButton(task_id, code))
+    return view
 
 
 class TaskConcernButton(discord.ui.DynamicItem[discord.ui.Button], template=r"task_concern:(?P<task_id>[\w-]+)"):
@@ -205,11 +280,17 @@ def task_bucket_sections(
         task_lines: list[str] = []
         for task in tasks:
             extra = ""
+            names: list[str] = []
             if name_of_artist is not None:
                 names = [name_of_artist.get(pid, "") for pid in task.artist_page_ids]
                 names = [n for n in names if n]
                 extra = "、".join(names) or "（未關聯藝人）"
             task_lines.append(_task_line(task, now, extra))
+            # 控方端才顯示提醒確認：誰按了、誰沒反應，不用開 Notion。藝人端不顯示。
+            if name_of_artist is not None:
+                ack = task_notifications.reminder_ack_summary(task, names)
+                if ack:
+                    task_lines.append(f"　　{ack}")
         sections.append((f"**{title}**（{len(tasks)}）", task_lines))
     return sections
 
@@ -233,19 +314,31 @@ def task_list_pages(
     buckets: dict[str, list[repositories.TaskItem]],
     now: datetime,
     name_of_artist: dict[str, str] | None = None,
-) -> list[str]:
-    """把任務清單切成多頁訊息，讓任務多的時候可以翻頁看完，而不是被截斷。"""
+) -> tuple[list[str], list[str]]:
+    """把任務清單切成多頁訊息，讓任務多的時候可以翻頁看完，而不是被截斷。
+
+    回傳 (每頁文字, 每頁的分區標籤)；標籤給跳頁下拉用，讓人知道哪一頁有逾期、
+    哪一頁是待審核。
+    """
     sections = task_bucket_sections(buckets, now, name_of_artist)
     # 60 字保留給頁碼與標題後的空行。
     budget = ui_text.DISCORD_MESSAGE_LIMIT - len(header) - 60
     line_pages = ui_text.paginate_sections(sections, budget)
     total = len(line_pages)
     pages: list[str] = []
+    labels: list[str] = []
     for index, lines in enumerate(line_pages):
         page_header = header if total == 1 else f"{header}（第 {index + 1}/{total} 頁）"
         body = "\n".join(lines).strip()
         pages.append(ui_text.trim_message(f"{page_header}\n\n{body}"))
-    return pages
+        # 這頁涵蓋哪些分區；「（續）」去掉才不會兩頁看起來一樣。
+        titles = [
+            line.strip().strip("*").split("（")[0]
+            for line in lines
+            if line.strip().startswith("**")
+        ]
+        labels.append("、".join(dict.fromkeys(titles)))
+    return pages, labels
 
 
 class MyTasksView(paging.PagedTextView):
@@ -306,15 +399,8 @@ async def send_task_notification(bot, task: repositories.TaskItem) -> DispatchOu
             view = discord.ui.View(timeout=None)
             view.add_item(TaskReceiptButton(task.page_id))
             view.add_item(TaskConcernButton(task.page_id))
-            if task.url:
-                view.add_item(
-                    discord.ui.Button(
-                        label="查看任務內容",
-                        style=discord.ButtonStyle.link,
-                        url=task.url,
-                        emoji="📄",
-                    )
-                )
+            # 不掛 Notion 連結按鈕：任務頁往上翻就是整個 Tasks，藝人會看到其他人的任務。
+            # 任務說明已經寫在 notification_message 裡，藝人不需要開 Notion。
             await user.send(task_notifications.notification_message(task), view=view)
             sent += 1
         except Exception:
@@ -448,11 +534,12 @@ class TasksCog(commands.Cog):
         )
         if not any(buckets.get(key) for key, _ in SECTION_ORDER):
             return "🎉 目前沒有進行中的任務。", None
-        pages = task_list_pages(f"📑 {artist.name} 的任務：", buckets, now)
+        pages, page_labels = task_list_pages(f"📑 {artist.name} 的任務：", buckets, now)
         if submittable_count == 0 and len(pages) == 1:
             return pages[0], None
         view = MyTasksView(
             self, submittable_count, pages=pages, operator_id=discord_user_id,
+            page_labels=page_labels,
         )
         return view.current_text(), view
 
@@ -516,12 +603,12 @@ class TasksCog(commands.Cog):
             await interaction.followup.send("目前沒有未結案的任務。", ephemeral=True)
             return
         total = sum(len(v) for v in buckets.values())
-        pages = task_list_pages(
+        pages, page_labels = task_list_pages(
             f"📋 未結案任務總覽（{total} 筆）：", buckets, now, name_of_artist=name_of,
         )
-        # 任務多到一頁放不下時給翻頁按鈕，讓控方能看完全部而不是只看到前面幾筆。
+        # 任務多到一頁放不下時給翻頁與跳頁，讓控方能直接跳到逾期那一頁。
         view = (
-            paging.PagedTextView(pages, interaction.user.id)
+            paging.PagedTextView(pages, interaction.user.id, page_labels=page_labels)
             if len(pages) > 1
             else discord.utils.MISSING
         )

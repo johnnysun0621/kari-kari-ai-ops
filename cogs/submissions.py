@@ -359,6 +359,7 @@ def review_feedback_drive_instruction(
 
 
 def notion_page_url(page_id: str) -> str:
+    """只給控方／老師用。藝人端一律不給 Notion 入口，見 services/notion_links。"""
     clean = (page_id or "").replace("-", "")
     return f"https://www.notion.so/{clean}" if clean else ""
 
@@ -398,12 +399,9 @@ def feedback_with_attachment_links(feedback: str, file_links: list[str]) -> str:
     return "\n".join(lines)
 
 
-def submission_task_link(submission: repositories.SubmissionItem) -> str:
-    """回傳藝人可點擊的第一筆關聯 Notion Task；一般提交只關聯一筆任務。"""
-    if not submission.task_page_ids:
-        return ""
-    url = notion_page_url(submission.task_page_ids[0])
-    return f"🔗 [查看 Notion 任務]({url})" if url else ""
+# 這裡原本有 submission_task_link()，會在審核結果 DM 附上藝人可點的 Notion 任務連結。
+# 藝人端一律不給 Notion 入口（任務頁往上翻就是整個 Tasks），因此移除；
+# DM 本身已經寫明任務名稱與回饋，要看細節請用 /我的任務。
 
 
 def review_dm_text(
@@ -424,9 +422,6 @@ def review_dm_text(
         lines.append(f"審核者：{reviewer}")
     if feedback:
         lines.append(f"回饋：{feedback}")
-    task_link = submission_task_link(submission)
-    if task_link:
-        lines.append(task_link)
     if result in ("需修改", "退回"):
         lines.append("請依回饋修改後，到 `/我的任務` 按「提交任務」重新提交。")
     return "\n".join(lines)
@@ -450,9 +445,6 @@ def review_feedback_file_dm_text(
     if feedback:
         lines.append(f"回饋：{feedback}")
     lines.append(f"批改檔：{file_text}")
-    task_link = submission_task_link(submission)
-    if task_link:
-        lines.append(task_link)
     return "\n".join(lines)
 
 

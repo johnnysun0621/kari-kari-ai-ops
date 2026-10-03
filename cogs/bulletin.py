@@ -16,7 +16,9 @@ from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
 _STATE_PATH = Path(".state/bulletin_sync.json")
-_MESSAGE_FORMAT_VERSION = "bulletin-v2"
+# v3：拿掉「開啟 Notion 頁面」連結。改版本號才會重畫已經貼在公告區的舊訊息，
+# 否則那些訊息會一直帶著連結。
+_MESSAGE_FORMAT_VERSION = "bulletin-v3"
 
 
 def bulletin_channel_id() -> int:
@@ -42,8 +44,7 @@ def format_bulletin(item: repositories.BulletinItem) -> str:
         f"類別：{item.category}｜狀態：{item.status}",
         f"日期：{date_text}｜人員：{people}",
     ]
-    if item.url:
-        lines.append(f"[開啟 Notion 頁面]({item.url})")
+    # 不附 Notion 連結：公告區藝人看得到，而從任一頁面都能往上翻到整個 workspace。
     return "\n".join(lines)[:1900]
 
 

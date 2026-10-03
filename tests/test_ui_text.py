@@ -26,6 +26,38 @@ def test_needs_fix_displays_revision_deadline_instead_of_original_submission_dea
     assert "8/10" not in text
 
 
+def test_approval_task_says_submission_date_not_release_date():
+    """需審批任務給藝人看的是「交件 9/25」，不是「截止 9/30」——
+    看到後者會以為還有五天，然後 9/30 才交，審核來不及。"""
+    task = TaskItem(
+        page_id="task-1",
+        name="新單曲 MV 發布",
+        status="進行中",
+        task_type="發布上架",
+        end=datetime(2026, 9, 30, tzinfo=config.TZ),
+        needs_approval=True,
+    )
+
+    text = ui_text.deadline_text(task, datetime(2026, 9, 22, 10, 0, tzinfo=config.TZ))
+
+    assert text == "交件 9/25（剩 3 天）"
+    assert "9/30" not in text
+
+
+def test_plain_task_still_says_deadline():
+    task = TaskItem(
+        page_id="task-1",
+        name="舞蹈課",
+        status="進行中",
+        task_type="課程與作業",
+        end=datetime(2026, 9, 17, tzinfo=config.TZ),
+    )
+
+    text = ui_text.deadline_text(task, datetime(2026, 9, 15, 10, 0, tzinfo=config.TZ))
+
+    assert text == "截止 9/17（剩 2 天）"
+
+
 def test_trim_message_cuts_on_line_boundary_instead_of_mid_line():
     text = "\n".join(f"第 {index} 行的內容" for index in range(400))
 
@@ -78,3 +110,31 @@ def test_paginate_blocks_never_splits_a_block():
         titles = [line for line in page if line.startswith("**")]
         assert len(page) == len(titles) * 3
     assert sum(len(page) for page in pages) == sum(len(block) for block in blocks)
+
+
+class TestPageWindow:
+    """頁數超過 Discord 下拉上限（25）時的取窗邏輯。"""
+
+    def test_small_page_count_lists_every_page(self):
+        from cogs.paging import build_page_window
+
+        assert build_page_window(current=0, total=8) == list(range(8))
+
+    def test_large_page_count_keeps_first_last_and_current(self):
+        from cogs.paging import build_page_window
+
+        window = build_page_window(current=40, total=100)
+
+        assert len(window) <= 25
+        assert window[0] == 0, "第一頁要保留當錨點"
+        assert window[-1] == 99, "最後一頁要保留當錨點"
+        assert 40 in window, "目前頁一定要在選單裡"
+
+    def test_window_near_start_and_end_stays_in_range(self):
+        from cogs.paging import build_page_window
+
+        for current in (0, 1, 98, 99):
+            window = build_page_window(current=current, total=100)
+            assert current in window
+            assert len(window) <= 25
+            assert all(0 <= index < 100 for index in window)

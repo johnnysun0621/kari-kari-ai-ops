@@ -268,7 +268,9 @@ class CourseQACog(commands.Cog):
             if not record.attachments:
                 continue
             files = "、".join(attachment.name for attachment in record.attachments)
-            pages.append(f"・[{record.title}]({record.url})\n  檔案：{files}")
+            # 這份索引是藝人開 Thread 時自動送出的第一則訊息，過去帶著 Notion 連結，
+            # 等於不用發問就把入口送到手上。只留頁面名稱。
+            pages.append(f"・{course_qa.source_label(record)}\n  檔案：{files}")
         if not pages:
             return None
         return (
