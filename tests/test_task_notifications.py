@@ -62,7 +62,9 @@ def test_task_list_pages_keep_every_task_when_the_list_is_long():
     ]
     buckets = {"open": tasks}
 
-    pages = task_list_pages("📋 未結案任務總覽（80 筆）：", buckets, now)
+    pages, labels = task_list_pages("📋 未結案任務總覽（80 筆）：", buckets, now)
+
+    assert len(labels) == len(pages)
 
     assert len(pages) > 1, "80 筆任務應該要分頁"
     joined = "\n".join(pages)
@@ -359,3 +361,203 @@ def test_keyword_filter_is_case_insensitive_and_optional():
     # 留空或只有空白＝不過濾
     assert task_notifications.filter_tasks_by_keyword(tasks, None) == tasks
     assert task_notifications.filter_tasks_by_keyword(tasks, "   ") == tasks
+
+
+# ---------- 截止前提醒（T-5／當天）與藝人確認 ----------
+
+SEPT_25 = datetime(2026, 9, 25, 9, 12, tzinfo=config.TZ)
+
+
+def test_reminder_stage_codes_round_trip_and_overdue_has_none():
+    """custom_id 只能放短代碼；逾期沒有確認按鈕。"""
+    for stage in ("5 天前", "3 天前", "1 天前", "當天"):
+        code = task_notifications.reminder_stage_code(stage)
+        assert code is not None
+        assert task_notifications.reminder_stage_from_code(code) == stage
+    assert task_notifications.reminder_stage_code(repositories.OVERDUE_STAGE) is None
+    assert task_notifications.reminder_stage_from_code("zz") is None
+
+
+def test_reminder_message_carries_content_because_artist_has_no_notion_link():
+    task = make_task(end=datetime(2026, 9, 25, tzinfo=config.TZ))
+    task.description = "安排來源：/從時間池建立任務\n請交第一版編曲，wav 格式。"
+
+    text = task_notifications.reminder_message(task, "當天", "交件 9/25（今天）")
+
+    assert "任務提醒（當天）" in text
+    assert "歌唱課作業" in text
+    assert "交件 9/25（今天）" in text
+    assert "提交方式：檔案" in text
+    assert "請交第一版編曲" in text
+    assert "安排來源" not in text          # 控方內部行仍要濾掉
+    assert "收到通知" in text
+    assert "notion.so" not in text
+
+
+def test_reminder_message_without_description_still_reads_cleanly():
+    task = make_task()
+
+    text = task_notifications.reminder_message(task, "3 天前", "截止 9/28（剩 3 天）")
+
+    assert "任務內容" not in text
+    assert "收到通知" in text
+
+
+def test_reminder_ack_and_sent_lines_share_one_format():
+    assert task_notifications.format_reminder_ack_line("當天", SEPT_25, "Johnny") == "當天｜09/25 09:12｜Johnny"
+    assert task_notifications.format_reminder_sent_line("當天", SEPT_25, 3) == "當天｜09/25 09:12｜已發送給 3 人"
+
+
+def test_acknowledged_artists_ignores_sent_marker_and_other_stages():
+    text = (
+        "3 天前｜09/22 09:00｜已發送給 3 人\n"
+        "3 天前｜09/22 14:30｜Johnny\n"
+        "3 天前｜09/22 19:02｜小明\n"
+        "當天｜09/25 09:00｜已發送給 3 人\n"
+        "當天｜09/25 09:12｜Johnny\n"
+        "亂七八糟的一行"
+    )
+
+    assert task_notifications.acknowledged_artists(text, "3 天前") == {"Johnny", "小明"}
+    assert task_notifications.acknowledged_artists(text, "當天") == {"Johnny"}
+    assert task_notifications.acknowledged_artists(text, "1 天前") == set()
+
+
+def test_reminder_ack_summary_reports_latest_stage_against_all_artists():
+    """/任務總覽 那一行：對照關聯藝人算 x/y，控方一眼知道要戳誰。"""
+    task = make_task()
+    task.reminder_ack = (
+        "3 天前｜09/22 09:00｜已發送給 3 人\n"
+        "3 天前｜09/22 14:30｜Johnny\n"
+        "3 天前｜09/22 19:02｜小明\n"
+        "當天｜09/25 09:00｜已發送給 3 人\n"
+        "當天｜09/25 09:12｜Johnny"
+    )
+
+    summary = task_notifications.reminder_ack_summary(task, ["Johnny", "小明", "小 A"])
+
+    assert summary == "提醒確認（當天）：1/3 ✓（Johnny）"
+
+
+def test_reminder_ack_summary_is_empty_before_any_reminder():
+    assert task_notifications.reminder_ack_summary(make_task(), ["Johnny"]) == ""
+
+
+def test_reminder_ack_summary_shows_zero_when_sent_but_nobody_confirmed():
+    """「發了沒人按」要跟「還沒發」分得出來，這就是為什麼送出時也記一行。"""
+    task = make_task()
+    task.reminder_ack = "當天｜09/25 09:00｜已發送給 2 人"
+
+    assert task_notifications.reminder_ack_summary(task, ["Johnny", "小明"]) == "提醒確認（當天）：0/2 ✓"
+
+
+def test_admin_overview_shows_ack_line_but_artist_view_does_not():
+    from cogs.tasks_artist import task_bucket_sections
+
+    task = make_task(end=datetime(2026, 9, 25, tzinfo=config.TZ))
+    task.reminder_ack = "當天｜09/25 09:00｜已發送給 1 人\n當天｜09/25 09:12｜Johnny"
+    buckets = {"due_soon": [task]}
+    now = datetime(2026, 9, 25, 10, 0, tzinfo=config.TZ)
+
+    admin = task_bucket_sections(buckets, now, name_of_artist={"artist-1": "Johnny"})
+    artist = task_bucket_sections(buckets, now, name_of_artist=None)
+
+    admin_lines = "\n".join(line for _, lines in admin for line in lines)
+    artist_lines = "\n".join(line for _, lines in artist for line in lines)
+    assert "提醒確認（當天）：1/1 ✓（Johnny）" in admin_lines
+    assert "提醒確認" not in artist_lines
+
+
+class TestReminderAckButton:
+    """按鈕本身的接線：驗身分、寫確認、回覆。Notion 呼叫全部 monkeypatch。"""
+
+    @staticmethod
+    def _interaction(user_id: int = 123):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        return SimpleNamespace(
+            user=SimpleNamespace(id=user_id),
+            response=SimpleNamespace(defer=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    def _wire(self, monkeypatch, *, task=None, artist=None):
+        import asyncio
+        from cogs import tasks_artist
+
+        appended = []
+
+        async def fake_get_task(task_id):
+            return task
+
+        async def fake_find_artist(discord_id):
+            return artist
+
+        async def fake_append(page_id, line):
+            appended.append((page_id, line))
+            return True
+
+        async def fake_audit(**kwargs):
+            pass
+
+        monkeypatch.setattr(tasks_artist.repositories, "get_task", fake_get_task)
+        monkeypatch.setattr(tasks_artist.repositories, "find_artist_by_discord_id", fake_find_artist)
+        monkeypatch.setattr(tasks_artist.repositories, "append_reminder_ack_line", fake_append)
+        monkeypatch.setattr(tasks_artist.audit, "log_event", fake_audit)
+        return appended
+
+    def test_assigned_artist_ack_is_recorded_with_stage_and_name(self, monkeypatch):
+        import asyncio
+        from cogs.tasks_artist import ReminderAckButton
+
+        task = make_task()
+        artist = repositories.Artist(page_id="artist-1", name="Johnny", discord_user_id="123")
+        appended = self._wire(monkeypatch, task=task, artist=artist)
+
+        interaction = self._interaction()
+        asyncio.run(ReminderAckButton("task-1", "d0").callback(interaction))
+
+        assert len(appended) == 1
+        page_id, line = appended[0]
+        assert page_id == "task-1"
+        assert line.startswith("當天｜") and line.endswith("｜Johnny")
+        reply = interaction.followup.send.await_args.args[0]
+        assert "當天" in reply and "歌唱課作業" in reply
+
+    def test_someone_else_cannot_ack_your_task(self, monkeypatch):
+        import asyncio
+        from cogs.tasks_artist import ReminderAckButton
+
+        task = make_task()  # 關聯藝人只有 artist-1
+        stranger = repositories.Artist(page_id="artist-9", name="路人", discord_user_id="999")
+        appended = self._wire(monkeypatch, task=task, artist=stranger)
+
+        interaction = self._interaction(user_id=999)
+        asyncio.run(ReminderAckButton("task-1", "d0").callback(interaction))
+
+        assert appended == []
+        assert "不是分派給你" in interaction.followup.send.await_args.args[0]
+
+    def test_unknown_stage_code_is_rejected(self, monkeypatch):
+        import asyncio
+        from cogs.tasks_artist import ReminderAckButton
+
+        task = make_task()
+        artist = repositories.Artist(page_id="artist-1", name="Johnny", discord_user_id="123")
+        appended = self._wire(monkeypatch, task=task, artist=artist)
+
+        # 用 template 抓不到的代碼也走 callback 的話，要擋下來而不是寫一行 None
+        asyncio.run(ReminderAckButton("task-1", "d9").callback(self._interaction()))
+
+        assert appended == []
+
+    def test_reminder_view_has_button_for_stages_and_none_for_overdue(self):
+        from cogs.tasks_artist import ReminderAckButton, reminder_view
+
+        view = reminder_view("task-1", "當天")
+        assert view is not None
+        assert isinstance(view.children[0], ReminderAckButton)
+        assert view.children[0].custom_id == "reminder_ack:task-1:d0"
+
+        assert reminder_view("task-1", repositories.OVERDUE_STAGE) is None

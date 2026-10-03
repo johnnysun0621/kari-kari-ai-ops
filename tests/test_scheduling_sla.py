@@ -48,3 +48,28 @@ def test_old_state_file_with_removed_teacher_fields_still_loads(tmp_path):
 
     keys = {event.key for event in scheduling_sla.due_events(1000 + 48 * 3600)}
     assert keys == {"task:task-1:sla_48h"}
+
+
+class TestDeregisterCollection:
+    """收集被取消時，SLA 追蹤也要移除，否則 48／72 小時後還會發升級提醒。"""
+
+    def test_removes_collection_and_stops_sla_events(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(scheduling_sla, "_STATE_PATH", tmp_path / "sla.json")
+        scheduling_sla._loaded = False
+        scheduling_sla._collections.clear()
+        scheduling_sla._tasks.clear()
+
+        scheduling_sla.register_collection("2026-09", created_ts=1000, fill_deadline_ts=2000)
+        assert scheduling_sla.deregister_collection("2026-09", 2000) is True
+
+        scheduling_sla._loaded = False
+        scheduling_sla._collections.clear()
+        # 重新載入後也不該再出現，代表確實寫回檔案
+        assert scheduling_sla.deregister_collection("2026-09", 2000) is False
+
+    def test_unknown_collection_returns_false(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(scheduling_sla, "_STATE_PATH", tmp_path / "sla.json")
+        scheduling_sla._loaded = False
+        scheduling_sla._collections.clear()
+
+        assert scheduling_sla.deregister_collection("2099-01", 1) is False

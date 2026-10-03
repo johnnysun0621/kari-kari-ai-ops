@@ -305,15 +305,7 @@ class RemindersCog(commands.Cog):
                     from cogs.tasks_artist import TaskConcernButton, TaskReceiptButton
                     view.add_item(TaskReceiptButton(task.page_id))
                     view.add_item(TaskConcernButton(task.page_id))
-                    if task.url:
-                        view.add_item(
-                            discord.ui.Button(
-                                label="查看任務內容",
-                                style=discord.ButtonStyle.link,
-                                url=task.url,
-                                emoji="📄",
-                            )
-                        )
+                    # 不掛 Notion 連結按鈕：任務頁往上翻就是整個 Tasks，藝人會看到其他人的任務。
                     await user.send(
                         task_notifications.assignment_notification_message(task),
                         view=view,
@@ -375,15 +367,7 @@ class RemindersCog(commands.Cog):
                     view = discord.ui.View(timeout=None)
                     view.add_item(TaskReceiptButton(task.page_id))
                     view.add_item(TaskConcernButton(task.page_id))
-                    if task.url:
-                        view.add_item(
-                            discord.ui.Button(
-                                label="查看任務內容",
-                                style=discord.ButtonStyle.link,
-                                url=task.url,
-                                emoji="📄",
-                            )
-                        )
+                    # 不掛 Notion 連結按鈕：任務頁往上翻就是整個 Tasks，藝人會看到其他人的任務。
                     await user.send(task_notifications.notification_message(task), view=view)
                 await audit.log_event(
                     event_name=f"任務未確認提醒｜{artist.name}",
@@ -527,20 +511,39 @@ class RemindersCog(commands.Cog):
 
             # DM 藝人（僅 Discord 顯示的任務；內部行政任務不打擾藝人）
             if t.discord_visible:
-                for a in artists:
-                    if not a.discord_user_id:
-                        continue
-                    try:
-                        user = await self.bot.fetch_user(int(a.discord_user_id))
-                        if is_overdue:
-                            await user.send(
-                                f"🔴 任務已逾期：**{t.name}**（{deadline_text}）\n"
-                                f"請盡快處理；若已完成請提交或聯絡營運。"
+                from cogs.tasks_artist import reminder_view
+
+                # 同一輪可能同時到期多個階段（bot 停機補跑），每個階段各發一則、各一顆按鈕，
+                # 藝人才分得出自己確認的是哪一次。逾期只有一種訊息、沒有按鈕。
+                for stage in ([repositories.OVERDUE_STAGE] if is_overdue else stages):
+                    sent_count = 0
+                    for a in artists:
+                        if not a.discord_user_id:
+                            continue
+                        try:
+                            user = await self.bot.fetch_user(int(a.discord_user_id))
+                            if is_overdue:
+                                await user.send(
+                                    f"🔴 任務已逾期：**{t.name}**（{deadline_text}）\n"
+                                    f"請盡快處理；若已完成請提交或聯絡營運。"
+                                )
+                            else:
+                                await user.send(
+                                    task_notifications.reminder_message(t, stage, deadline_text),
+                                    view=reminder_view(t.page_id, stage),
+                                )
+                            sent_count += 1
+                        except Exception:
+                            pass
+                    if not is_overdue and sent_count:
+                        # 送出也記一行，控方才分得出「還沒發」和「發了沒人按」。
+                        try:
+                            await repositories.append_reminder_ack_line(
+                                t.page_id,
+                                task_notifications.format_reminder_sent_line(stage, now, sent_count),
                             )
-                        else:
-                            await user.send(f"⏰ 任務提醒：**{t.name}**｜{deadline_text}")
-                    except Exception:
-                        pass
+                        except Exception:
+                            logger.exception("提醒送出紀錄寫入失敗：%s", t.name)
 
             if is_overdue:
                 try:

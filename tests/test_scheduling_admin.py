@@ -160,8 +160,10 @@ def test_overlap_query_pages_cover_every_candidate_day():
     artist = SimpleNamespace(page_id="artist-1", name="Johnny")
     result = _busy_month_result()
 
-    pages = scheduling_admin._overlap_query_pages("2026-09", 60, [artist], result)
+    pages, labels = scheduling_admin._overlap_query_pages("2026-09", 60, [artist], result)
 
+    assert len(labels) == len(pages)
+    assert all(labels), "每頁都要有日期範圍標籤，跳頁選單才有意義"
     assert len(pages) > 1, "排滿的月份應該要分成多頁，而不是塞進一頁"
     joined = "\n".join(pages)
     for day in range(1, 31):
@@ -175,25 +177,60 @@ def test_overlap_query_result_view_paginates_through_all_pages():
     operator = SimpleNamespace(id=123)
     artist = SimpleNamespace(page_id="artist-1", name="Johnny")
     result = _busy_month_result()
-    pages = scheduling_admin._overlap_query_pages("2026-09", 60, [artist], result)
+    pages, labels = scheduling_admin._overlap_query_pages("2026-09", 60, [artist], result)
 
     view = scheduling_admin.OverlapQueryResultView(
-        "2026-09", 60, [artist], result.windows, operator, [artist], pages[0], pages=pages,
+        "2026-09", 60, [artist], result.windows, operator, [artist], pages[0],
+        pages=pages, page_labels=labels,
     )
 
     assert view.page_count == len(pages)
     assert view.previous_page.disabled is True, "第一頁不該能往前翻"
     assert view.next_page.disabled is False
 
-    seen = [view.pages[view.page]]
+    seen = [view.current_text()]
     while view.page < view.page_count - 1:
         view.page += 1
-        view._sync_page_buttons()
-        seen.append(view.pages[view.page])
+        view._sync_page_controls()
+        seen.append(view.current_text())
 
     assert seen == pages
     assert view.next_page.disabled is True, "最後一頁不該能再往後翻"
     assert view.previous_page.disabled is False
+
+
+def test_overlap_query_result_view_has_page_jump_select_with_date_labels():
+    """候選動輒 8 頁以上，一頁一頁翻太慢；要能直接跳到想看的日期。"""
+    operator = SimpleNamespace(id=123)
+    artist = SimpleNamespace(page_id="artist-1", name="Johnny")
+    result = _busy_month_result()
+    pages, labels = scheduling_admin._overlap_query_pages("2026-09", 60, [artist], result)
+
+    view = scheduling_admin.OverlapQueryResultView(
+        "2026-09", 60, [artist], result.windows, operator, [artist], pages[0],
+        pages=pages, page_labels=labels,
+    )
+
+    assert view.page_select is not None
+    assert len(view.page_select.options) == len(pages)
+    first = view.page_select.options[0]
+    assert first.default is True, "目前頁要標成 default"
+    assert "第 1/" in first.label
+    # 描述顯示日期範圍（例如 9/1 – 9/4），控方靠這個找日子而不是數頁碼
+    assert re.search(r"\d{1,2}/\d{1,2}", first.description or "")
+
+
+def test_single_page_result_has_no_page_jump_select():
+    operator = SimpleNamespace(id=123)
+    artist = SimpleNamespace(page_id="artist-1", name="Johnny")
+    start = datetime(2026, 8, 13, 13, 30, tzinfo=config.TZ)
+    end = datetime(2026, 8, 13, 14, 30, tzinfo=config.TZ)
+
+    view = scheduling_admin.OverlapQueryResultView(
+        "2026-08", 60, [artist], [(start, end)], operator, [artist], "摘要文字",
+    )
+
+    assert view.page_select is None, "只有一頁時不該出現跳頁選單"
 
 
 def test_cleanup_preview_stays_within_discord_limit_with_long_slot_names():
@@ -312,3 +349,64 @@ def test_course_teacher_view_accepts_back_navigation_context():
     )
 
     assert any(getattr(child, "label", "") == "返回 Project" for child in view.children)
+
+
+class TestCancelTimeCollection:
+    """/取消時間蒐集：停掉誤觸的收集，不再催填藝人。"""
+
+    def _entry(self, month="2026-09", deadline_ts=1789530671, filled=3, missing=4):
+        from services import time_collection
+
+        collection = time_collection.ActiveCollection(
+            month=month, deadline_ts=deadline_ts, artist_page_ids=("a", "b"),
+        )
+        return scheduling_admin.CollectionCancelEntry(collection, filled, missing)
+
+    def test_select_shows_month_deadline_and_progress(self):
+        operator = SimpleNamespace(id=123)
+        view = scheduling_admin.CollectionCancelView([self._entry()], operator)
+
+        option = view.select.options[0]
+        assert "2026-09" in option.label
+        assert "截止" in option.label
+        assert option.description == "已填 3/7 位"
+
+    def test_unreadable_progress_still_cancellable(self):
+        """讀不到進度正是最需要取消的時候，不能因此擋住操作。"""
+        operator = SimpleNamespace(id=123)
+        view = scheduling_admin.CollectionCancelView(
+            [self._entry(filled=-1, missing=-1)], operator
+        )
+
+        assert view.select.options[0].description == "進度讀取失敗"
+
+    def test_confirm_removes_from_both_state_stores(self, monkeypatch):
+        """收集登記在 time_collection 與 scheduling_sla 兩處，兩邊都要清掉。"""
+        operator = SimpleNamespace(id=123)
+        entry = self._entry()
+        view = scheduling_admin.CollectionCancelView([entry], operator)
+        view.select._values = [entry.key]
+
+        removed = {}
+        monkeypatch.setattr(
+            scheduling_admin.time_collection, "deregister_collection",
+            lambda month, ts: removed.setdefault("pool", (month, ts)),
+        )
+        monkeypatch.setattr(
+            scheduling_admin.scheduling_sla, "deregister_collection",
+            lambda month, ts: bool(removed.setdefault("sla", (month, ts))),
+        )
+        monkeypatch.setattr(scheduling_admin.audit, "log_event", AsyncMock())
+
+        interaction = SimpleNamespace(
+            user=SimpleNamespace(id=123, __str__=lambda self: "Johnny"),
+            response=SimpleNamespace(defer=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+        asyncio.run(view.confirm_cancel.callback(interaction))
+
+        assert removed["pool"] == ("2026-09", 1789530671)
+        assert removed["sla"] == ("2026-09", 1789530671)
+        message = interaction.followup.send.await_args.args[0]
+        assert "已取消" in message
+        assert "藝人已填的時段" in message, "要講清楚已填資料不會被刪"

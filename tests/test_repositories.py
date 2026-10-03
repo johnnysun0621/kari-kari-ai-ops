@@ -4,8 +4,15 @@ import asyncio
 import dataclasses
 from datetime import datetime
 
+import pytest
+
 import config
 from services import repositories
+
+
+async def _no_projects(_artist_page_id: str):
+    """撞課情境測試只關心 Tasks；Projects 沒有「Discord 顯示」的概念。"""
+    return []
 
 
 def artist(name: str, discord_user_id: str = "123", status: str | None = "已簽約"):
@@ -118,6 +125,8 @@ class TestTaskConcernReset:
                     "Discord 顯示": {"checkbox": False},
                     "Discord 通知時間": {"date": None},
                     "Discord 收到時間": {"date": None},
+                    # 退回再派發，舊的提醒確認不算數
+                    repositories.TASK_REMINDER_ACK_PROPERTY: {"rich_text": []},
                 },
             )
         ]
@@ -918,6 +927,177 @@ class TestScheduleImpactContextCache:
         assert calls["n"] > first  # 明確 bypass 時仍會重新查
 
 
+class TestArtistOnlySeesDispatchedTasks:
+    """藝人填時段時不得看到未勾「Discord 顯示」的草稿（會議 2026-09-12 決議）。
+
+    未派發的草稿連任務名稱都會出現在「已排除與正式安排衝突的時間」提示裡，
+    藝人因此知道有一筆還沒對外的安排。控方端相反——比對共同空檔時必須把草稿
+    算成已佔用，否則會把排掉的時段當空檔推出去。
+    """
+
+    @staticmethod
+    def _task_page(page_id: str, name: str, *, discord_visible: bool, project_id: str = ""):
+        return {
+            "id": page_id,
+            "url": f"https://www.notion.so/{page_id}",
+            "properties": {
+                "任務名稱": {"title": [{"plain_text": name}]},
+                "任務狀態": {"select": {"name": "進行中"}},
+                # 「錄音」在 HARD_BLOCK_TASK_TYPES 裡，配上完整起訖時間才會算成 busy
+                # （＝真的把時段擋掉並顯示任務名稱），這正是外洩草稿名稱的那條路徑。
+                "任務類型": {"select": {"name": "錄音"}},
+                "Discord 顯示": {"checkbox": discord_visible},
+                "開始日": {"date": {"start": "2026-09-17T19:30:00+08:00",
+                                  "end": "2026-09-17T21:30:00+08:00"}},
+                "截止日": {"date": None},
+                "關聯藝人": {"relation": []},
+                "關聯專案": {"relation": [{"id": project_id}] if project_id else []},
+            },
+        }
+
+    def _run(self, monkeypatch, *, discord_visible_only):
+        import asyncio
+
+        seen_filters = []
+        dispatched = self._task_page("t-open", "已派發課程", discord_visible=True,
+                                     project_id="proj-1")
+        draft = self._task_page("t-draft", "還沒派發的草稿", discord_visible=False,
+                                project_id="proj-1")
+
+        async def fake_query(data_source_id, filter_=None, sorts=None):
+            seen_filters.append(filter_)
+            if data_source_id != config.DS_TASKS:
+                return []
+            if filter_ is None:
+                return [dispatched, draft]
+            # 模擬 Notion 端就篩掉未勾選的任務
+            return [dispatched]
+
+        async def fake_project_map():
+            return {"proj-1": repositories.ProjectItem(
+                page_id="proj-1", name="九月培訓", status="進行中",
+                artist_page_ids=["artist-1"],
+            )}
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+        monkeypatch.setattr(repositories, "get_project_map", fake_project_map)
+        monkeypatch.setattr(repositories, "get_projects_for_artist", _no_projects)
+        repositories._invalidate_impact_context_cache()
+
+        context = asyncio.run(repositories.get_schedule_impact_context_for_artist(
+            "artist-1", use_cache=False, discord_visible_only=discord_visible_only
+        ))
+        return context, seen_filters
+
+    def test_artist_side_hides_undispatched_drafts(self, monkeypatch):
+        context, seen_filters = self._run(monkeypatch, discord_visible_only=True)
+
+        names = [item.source_name for item in context.busy_intervals]
+        assert names == ["已派發課程"]
+        assert "還沒派發的草稿" not in names
+        # 在 Notion 端就篩掉，不是撈全表再過濾（鐵則 3）
+        assert any(f is not None for f in seen_filters)
+
+    def test_admin_side_still_counts_drafts_as_busy(self, monkeypatch):
+        context, _ = self._run(monkeypatch, discord_visible_only=False)
+
+        names = sorted(item.source_name for item in context.busy_intervals)
+        assert names == ["已派發課程", "還沒派發的草稿"]
+
+    def test_indirect_project_relation_survives_the_filter(self, monkeypatch):
+        """換成只認直接關聯的查詢會把這種任務弄丟，撞課提示就會漏。"""
+        context, _ = self._run(monkeypatch, discord_visible_only=True)
+
+        # 任務的「關聯藝人」是空的，只靠 關聯專案 → 專案的藝人才對應得上
+        assert [item.source_name for item in context.busy_intervals] == ["已派發課程"]
+
+    def test_artist_and_admin_caches_do_not_poison_each_other(self, monkeypatch):
+        """兩邊共用 artist page id 當 key 的話，30 秒內先跑的那邊會餵給另一邊。"""
+        import asyncio
+
+        dispatched = self._task_page("t-open", "已派發課程", discord_visible=True)
+        draft = self._task_page("t-draft", "還沒派發的草稿", discord_visible=False)
+
+        async def fake_query(data_source_id, filter_=None, sorts=None):
+            if data_source_id != config.DS_TASKS:
+                return []
+            return [dispatched, draft] if filter_ is None else [dispatched]
+
+        async def fake_project_map():
+            return {}
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+        monkeypatch.setattr(repositories, "get_project_map", fake_project_map)
+        monkeypatch.setattr(repositories, "get_projects_for_artist", _no_projects)
+        monkeypatch.setattr(repositories, "task_applies_to_artist",
+                            lambda *_args, **_kwargs: True)
+        repositories._invalidate_impact_context_cache()
+
+        # 控方先跑並寫進快取，藝人端緊接著在 TTL 內查詢
+        admin = asyncio.run(repositories.get_schedule_impact_context_for_artist("artist-1"))
+        artist = asyncio.run(repositories.get_schedule_impact_context_for_artist(
+            "artist-1", discord_visible_only=True
+        ))
+
+        assert len(admin.busy_intervals) == 2
+        assert [item.source_name for item in artist.busy_intervals] == ["已派發課程"]
+
+    def test_invalidate_clears_both_variants_for_one_artist(self, monkeypatch):
+        import asyncio
+
+        calls = {"n": 0}
+
+        async def fake_query(data_source_id, filter_=None, sorts=None):
+            calls["n"] += 1
+            return []
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+        repositories._invalidate_impact_context_cache()
+
+        asyncio.run(repositories.get_schedule_impact_context_for_artist("artist-9"))
+        asyncio.run(repositories.get_schedule_impact_context_for_artist(
+            "artist-9", discord_visible_only=True))
+        warmed = calls["n"]
+
+        repositories._invalidate_impact_context_cache("artist-9")
+        asyncio.run(repositories.get_schedule_impact_context_for_artist("artist-9"))
+        asyncio.run(repositories.get_schedule_impact_context_for_artist(
+            "artist-9", discord_visible_only=True))
+
+        assert calls["n"] > warmed  # 兩種變體都被清掉，不會有一邊繼續吃舊快取
+
+
+class TestDiscordDisplayQueryFallback:
+    def test_falls_back_to_legacy_property_name_only_for_that_error(self, monkeypatch):
+        import asyncio
+
+        used = []
+
+        async def fake_query(data_source_id, filter_=None, sorts=None):
+            used.append(filter_)
+            if len(used) == 1:
+                raise repositories.NotionAPIError(400, "Discord 顯示 is not a property that exists")
+            return []
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+
+        asyncio.run(repositories._query_tasks_requiring_discord_display())
+
+        assert used[0]["property"] == "Discord 顯示"
+        assert used[1]["property"] == "Discord 可見"
+
+    def test_other_notion_errors_are_not_swallowed(self, monkeypatch):
+        import asyncio
+
+        async def fake_query(data_source_id, filter_=None, sorts=None):
+            raise repositories.NotionAPIError(401, "unauthorized")
+
+        monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+
+        with pytest.raises(repositories.NotionAPIError):
+            asyncio.run(repositories._query_tasks_requiring_discord_display())
+
+
 class TestFutureOnlyQueries:
     def test_future_date_filter_uses_today_lower_bound(self):
         filter_ = repositories._future_date_filter("可用結束時間")
@@ -1120,12 +1300,23 @@ class TestComputeDueReminderStages:
         assert repositories.compute_due_reminder_stages(t, NOW) == ["5 天前", "1 天前", "當天"]
 
     def test_empty_rules_fall_back_to_default(self):
-        """控方沒勾任何規則時，套用租戶預設（5 天前），不必逐筆維護。"""
+        """控方沒勾任何規則時，套用租戶預設，不必逐筆維護。
+
+        預設值明確傳入，不吃 .env——測試不該因為本機設定不同而變色。
+        """
         not_yet = reminder_task([], datetime(2026, 7, 14, tzinfo=config.TZ))  # 剩 6 天
         due = reminder_task([], datetime(2026, 7, 13, tzinfo=config.TZ))      # 剩 5 天
 
-        assert repositories.compute_due_reminder_stages(not_yet, NOW) == []
-        assert repositories.compute_due_reminder_stages(due, NOW) == ["5 天前"]
+        assert repositories.compute_due_reminder_stages(not_yet, NOW, default_rules=("5 天前",)) == []
+        assert repositories.compute_due_reminder_stages(due, NOW, default_rules=("5 天前",)) == ["5 天前"]
+
+    def test_tenant_default_is_same_day_only(self):
+        """2026-09-20 起預設只剩「當天」：上課不再收到 T-5，提前交件改走「需審批」。"""
+        five_days_left = reminder_task([], datetime(2026, 7, 13, tzinfo=config.TZ))
+        today = reminder_task([], datetime(2026, 7, 8, tzinfo=config.TZ))
+
+        assert repositories.compute_due_reminder_stages(five_days_left, NOW, default_rules=("當天",)) == []
+        assert repositories.compute_due_reminder_stages(today, NOW, default_rules=("當天",)) == ["當天"]
 
     def test_explicit_rules_override_default_entirely(self):
         """有勾就完全以勾選為準，預設不疊加——否則控方無法把提醒收斂成只剩當天。"""
@@ -1156,6 +1347,173 @@ class TestComputeDueReminderStages:
         t = reminder_task([], datetime(2026, 7, 1, tzinfo=config.TZ))
 
         assert repositories.compute_due_reminder_stages(t, NOW) == [repositories.OVERDUE_STAGE]
+
+    def test_under_review_tasks_are_not_reminded(self):
+        """東西交出去了，球在公司手上；9/23 交了 9/25 還被催「還有 5 天」會被當成 bug。"""
+        due = reminder_task(["當天"], datetime(2026, 7, 8, tzinfo=config.TZ), status="待審核")
+        overdue = reminder_task([], datetime(2026, 7, 1, tzinfo=config.TZ), status="待審核")
+
+        assert repositories.compute_due_reminder_stages(due, NOW) == []
+        assert repositories.compute_due_reminder_stages(overdue, NOW) == []
+
+
+class TestApprovalSubmissionDeadline:
+    """「需審批」＝ T-5 交件死線（會議 2026-09-12）。
+
+    控方勾了就走：提交期限有填用它，沒填用截止日往前推 approval_lead_days。
+    沒勾（例如上課）完全不受影響。
+    """
+
+    def test_unchecked_task_has_no_approval_deadline(self):
+        task = display_task(end=datetime(2026, 9, 30, tzinfo=config.TZ))
+
+        assert repositories.approval_submission_deadline(task) == (None, False)
+        assert repositories.task_action_deadline(task)[0] == task.end
+        assert repositories.task_deadline_kind(task) == "截止"
+
+    def test_checked_without_submission_deadline_backs_off_from_end_date(self):
+        task = display_task(end=datetime(2026, 9, 30, tzinfo=config.TZ))
+        task.needs_approval = True
+
+        deadline, has_time = repositories.approval_submission_deadline(task, lead_days=5)
+
+        assert deadline == datetime(2026, 9, 25, tzinfo=config.TZ)
+        assert has_time is False
+        assert repositories.task_deadline_kind(task) == "交件"
+
+    def test_checked_with_explicit_submission_deadline_uses_it(self):
+        """控方要客製天數就填提交期限，它優先於自動回推。"""
+        task = display_task(end=datetime(2026, 9, 30, tzinfo=config.TZ))
+        task.needs_approval = True
+        task.submission_deadline = datetime(2026, 9, 27, tzinfo=config.TZ)
+
+        deadline, _ = repositories.task_action_deadline(task)
+
+        assert deadline == datetime(2026, 9, 27, tzinfo=config.TZ)
+
+    def test_approval_deadline_drives_overdue_not_end_date(self):
+        """9/25 沒交就是逾期，不用等到 9/30——這是「要判定逾期、通知控方」那個決定。"""
+        task = display_task(end=datetime(2026, 9, 30, tzinfo=config.TZ))
+        task.needs_approval = True
+        sept_26 = datetime(2026, 9, 26, 9, 0, tzinfo=config.TZ)
+
+        assert repositories.task_deadline_passed(task, sept_26) is True
+        assert repositories.compute_due_reminder_stages(
+            task, sept_26, default_rules=("當天",)
+        ) == [repositories.OVERDUE_STAGE]
+
+    def test_same_day_reminder_lands_on_approval_deadline(self):
+        """預設「當天」提醒發在交件日 9/25，正好是李葳要的「截止前 5 天發一個提醒」。"""
+        task = display_task(end=datetime(2026, 9, 30, tzinfo=config.TZ))
+        task.needs_approval = True
+        sept_25 = datetime(2026, 9, 25, 9, 0, tzinfo=config.TZ)
+        sept_24 = datetime(2026, 9, 24, 9, 0, tzinfo=config.TZ)
+
+        assert repositories.compute_due_reminder_stages(task, sept_24, default_rules=("當天",)) == []
+        assert repositories.compute_due_reminder_stages(task, sept_25, default_rules=("當天",)) == ["當天"]
+
+    def test_checked_without_any_date_is_harmless(self):
+        task = display_task(end=None)
+        task.needs_approval = True
+
+        assert repositories.approval_submission_deadline(task) == (None, False)
+        assert repositories.compute_due_reminder_stages(task, NOW) == []
+
+
+class TestReminderAckMerge:
+    def test_appends_new_line_and_keeps_order(self):
+        merged = repositories.merge_reminder_ack_line(
+            "當天｜09/25 09:00｜已發送給 3 人", "當天｜09/25 09:12｜Johnny"
+        )
+
+        assert merged == "當天｜09/25 09:00｜已發送給 3 人\n當天｜09/25 09:12｜Johnny"
+
+    def test_duplicate_line_returns_none_so_notion_is_not_rewritten(self):
+        """同一位藝人連按兩下只留一筆，也不多打一次 Notion。"""
+        existing = "當天｜09/25 09:12｜Johnny"
+
+        assert repositories.merge_reminder_ack_line(existing, "當天｜09/25 09:12｜Johnny") is None
+
+    def test_blank_line_is_ignored(self):
+        assert repositories.merge_reminder_ack_line("x", "   ") is None
+
+    def test_append_degrades_when_property_missing(self, monkeypatch):
+        """舊 workspace 還沒加「提醒確認」欄位：按鈕照樣能用，紀錄留在 Audit Log。"""
+        async def fake_retrieve(page_id):
+            return {"id": page_id, "properties": {}}
+
+        async def fake_update(page_id, props):
+            raise repositories.NotionAPIError(400, f"{repositories.TASK_REMINDER_ACK_PROPERTY} is not a property that exists")
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_page", fake_retrieve)
+        monkeypatch.setattr(repositories.notion_api, "update_page", fake_update)
+
+        stored = asyncio.run(repositories.append_reminder_ack_line("task-1", "當天｜09/25 09:12｜Johnny"))
+
+        assert stored is False
+
+    def test_append_reraises_unrelated_notion_errors(self, monkeypatch):
+        async def fake_retrieve(page_id):
+            return {"id": page_id, "properties": {}}
+
+        async def fake_update(page_id, props):
+            raise repositories.NotionAPIError(401, "unauthorized")
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_page", fake_retrieve)
+        monkeypatch.setattr(repositories.notion_api, "update_page", fake_update)
+
+        with pytest.raises(repositories.NotionAPIError):
+            asyncio.run(repositories.append_reminder_ack_line("task-1", "當天｜09/25 09:12｜Johnny"))
+
+    def test_append_writes_merged_text(self, monkeypatch):
+        writes = []
+
+        async def fake_retrieve(page_id):
+            return {"id": page_id, "properties": {
+                repositories.TASK_REMINDER_ACK_PROPERTY: {"rich_text": [{"plain_text": "當天｜09/25 09:00｜已發送給 2 人"}]},
+            }}
+
+        async def fake_update(page_id, props):
+            writes.append(props)
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_page", fake_retrieve)
+        monkeypatch.setattr(repositories.notion_api, "update_page", fake_update)
+
+        stored = asyncio.run(repositories.append_reminder_ack_line("task-1", "當天｜09/25 09:12｜Johnny"))
+
+        assert stored is True
+        assert writes[0][repositories.TASK_REMINDER_ACK_PROPERTY]["rich_text"][0]["text"]["content"] == (
+            "當天｜09/25 09:00｜已發送給 2 人\n當天｜09/25 09:12｜Johnny"
+        )
+
+    def test_resend_reset_clears_reminder_ack_too(self, monkeypatch):
+        """重送代表內容或時間改了，舊的確認不算數。"""
+        writes = []
+
+        async def fake_update(page_id, props):
+            writes.append(props)
+
+        monkeypatch.setattr(repositories.notion_api, "update_page", fake_update)
+
+        asyncio.run(repositories.reset_task_discord_notification("task-1"))
+
+        assert writes[0][repositories.TASK_REMINDER_ACK_PROPERTY] == {"rich_text": []}
+        assert writes[0]["Discord 收到時間"] == {"date": None}
+
+    def test_resend_reset_degrades_when_property_missing(self, monkeypatch):
+        calls = []
+
+        async def fake_update(page_id, props):
+            calls.append(props)
+            if repositories.TASK_REMINDER_ACK_PROPERTY in props:
+                raise repositories.NotionAPIError(400, f"{repositories.TASK_REMINDER_ACK_PROPERTY} is not a property that exists")
+
+        monkeypatch.setattr(repositories.notion_api, "update_page", fake_update)
+
+        asyncio.run(repositories.reset_task_discord_notification("task-1"))
+
+        assert repositories.TASK_REMINDER_ACK_PROPERTY not in calls[-1]
+        assert calls[-1]["Discord 通知時間"] == {"date": None}
 
     def test_inactive_or_no_deadline_returns_nothing(self):
         done = reminder_task(["當天"], datetime(2026, 7, 8, tzinfo=config.TZ), status="已完成")

@@ -6,6 +6,17 @@ import config
 from services import time_collection, timeparse
 
 
+def _live_month() -> tuple[str, datetime]:
+    """回傳不會被裁掉的月份鍵與該月截止時間。
+
+    `_load_state` 只保留上個月及以後的資料，月份寫死會隨時間自爆
+    （曾經寫死 2026-08，到 2026-10 就被正常裁掉而測試失敗）。
+    """
+    today = datetime.now(config.TZ).date()
+    month = f"{today.year:04d}-{today.month:02d}"
+    return month, datetime(today.year, today.month, 1, 12, 0, tzinfo=config.TZ)
+
+
 class TestCollectionNature:
     def test_labels_collection_natures(self):
         assert time_collection.DEFAULT_COLLECTION_NATURE == "monthly_reference"
@@ -252,9 +263,9 @@ class TestActiveCollectionRegistry:
 
 class TestActiveCollectionPersistence:
     def test_collections_survive_restart(self):
-        deadline = datetime(2026, 8, 1, 12, 0, tzinfo=config.TZ)
+        month, deadline = _live_month()
         collection = time_collection.register_active_collection(
-            "2026-08", deadline, ["artist-1", "artist-2"]
+            month, deadline, ["artist-1", "artist-2"]
         )
 
         time_collection.reload_state_for_tests()  # 模擬 bot 重啟
@@ -262,17 +273,18 @@ class TestActiveCollectionPersistence:
         assert time_collection.active_collections() == [collection]
 
     def test_sent_notices_survive_restart(self):
-        assert time_collection.collection_notice_once("2026-08", 123, "pre_deadline")
+        month, _ = _live_month()
+        assert time_collection.collection_notice_once(month, 123, "pre_deadline")
 
         time_collection.reload_state_for_tests()  # 模擬 bot 重啟
 
-        assert not time_collection.collection_notice_once("2026-08", 123, "pre_deadline")
-        assert time_collection.collection_notice_once("2026-08", 123, "post_deadline")
+        assert not time_collection.collection_notice_once(month, 123, "pre_deadline")
+        assert time_collection.collection_notice_once(month, 123, "post_deadline")
 
     def test_deregister_removes_collection_across_restart(self):
-        deadline = datetime(2026, 8, 1, 12, 0, tzinfo=config.TZ)
+        month, deadline = _live_month()
         collection = time_collection.register_active_collection(
-            "2026-08", deadline, ["artist-1"]
+            month, deadline, ["artist-1"]
         )
 
         time_collection.deregister_collection(collection.month, collection.deadline_ts)

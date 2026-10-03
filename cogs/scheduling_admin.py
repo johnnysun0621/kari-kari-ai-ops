@@ -1,6 +1,7 @@
 """管理者端：月度時間收集與 Task 版正式安排。"""
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 import discord
@@ -8,7 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from cogs import channel_guard, ui_text
+from cogs import channel_guard, paging, ui_text
 from cogs.scheduling_artist import make_pool_availability_view
 from services import audit, overlap, repositories, scheduling_sla, time_collection, timeparse
 from services.permissions import is_admin
@@ -106,13 +107,33 @@ def _monthly_pool_header_lines(
     return lines
 
 
+def _date_range_label(block_lines: list[str]) -> str:
+    """從一頁的內容抓出日期範圍，例如「9/15 – 9/22」。
+
+    控方要找的是日期不是頁碼，跳頁選單顯示這個才有意義。
+    """
+    headings = [
+        line.strip().strip("*")
+        for line in block_lines
+        if line.strip().startswith("**")
+    ]
+    if not headings:
+        return ""
+    first = headings[0].split("（")[0]
+    last = headings[-1].split("（")[0]
+    return first if first == last else f"{first} – {last}"
+
+
 def _overlap_query_pages(
     month: str,
     duration_minutes: int,
     artists: list[repositories.Artist],
     result: repositories.MonthlyPoolMatchResult,
-) -> list[str]:
-    """/時間交集查詢 的唯讀結果：切成多頁，讓控方可以翻頁看完「全部」候選時段。"""
+) -> tuple[list[str], list[str]]:
+    """/時間交集查詢 的唯讀結果，切成多頁。
+
+    回傳 (每頁文字, 每頁的日期範圍標籤)；標籤給跳頁下拉用。
+    """
     header = _monthly_pool_header_lines(month, duration_minutes, artists, result)
     candidates = _duration_candidates(result.windows, duration_minutes)
     date_blocks = _candidate_date_blocks(candidates)
@@ -121,6 +142,7 @@ def _overlap_query_pages(
     block_pages = ui_text.paginate_blocks(date_blocks, budget)
 
     texts: list[str] = []
+    labels: list[str] = []
     for index, block_lines in enumerate(block_pages):
         lines = list(header)
         lines.append("")
@@ -130,10 +152,14 @@ def _overlap_query_pages(
         )
         lines.extend(block_lines)
         lines.append("")
-        lines.append(f"候選時段共 {len(candidates)} 個、{len(date_blocks)} 天；用「上一頁／下一頁」可看完全部。")
+        lines.append(
+            f"候選時段共 {len(candidates)} 個、{len(date_blocks)} 天；"
+            "用「上一頁／下一頁」或下方的跳頁選單看完全部。"
+        )
         lines.append("這裡只列候選，不會建立 Notion Project / Task。")
         texts.append(ui_text.trim_message("\n".join(lines)))
-    return texts
+        labels.append(_date_range_label(block_lines))
+    return texts, labels
 
 
 def _monthly_pool_result_text(
@@ -305,8 +331,109 @@ class AvailabilityCleanupPreviewView(discord.ui.View):
         self.stop()
 
 
-class OverlapQueryResultView(discord.ui.View):
-    """/時間交集查詢 的結果：唯讀列出共同空檔，需要時才接到既有的建立任務流程。"""
+@dataclass
+class CollectionCancelEntry:
+    """一筆可取消的收集＋當下的填寫進度（-1 代表進度讀取失敗）。"""
+    collection: time_collection.ActiveCollection
+    filled: int
+    missing: int
+
+    @property
+    def key(self) -> str:
+        return f"{self.collection.month}:{self.collection.deadline_ts}"
+
+    @property
+    def deadline_text(self) -> str:
+        return datetime.fromtimestamp(
+            self.collection.deadline_ts, tz=config.TZ
+        ).strftime("%m/%d %H:%M")
+
+    @property
+    def progress_text(self) -> str:
+        if self.filled < 0:
+            return "進度讀取失敗"
+        total = self.filled + self.missing
+        return f"已填 {self.filled}/{total} 位"
+
+
+class CollectionCancelView(discord.ui.View):
+    """/取消時間蒐集：選一筆進行中的收集並停止它的所有後續提醒。"""
+
+    def __init__(self, entries: list[CollectionCancelEntry], operator: discord.abc.User):
+        super().__init__(timeout=180)
+        self.entries = {entry.key: entry for entry in entries}
+        self.operator_id = operator.id
+        self.select = discord.ui.Select(
+            placeholder="選擇要取消的收集…",
+            options=[
+                discord.SelectOption(
+                    label=f"{entry.collection.month}｜截止 {entry.deadline_text}"[:100],
+                    value=entry.key,
+                    description=f"{entry.progress_text}"[:100],
+                )
+                for entry in entries[:25]
+            ],
+        )
+        self.select.callback = self._selection_changed
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.operator_id:
+            return True
+        await interaction.response.send_message(
+            "❌ 這個選單只能由原本執行指令的人操作。", ephemeral=True
+        )
+        return False
+
+    async def _selection_changed(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+
+    @discord.ui.button(label="確認取消收集", style=discord.ButtonStyle.danger, emoji="🛑", row=1)
+    async def confirm_cancel(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not self.select.values:
+            await interaction.response.send_message("請先選擇要取消的收集。", ephemeral=True)
+            return
+        entry = self.entries[self.select.values[0]]
+        collection = entry.collection
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        # 收集登記在兩個地方，兩邊都要移除，否則排課 SLA 還是會在 48／72 小時後發提醒。
+        time_collection.deregister_collection(collection.month, collection.deadline_ts)
+        sla_removed = scheduling_sla.deregister_collection(
+            collection.month, collection.deadline_ts
+        )
+        await audit.log_event(
+            event_name=f"取消月度時段收集｜{collection.month}",
+            action_type="更新",
+            operator=str(interaction.user),
+            discord_user_id=str(interaction.user.id),
+            target_db="Availability Slots",
+            before=f"進行中｜截止 {entry.deadline_text}｜{entry.progress_text}",
+            after="已取消，不再催填",
+        )
+        sla_note = "" if sla_removed else "\n（排課 SLA 沒有對應紀錄，可能是更早的版本建立的，不影響。）"
+        await interaction.followup.send(
+            f"🛑 已取消 **{collection.month}** 的時段收集（原截止 {entry.deadline_text}）。\n"
+            "・不會再催填未填的藝人\n"
+            "・不會發逾期通知\n"
+            "・藝人已填的時段**保留不動**，仍可用於排課\n\n"
+            "⚠️ 已發出的公告與私訊收不回來，請自行刪除公告或在群組說明。"
+            + sla_note,
+            ephemeral=True,
+        )
+        self.stop()
+
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, emoji="✖️", row=1)
+    async def dismiss(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.edit_message(content="已關閉，沒有取消任何收集。", view=None)
+        self.stop()
+
+
+class OverlapQueryResultView(paging.PagedTextView):
+    """/時間交集查詢 的結果：唯讀列出共同空檔，需要時才接到既有的建立任務流程。
+
+    翻頁與跳頁沿用 `paging.PagedTextView`；這裡只多加「直接建立任務」與「關閉」。
+    """
 
     def __init__(
         self,
@@ -318,48 +445,27 @@ class OverlapQueryResultView(discord.ui.View):
         available_artists: list[repositories.Artist],
         summary_text: str,
         pages: list[str] | None = None,
+        page_labels: list[str] | None = None,
     ):
-        super().__init__(timeout=600)
+        super().__init__(
+            pages or [summary_text],
+            operator.id,
+            timeout=600,
+            page_labels=page_labels,
+        )
         self.month = month
         self.duration_minutes = duration_minutes
         self.chosen_artists = chosen_artists
         self.windows = windows
         self.operator = operator
-        self.operator_id = operator.id
         self.available_artists = available_artists
         self.summary_text = summary_text
-        # 候選時段可能長到一則訊息放不下；切成多頁讓控方翻完全部，而不是只看到被截斷的前幾天。
-        self.pages = pages or [summary_text]
-        self.page = 0
-        self._sync_page_buttons()
-
-    @property
-    def page_count(self) -> int:
-        return len(self.pages)
-
-    def _sync_page_buttons(self) -> None:
-        single_page = self.page_count <= 1
-        self.previous_page.disabled = single_page or self.page == 0
-        self.next_page.disabled = single_page or self.page >= self.page_count - 1
-
-    async def _change_page(self, interaction: discord.Interaction, page: int) -> None:
-        self.page = max(0, min(page, self.page_count - 1))
-        self._sync_page_buttons()
-        await interaction.response.edit_message(content=self.pages[self.page], view=self)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.operator_id:
             return True
         await interaction.response.send_message("❌ 這個查詢結果只能由原本執行指令的人操作。", ephemeral=True)
         return False
-
-    @discord.ui.button(label="上一頁", style=discord.ButtonStyle.secondary, row=1)
-    async def previous_page(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await self._change_page(interaction, self.page - 1)
-
-    @discord.ui.button(label="下一頁", style=discord.ButtonStyle.secondary, row=1)
-    async def next_page(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await self._change_page(interaction, self.page + 1)
 
     @discord.ui.button(label="直接建立任務", style=discord.ButtonStyle.primary, emoji="📝")
     async def create_task(self, interaction: discord.Interaction, _: discord.ui.Button):
@@ -378,7 +484,7 @@ class OverlapQueryResultView(discord.ui.View):
     @discord.ui.button(label="關閉", style=discord.ButtonStyle.secondary, emoji="✖️")
     async def close(self, interaction: discord.Interaction, _: discord.ui.Button):
         # 留下目前翻到的那一頁，避免關閉後看到的內容跳回第一頁。
-        await interaction.response.edit_message(content=self.pages[self.page], view=None)
+        await interaction.response.edit_message(content=self.current_text(), view=None)
         self.stop()
 
 
@@ -452,13 +558,15 @@ class OverlapQueryArtistSelectView(discord.ui.View):
         result_text = _monthly_pool_result_text(self.month, self.duration_minutes, chosen, result)
         if result.windows:
             # 唯讀查詢要能看完全部候選，所以用分頁而不是截斷。
-            pages = _overlap_query_pages(self.month, self.duration_minutes, chosen, result)
+            pages, page_labels = _overlap_query_pages(
+                self.month, self.duration_minutes, chosen, result
+            )
             await interaction.followup.send(
                 pages[0],
                 view=OverlapQueryResultView(
                     self.month, self.duration_minutes, chosen, result.windows,
                     self.operator, list(self.artists.values()), result_text,
-                    pages=pages,
+                    pages=pages, page_labels=page_labels,
                 ),
                 ephemeral=True,
             )
@@ -1372,6 +1480,46 @@ class SchedulingAdminCog(commands.Cog):
         )
         await interaction.edit_original_response(
             content=f"✅ 已建立 **{month}** 月度可配合時段收集。\n{where}{note}"
+        )
+
+    # ---------- /取消時間蒐集 ----------
+    @app_commands.command(name="取消時間蒐集", description="停止進行中的月度時段收集，不再催填藝人")
+    @app_commands.default_permissions(administrator=True)
+    @is_admin()
+    async def cancel_time_collection(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_admin_channel(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        collections = time_collection.active_collections()
+        if not collections:
+            await interaction.followup.send(
+                "目前沒有進行中的時段收集。\n"
+                "（收集全員填完或逾期通知發出後會自動結束，不需要手動取消。）",
+                ephemeral=True,
+            )
+            return
+
+        entries: list[CollectionCancelEntry] = []
+        for collection in collections:
+            try:
+                progress = await repositories.get_monthly_pool_progress(
+                    collection.month, list(collection.artist_page_ids)
+                )
+                filled, missing = (
+                    len(progress.filled_artist_page_ids),
+                    len(progress.missing_artist_page_ids),
+                )
+            except Exception:
+                # 讀不到進度不該擋住取消——那正是控方最需要這支指令的時候。
+                logger.exception("讀取月度時間池進度失敗：%s", collection.month)
+                filled, missing = -1, -1
+            entries.append(CollectionCancelEntry(collection, filled, missing))
+
+        await interaction.followup.send(
+            "選擇要取消的收集。取消後**不會再催填藝人**，也不會發逾期通知。\n"
+            "已經發出的公告與私訊收不回來，請自行刪除公告或在群組說明。",
+            view=CollectionCancelView(entries, interaction.user),
+            ephemeral=True,
         )
 
     # ---------- /時間交集查詢 ----------

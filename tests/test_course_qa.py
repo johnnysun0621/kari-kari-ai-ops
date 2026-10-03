@@ -58,7 +58,7 @@ def test_course_assistant_skill_is_loaded():
     assert "沿用上一輪" in skill
 
 
-def test_month_overview_is_generated_without_llm_and_includes_sources():
+def test_month_overview_is_generated_without_llm_and_hides_notion_links():
     records = [
         repositories.CourseMeetingRecord(
             page_id="august-1",
@@ -91,7 +91,11 @@ def test_month_overview_is_generated_without_llm_and_includes_sources():
     assert "舞台走位與表情管理" in answer
     assert "8/6｜八月歌唱課" in answer
     assert "練習呼吸與節奏" in answer
-    assert "[八月歌唱課](https://notion.so/august-1)" in answer
+    # 藝人從 Notion 頁面能往上翻到別人的紀錄，總覽不得帶任何網址。
+    assert "notion.so" not in answer
+    assert "https://" not in answer
+    # 每一行本來就有日期與頁面名稱，不再補一段重複的「參考會議紀錄」。
+    assert "參考會議紀錄" not in answer
 
 
 def test_persisted_memory_drops_legacy_question_text():
@@ -125,9 +129,11 @@ def test_context_builder_keeps_record_boundaries_and_respects_limit():
 
     assert len(context) <= 900
     assert context.startswith("【課程 0")
-    assert "來源：https://notion.so/record-0" in context
+    # 來源錨點留頁面名稱就好；網址進了 context，模型就會把它抄進回答。
+    assert "來源：課程 0" in context
+    assert "notion.so" not in context
     if "【課程 1" in context:
-        assert "來源：https://notion.so/record-1" in context
+        assert "來源：課程 1" in context
 
 
 def test_extract_llm_text_reads_openai_message_content():
@@ -209,3 +215,67 @@ def test_course_notes_fallback_uses_notion_summaries():
     assert "先提供 Notion 會議摘要" in answer
     assert "表演藝術課" in answer
     assert "練習舞台走位與表情管理" in answer
+    assert "notion.so" not in answer
+
+
+def _record(page_id: str, title: str, date: datetime | None) -> repositories.CourseMeetingRecord:
+    return repositories.CourseMeetingRecord(
+        page_id=page_id,
+        url=f"https://www.notion.so/{page_id}",
+        title=title,
+        date=date,
+        summary="摘要",
+        content="內容",
+        artist_page_ids=("artist-1",),
+        task_page_ids=(),
+        project_page_ids=(),
+    )
+
+
+def test_source_label_uses_date_and_title_instead_of_url():
+    dated = _record("meeting-1", "八月歌唱課", datetime(2026, 8, 6, tzinfo=config.TZ))
+
+    assert course_qa.source_label(dated) == "2026/08/06｜八月歌唱課"
+
+
+def test_source_label_falls_back_when_record_has_no_date_or_title():
+    assert course_qa.source_label(_record("m", "企劃會議", None)) == "企劃會議"
+    assert course_qa.source_label(_record("m", "", None)) == "未命名會議紀錄"
+
+
+def test_strip_notion_links_unwraps_markdown_links_to_plain_titles():
+    text = "重點如下：\n・請見 [八月歌唱課](https://www.notion.so/august-1) 的第三段"
+
+    cleaned = course_qa.strip_notion_links(text)
+
+    assert "八月歌唱課" in cleaned
+    assert "notion.so" not in cleaned
+    assert "](" not in cleaned
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.notion.so/august-1",
+    "http://notion.so/august-1?pvs=4",
+    "https://app.notion.com/p/3d95806f097b8089",
+    "https://johnny.notion.site/meeting-2",
+    "notion.so/august-1",
+    "<https://www.notion.so/august-1>",
+])
+def test_strip_notion_links_removes_bare_urls_on_every_notion_host(url):
+    cleaned = course_qa.strip_notion_links(f"來源：{url} 以上")
+
+    assert "notion." not in cleaned
+    assert "以上" in cleaned
+
+
+def test_strip_notion_links_keeps_non_notion_links_from_meeting_content():
+    """會議裡提到的參考影片、共用雲端是藝人該拿到的資訊，不能一起砍掉。"""
+    text = "老師給的參考影片：https://youtu.be/abc123 請看副歌"
+
+    cleaned = course_qa.strip_notion_links(text)
+
+    assert "https://youtu.be/abc123" in cleaned
+
+
+def test_strip_notion_links_tolerates_empty_answer():
+    assert course_qa.strip_notion_links("") == ""

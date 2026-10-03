@@ -95,6 +95,19 @@ def register_collection(month: str, created_ts: int, fill_deadline_ts: int) -> s
     return workflow_id
 
 
+def deregister_collection(month: str, fill_deadline_ts: int) -> bool:
+    """收集被取消時一併移除 SLA 追蹤，否則 48／72 小時後還會發升級提醒。
+
+    回傳是否真的移除了（找不到就回 False，讓呼叫端知道狀態不一致）。
+    """
+    _load()
+    removed = _collections.pop(f"{month}:{int(fill_deadline_ts)}", None)
+    if removed is None:
+        return False
+    _save()
+    return True
+
+
 def mark_pool_matched(month: str, matched_ts: int) -> None:
     _load()
     candidates = [item for item in _collections.values() if item.month == month]
@@ -133,6 +146,12 @@ def mark_completed(task_page_id: str, completed_ts: int) -> None:
 
 
 def due_events(now_ts: int) -> list[SLAEvent]:
+    """這些訊息帶 Notion 連結，只能發到控方頻道。
+
+    呼叫端（cogs/reminders._check_scheduling_sla）在 ADMIN_NOTIFY_CHANNEL_ID 沒設定時
+    會 fallback 到 SCHEDULE_CHANNEL_ID，而那是藝人看得到的頻道——平轉到新租戶時
+    務必先設好 ADMIN_NOTIFY_CHANNEL_ID，否則等於把 Notion 入口發給藝人。
+    """
     _load()
     events: list[SLAEvent] = []
     for workflow in _collections.values():

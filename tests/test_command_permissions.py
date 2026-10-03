@@ -80,6 +80,7 @@ def test_registered_cogs_expose_exactly_ten_slash_commands():
         "任務總覽",
         "任務通知重送",
         "時間交集查詢",
+        "取消時間蒐集",
         "時間資訊蒐集",
         "從時間池建立任務",
         "管理可配合時間",

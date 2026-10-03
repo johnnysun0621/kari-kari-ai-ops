@@ -268,7 +268,11 @@ def _conflict_text(conflicts: list[repositories.ScheduleConflict]) -> str:
 async def _schedule_impact_context(
     artist: repositories.Artist,
 ) -> repositories.ScheduleImpactContext:
-    return await repositories.get_schedule_impact_context_for_artist(artist.page_id)
+    # 藝人端只看已勾「Discord 顯示」的任務：未勾的是控方還沒派發的草稿，
+    # 連同任務名稱都會出現在撞課提示裡，藝人不該知道它存在。
+    return await repositories.get_schedule_impact_context_for_artist(
+        artist.page_id, discord_visible_only=True
+    )
 
 
 def _available_windows_with_impact(

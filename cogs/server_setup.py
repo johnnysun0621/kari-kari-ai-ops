@@ -60,6 +60,7 @@ def command_channel_groups() -> dict[str, tuple[str, bool]]:
         "管理可配合時間": ("時間管理", False),
         "我的任務": ("任務查詢入口", False),
         "時間交集查詢": ("營運操作", True),
+        "取消時間蒐集": ("營運操作", True),
         "從時間池建立任務": ("營運操作", True),
         "任務總覽": ("營運操作", True),
         "任務通知重送": ("營運操作", True),

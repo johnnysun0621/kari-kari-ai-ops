@@ -651,3 +651,34 @@ def test_refill_time_command_is_artist_visible():
     assert command.default_permissions is None
     assert inspect.signature(command.callback).parameters["月份"].default is None
     assert not hasattr(SchedulingArtistCog, "my_slots")
+
+
+class TestArtistScheduleContextHidesDrafts:
+    """時間回報只能看到已勾「Discord 顯示」的任務（會議 2026-09-12 決議）。
+
+    邏輯本身在 repositories 測過了；這裡守的是接線——旗標沒傳下去的話，
+    repositories 那邊寫得再對，藝人還是會看到未派發的草稿。
+    """
+
+    def test_artist_context_requests_discord_visible_tasks_only(self, monkeypatch):
+        import asyncio
+
+        captured = {}
+
+        async def fake_context(artist_page_id, use_cache=True, *, discord_visible_only=False):
+            captured["artist_page_id"] = artist_page_id
+            captured["discord_visible_only"] = discord_visible_only
+            return repositories.ScheduleImpactContext()
+
+        monkeypatch.setattr(
+            scheduling_artist.repositories,
+            "get_schedule_impact_context_for_artist",
+            fake_context,
+        )
+
+        asyncio.run(scheduling_artist._schedule_impact_context(
+            artist("artist-1", "Johnny")
+        ))
+
+        assert captured["artist_page_id"] == "artist-1"
+        assert captured["discord_visible_only"] is True

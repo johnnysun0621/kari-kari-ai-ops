@@ -2,6 +2,7 @@
 
 Notion 欄位名稱是中文（與正式資料庫完全一致），若 Notion 端改名，只需改這裡。
 """
+import asyncio
 import logging
 import time
 from io import BytesIO
@@ -713,6 +714,10 @@ class TaskItem:
     submission_deadline: datetime | None = None
     submission_deadline_has_time: bool = False
     revision_deadline: datetime | None = None
+    # 提前交件：控方勾了就走 T-5 交件死線（提交期限沒填時＝截止日−approval_lead_days）
+    needs_approval: bool = False
+    # 提醒確認：Bot 逐行追加「階段｜時間｜藝人」，控方看誰確認過哪一次提醒
+    reminder_ack: str = ""
 
 
 @dataclass
@@ -832,6 +837,8 @@ def _to_task(page: dict) -> TaskItem:
         submission_deadline=submission_deadline.value,
         submission_deadline_has_time=submission_deadline.has_time,
         revision_deadline=_read_date_start(page, "修改期限"),
+        needs_approval=_read_checkbox(page, TASK_NEEDS_APPROVAL_PROPERTY),
+        reminder_ack=_read_rich_text(page, TASK_REMINDER_ACK_PROPERTY),
     )
 
 
@@ -858,6 +865,12 @@ def _to_submission(page: dict) -> SubmissionItem:
 
 TASK_DISCORD_DISPLAY_PROPERTY = "Discord 顯示"
 TASK_DISCORD_VISIBLE_LEGACY_PROPERTY = "Discord 可見"
+# 2026-09-20 新增的兩個欄位。舊 workspace 沒有這兩欄時：提前交件一律 False（等於沒 T-5），
+# 提醒確認寫入會自動降級成只留 Audit Log，都不會讓流程炸掉。
+# 不叫「需審批」：系統裡「審核」已經是 /審核提交 那一整套的名字，會撞。這個勾只做一件事——把第一輪交件日往前拉。
+TASK_NEEDS_APPROVAL_PROPERTY = "提前交件"
+# 括號是半形、「From」後有一個半形空格——Notion 是用名稱找欄位，差一個字元就寫不進去。
+TASK_REMINDER_ACK_PROPERTY = "提醒確認(From 藝人)"
 
 
 def _task_discord_visible(page: dict) -> bool:
@@ -1090,9 +1103,48 @@ async def get_course_training_projects() -> list[ProjectItem]:
     )
 
 
-async def get_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
+async def _query_tasks_requiring_discord_display(
+    extra_filters: list[dict] | None = None,
+) -> list[dict]:
+    """查已勾「Discord 顯示」的任務，順便擋掉未派發的草稿。
+
+    舊 workspace 的欄位名是「Discord 可見」；只有在 Notion 明確回報找不到新欄位時
+    才退回舊名，其他錯誤照樣往外丟，免得把真正的權限問題吞掉。
+    """
+    def _build(property_name: str) -> dict:
+        clauses = [{"property": property_name, "checkbox": {"equals": True}}]
+        clauses.extend(extra_filters or [])
+        return {"and": clauses} if len(clauses) > 1 else clauses[0]
+
+    try:
+        return await notion_api.query_data_source(
+            config.DS_TASKS, filter_=_build(TASK_DISCORD_DISPLAY_PROPERTY)
+        )
+    except NotionAPIError as e:
+        if TASK_DISCORD_DISPLAY_PROPERTY not in str(e):
+            raise
+        return await notion_api.query_data_source(
+            config.DS_TASKS, filter_=_build(TASK_DISCORD_VISIBLE_LEGACY_PROPERTY)
+        )
+
+
+async def get_tasks_for_artist(
+    artist_page_id: str,
+    *,
+    discord_visible_only: bool = False,
+) -> list[TaskItem]:
+    """該藝人的任務，含透過「關聯專案」間接關聯的那些。
+
+    `discord_visible_only=True` 只回傳已勾「Discord 顯示」的任務，給藝人端用：
+    未勾的是控方還沒派發的草稿，藝人連它存在都不該知道（草稿的任務名稱會出現在
+    撞課提示裡）。控方端維持看得到全部——比對共同空檔時要把草稿佔用的時段算進去，
+    否則會把已經排掉的時間當空檔推出去。
+    """
     project_map = await get_project_map()
-    pages = await notion_api.query_data_source(config.DS_TASKS)
+    if discord_visible_only:
+        pages = await _query_tasks_requiring_discord_display()
+    else:
+        pages = await notion_api.query_data_source(config.DS_TASKS)
     tasks = [_to_task(page) for page in pages]
     return [
         task for task in tasks
@@ -1128,21 +1180,14 @@ TASK_DUE_SOON_DAYS = 3
 
 
 async def get_discord_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
-    """/我的任務：Discord 顯示＋直接關聯該藝人（Notion 端過濾，不撈全表）。"""
-    filter_ = {"and": [
-        {"property": TASK_DISCORD_DISPLAY_PROPERTY, "checkbox": {"equals": True}},
-        {"property": "關聯藝人", "relation": {"contains": artist_page_id}},
-    ]}
-    try:
-        pages = await notion_api.query_data_source(config.DS_TASKS, filter_=filter_)
-    except NotionAPIError as e:
-        if TASK_DISCORD_DISPLAY_PROPERTY not in str(e):
-            raise
-        legacy_filter = {"and": [
-            {"property": TASK_DISCORD_VISIBLE_LEGACY_PROPERTY, "checkbox": {"equals": True}},
-            {"property": "關聯藝人", "relation": {"contains": artist_page_id}},
-        ]}
-        pages = await notion_api.query_data_source(config.DS_TASKS, filter_=legacy_filter)
+    """/我的任務：Discord 顯示＋**直接**關聯該藝人（Notion 端過濾，不撈全表）。
+
+    只認直接關聯，不追專案。要含專案間接關聯請用
+    `get_tasks_for_artist(..., discord_visible_only=True)`。
+    """
+    pages = await _query_tasks_requiring_discord_display(
+        [{"property": "關聯藝人", "relation": {"contains": artist_page_id}}]
+    )
     return [_to_task(p) for p in pages]
 
 
@@ -1161,13 +1206,49 @@ async def get_all_tasks() -> list[TaskItem]:
     return [_to_task(page) for page in pages if not page.get("archived")]
 
 
+def approval_submission_deadline(
+    task: TaskItem, lead_days: int | None = None
+) -> tuple[datetime | None, bool]:
+    """「提前交件」任務的交件死線：填了提交期限就用它，否則截止日往前推 lead_days。
+
+    會議 2026-09-12 決議：發布日當天才交審批來不及，所以提前交件的任務真正的死線
+    是提前的那幾天，逾期也以這一天算。上課等沒勾提前交件的任務不受影響。
+    """
+    if not task.needs_approval:
+        return None, False
+    if task.submission_deadline:
+        return task.submission_deadline, task.submission_deadline_has_time
+    if not task.end:
+        return None, False
+    if lead_days is None:
+        lead_days = config.get_tenant().approval_lead_days
+    return task.end - timedelta(days=lead_days), task.end_has_time
+
+
 def task_action_deadline(task: TaskItem) -> tuple[datetime | None, bool]:
-    """回傳目前要追蹤的期限；課程時間與作業／修改期限不可混用。"""
+    """回傳目前要追蹤的期限；課程時間與作業／修改期限不可混用。
+
+    優先順序：需修改（另有修改期限，這裡不管）→ 提前交件的交件死線 →
+    開放提交且有提交期限 → 截止日。
+    """
     if task.status == "需修改":
         return None, False
+    approval_deadline, approval_has_time = approval_submission_deadline(task)
+    if approval_deadline:
+        return approval_deadline, approval_has_time
     if task.open_for_submission and task.submission_deadline:
         return task.submission_deadline, task.submission_deadline_has_time
     return task.end, task.end_has_time
+
+
+def task_deadline_kind(task: TaskItem) -> str:
+    """給藝人看的期限稱呼：提前交件＝「交件」，其餘＝「截止」。"""
+    deadline, _ = approval_submission_deadline(task)
+    if deadline:
+        return "交件"
+    if task.open_for_submission and task.submission_deadline:
+        return "交件"
+    return "截止"
 
 
 def task_deadline_passed(task: TaskItem, now: datetime) -> bool:
@@ -1241,9 +1322,11 @@ def compute_due_reminder_stages(
       讓控方不必逐筆勾也有基本提醒；勾了就完全以勾選為準，不再疊加預設。
     - 「逾期」不看規則、一律觸發（Kickoff：逾期需提醒或升級處理），
       公司沒勾規則的任務也不會默默爛掉。
+    - 「待審核」不提醒：東西已經交出去了，球在公司手上，再催藝人只會被當成 bug
+      （與 classify_tasks_for_display 把待審核排在逾期前面是同一個原則）。
     """
     deadline, _ = task_action_deadline(task)
-    if task.status in INACTIVE_TASK_STATUSES or not deadline:
+    if task.status in INACTIVE_TASK_STATUSES or task.status == "待審核" or not deadline:
         return []
     if task_deadline_passed(task, now):
         return [OVERDUE_STAGE]
@@ -1316,27 +1399,86 @@ async def mark_task_discord_notified(
 
 
 async def reset_task_discord_notification(page_id: str) -> None:
-    """清除通知／收到時間，供管理者要求重新派發測試或補發通知。"""
-    await notion_api.update_page(
-        page_id,
-        {
-            "Discord 通知時間": {"date": None},
-            "Discord 收到時間": {"date": None},
-        },
-    )
+    """清除通知／收到時間，供管理者要求重新派發測試或補發通知。
+
+    提醒確認一起清：重送代表內容或時間改了，舊的確認不算數。舊 workspace 沒有
+    提醒確認欄位時退回只清兩個時間欄位。
+    """
+    props = {
+        "Discord 通知時間": {"date": None},
+        "Discord 收到時間": {"date": None},
+        TASK_REMINDER_ACK_PROPERTY: {"rich_text": []},
+    }
+    try:
+        await notion_api.update_page(page_id, props)
+    except NotionAPIError as exc:
+        if TASK_REMINDER_ACK_PROPERTY not in str(exc):
+            raise
+        props.pop(TASK_REMINDER_ACK_PROPERTY)
+        await notion_api.update_page(page_id, props)
+
+
+# Notion 沒有「追加一行」的原子操作，只能讀→改→寫。兩位藝人同時按確認會互相蓋掉，
+# 所以同一筆任務的寫入用鎖串起來。鎖以 page id 為 key，跨租戶不會撞。
+_reminder_ack_locks: dict[str, asyncio.Lock] = {}
+
+
+def merge_reminder_ack_line(existing: str, line: str) -> str | None:
+    """把新的一行併進既有紀錄；已經有同一行就回 None（呼叫端據此不寫 Notion）。"""
+    line = line.strip()
+    if not line:
+        return None
+    current = [item.strip() for item in existing.splitlines() if item.strip()]
+    if line in current:
+        return None
+    return "\n".join([*current, line])
+
+
+async def append_reminder_ack_line(page_id: str, line: str) -> bool:
+    """在「提醒確認」追加一行。回傳 False＝欄位不存在（舊 schema），已降級不寫。
+
+    重複的行不會再寫一次（同一位藝人連按兩下只留一筆）。
+    """
+    lock = _reminder_ack_locks.setdefault(page_id, asyncio.Lock())
+    async with lock:
+        page = await notion_api.retrieve_page(page_id)
+        if not page:
+            return False
+        existing = _read_rich_text(page, TASK_REMINDER_ACK_PROPERTY)
+        merged = merge_reminder_ack_line(existing, line)
+        if merged is None:
+            return True
+        try:
+            await notion_api.update_page(
+                page_id, {TASK_REMINDER_ACK_PROPERTY: _rich_text(merged)}
+            )
+            return True
+        except NotionAPIError as exc:
+            if TASK_REMINDER_ACK_PROPERTY not in str(exc):
+                raise
+            # 讓還沒加欄位的租戶照樣能用按鈕；確認紀錄留在 Audit Log。
+            return False
 
 
 async def return_task_after_artist_concern(page_id: str) -> None:
-    """藝人回報無法配合後，退回任務並準備控方修改後重新派發。"""
-    await notion_api.update_page(
-        page_id,
-        {
-            "任務狀態": _select("尚未開始"),
-            "Discord 顯示": _checkbox(False),
-            "Discord 通知時間": {"date": None},
-            "Discord 收到時間": {"date": None},
-        },
-    )
+    """藝人回報無法配合後，退回任務並準備控方修改後重新派發。
+
+    提醒確認一起清：任務退回再派發，舊的確認不算數。舊 workspace 沒有該欄位時降級。
+    """
+    props = {
+        "任務狀態": _select("尚未開始"),
+        "Discord 顯示": _checkbox(False),
+        "Discord 通知時間": {"date": None},
+        "Discord 收到時間": {"date": None},
+        TASK_REMINDER_ACK_PROPERTY: {"rich_text": []},
+    }
+    try:
+        await notion_api.update_page(page_id, props)
+    except NotionAPIError as exc:
+        if TASK_REMINDER_ACK_PROPERTY not in str(exc):
+            raise
+        props.pop(TASK_REMINDER_ACK_PROPERTY)
+        await notion_api.update_page(page_id, props)
 
 
 async def acknowledge_task(
@@ -1713,35 +1855,49 @@ async def mark_submission_review_notified(
 
 
 # 「撞課」情境（Tasks/Projects）每次填時段都要算，且含兩次全表掃描。
-# 以 artist page id 為 key 做短 TTL 快取（Notion page id 全域唯一，跨租戶不會撞），
-# 讓同一藝人連續填多筆、或一次批次多筆時只查一次 Notion。
+# 做短 TTL 快取，讓同一藝人連續填多筆、或一次批次多筆時只查一次 Notion。
+# key 一定要含 discord_visible_only：藝人端（只看已派發）與控方端（含草稿）拿到的
+# 內容不同，只用 artist page id 當 key 會在 30 秒內互相污染，藝人就會看到草稿名稱。
 _IMPACT_CONTEXT_TTL = 30.0  # 秒
-_impact_context_cache: dict[str, tuple[float, "ScheduleImpactContext"]] = {}
+_impact_context_cache: dict[tuple[str, bool], tuple[float, "ScheduleImpactContext"]] = {}
 
 
 def _invalidate_impact_context_cache(artist_page_id: str | None = None) -> None:
     """清掉撞課情境快取（None＝全清）。正式安排有變動時可呼叫，讓下次填寫看到最新。"""
     if artist_page_id is None:
         _impact_context_cache.clear()
-    else:
-        _impact_context_cache.pop(artist_page_id, None)
+        return
+    for key in [key for key in _impact_context_cache if key[0] == artist_page_id]:
+        _impact_context_cache.pop(key, None)
 
 
 async def get_schedule_impact_context_for_artist(
-    artist_page_id: str, use_cache: bool = True
+    artist_page_id: str,
+    use_cache: bool = True,
+    *,
+    discord_visible_only: bool = False,
 ) -> ScheduleImpactContext:
+    """撞課情境。`discord_visible_only=True` 給藝人端用，只算已勾「Discord 顯示」的任務。
+
+    未勾的任務是控方還沒派發的草稿。藝人填時段時看到它，等於知道有一筆還沒對外的
+    安排，連任務名稱都會出現在「已排除與正式安排衝突的時間」裡。控方端不帶這個旗標，
+    比對共同空檔時仍會把草稿算成已佔用。
+    """
+    cache_key = (artist_page_id, discord_visible_only)
     now = time.monotonic()
     if use_cache:
-        cached = _impact_context_cache.get(artist_page_id)
+        cached = _impact_context_cache.get(cache_key)
         if cached is not None and now - cached[0] < _IMPACT_CONTEXT_TTL:
             return cached[1]
-    tasks = await get_tasks_for_artist(artist_page_id)
+    tasks = await get_tasks_for_artist(
+        artist_page_id, discord_visible_only=discord_visible_only
+    )
     projects = await get_projects_for_artist(artist_page_id)
     context = ScheduleImpactContext(
         busy_intervals=busy_intervals_for_tasks(tasks),
         warnings=warnings_for_tasks(tasks) + warnings_for_projects(projects),
     )
-    _impact_context_cache[artist_page_id] = (now, context)
+    _impact_context_cache[cache_key] = (now, context)
     return context
 
 
