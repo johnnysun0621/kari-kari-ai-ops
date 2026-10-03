@@ -15,6 +15,8 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 課程正式時間如有異動，改為控方與老師人工協調後直接在 Task 更新開始／結束時間；沒有自動化的老師確認表單或對外連結。
 
+**撞課情境的可見範圍分兩種**（`get_schedule_impact_context_for_artist` 的 `discord_visible_only`）：藝人端填時段只算已勾 `Discord 顯示` 的任務，未派發的草稿連任務名稱都不該讓藝人知道；控方端不帶旗標，比對共同空檔時仍把草稿算成已佔用，才不會把排掉的時段當空檔推出去。快取 key 含這個旗標，兩邊不會互相污染。
+
 ## 核心資料邊界
 
 | 資料 | 定位 |
@@ -194,6 +196,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 - 每位藝人使用自己的私人 Thread，並以 Discord User ID 對應 Notion Artists。
 - 查詢範圍是已標記藝人可見、且 `會議類型` 不在 `qa_hidden_meeting_types` 排除清單內的會議紀錄，不限於課程。
 - 新 Thread 首次先顯示附件索引；索引顯示後仍處理當次問題，後續可指定頁面／檔案進行內容問答。
+- **藝人端不輸出 Notion 網址**（全系統規則，見 `services/notion_links.py`）：附件索引、月份總覽與回答來源都只寫「日期｜頁面名稱」。網址也不進 LLM context（否則模型會抄進回答），回答送出前再過濾一次 Notion 網域；會議內容裡的非 Notion 連結照常保留。
 - 每次提問重新讀取 Notion；Notion 暫時失敗時才退回上次成功快取。
 - 長回覆會切成 Discord 可接受的多則訊息。
 - 公開問題刪除失敗只寫 log，不把權限錯誤洗到頻道。
