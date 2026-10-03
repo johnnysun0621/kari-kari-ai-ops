@@ -12,3 +12,5 @@ venv/
 .DS_Store
 .state/
 credentials/
+# 合約、報價、驗收文件含雙方身分資料與商業條件；此 repo 目前是 public，一律不入庫
+交付文件/

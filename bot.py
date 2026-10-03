@@ -6,7 +6,7 @@ from discord.ext import commands
 
 import config
 from cogs.scheduling_artist import PoolAvailabilityButton
-from cogs.tasks_artist import TaskConcernButton, TaskReceiptButton
+from cogs.tasks_artist import ReminderAckButton, TaskConcernButton, TaskReceiptButton
 from services import audit, notion_api, repositories
 from web import server as teacher_web
 
@@ -56,6 +56,7 @@ class KariKariBot(commands.Bot):
         self.add_dynamic_items(PoolAvailabilityButton)
         self.add_dynamic_items(TaskReceiptButton)
         self.add_dynamic_items(TaskConcernButton)
+        self.add_dynamic_items(ReminderAckButton)
         if config.GUILD_ID:
             guild = discord.Object(id=config.GUILD_ID)
             self.tree.copy_global_to(guild=guild)
@@ -101,6 +102,14 @@ def main():
         raise SystemExit("缺少 DISCORD_TOKEN，請先在 .env 填入 Discord bot token。")
     if not config.NOTION_TOKEN:
         raise SystemExit("缺少 NOTION_TOKEN，請先在 .env 填入 Notion integration token。")
+    missing_ds = config.missing_data_source_env()
+    if missing_ds:
+        raise SystemExit(
+            "缺少 Notion Data Source ID："
+            + "、".join(missing_ds)
+            + "\n請在 .env 補齊（見 .env.example）。這些值沒有預設；"
+            "連到錯誤的資料庫比連不上更難發現，所以寧可啟動失敗。"
+        )
     bot = KariKariBot()
     bot.run(config.DISCORD_TOKEN, log_handler=None)
 

@@ -84,6 +84,8 @@ class TenantConfig:
     remind_before_deadline_hours: int
     # Tasks 沒有勾任何「提醒規則」時套用的預設規則；留空＝不提醒（維持舊行為）
     default_reminder_rules: tuple[str, ...]
+    # 「提前交件」任務沒填「提交期限」時，交件死線＝截止日往前推幾天（會議 2026-09-12 定 T-5）
+    approval_lead_days: int
     # 藝人未按「收到任務」時的重送間隔（小時）
     task_ack_reminder_hours: float
     # 提供 Drive 資料夾後，等待藝人上傳的有效期（分鐘）
@@ -128,8 +130,9 @@ class TenantConfig:
 def _load_karikari_from_env() -> TenantConfig:
     """KariKari 租戶：正式資料層（2026-07-07 拍板，11 張資料庫）。
 
-    https://app.notion.com/p/38e5806f097b812aba6dc668ebb5e541
-    Data Source ID 內建預設值；Notion 端重建資料庫時才需要在 .env 覆寫。
+    九組 Data Source ID 全部必填、沒有預設值，見 .env.example。
+    資料層架構與欄位對照見 docs/foundation/NOTION_SCHEMA.md
+    （Notion 網址含客戶頁面 ID，不寫在這個 public repo 裡）。
     """
     schedule_channel_id = _env_int("SCHEDULE_CHANNEL_ID")
     admin_notify_channel_id = _env_int("ADMIN_NOTIFY_CHANNEL_ID", schedule_channel_id)
@@ -153,15 +156,20 @@ def _load_karikari_from_env() -> TenantConfig:
         ai_channel_id=_env_int("AI_CHANNEL_ID"),
         notion_token=os.getenv("NOTION_TOKEN", ""),
         notion_version="2025-09-03",
-        ds_artists=os.getenv("NOTION_DS_ARTISTS", "c0253aec-d18c-47de-a92f-e4a6f9eda641"),
-        ds_availability_slots=os.getenv("NOTION_DS_AVAILABILITY_SLOTS", "3726792b-a0f2-47f0-9fb2-2a49a0444266"),
-        ds_audit_log=os.getenv("NOTION_DS_AUDIT_LOG", "af855535-af5a-42b7-922a-4bc96449b267"),
-        ds_tasks=os.getenv("NOTION_DS_TASKS", "f5fdde00-d0b9-4b9b-8786-06432dbdc0c9"),
-        ds_projects=os.getenv("NOTION_DS_PROJECTS", "579092eb-68ae-4f1c-99c5-253d801ee07d"),
-        ds_people=os.getenv("NOTION_DS_PEOPLE", "52413671-535d-40de-90fc-2df3c2c61f93"),
-        ds_submissions=os.getenv("NOTION_DS_SUBMISSIONS", "370b01ba-64a7-4a1e-96de-e7cb83695d58"),
-        ds_bulletin=os.getenv("NOTION_DS_BULLETIN", "d605806f-097b-823e-ac69-07fa536ba05f"),
-        ds_course_meetings=os.getenv("NOTION_DS_COURSE_MEETINGS", "0a95806f-097b-8368-bb02-8705bdfa744b"),
+        # 鐵則 1：公司特定值一律從 .env 注入，不留寫死的 fallback。
+        # 這裡曾經放九組寫死的真實 ID；因為 load_dotenv() 必定覆蓋，那些值永遠執行不到，
+        # 卻把正式環境的資料庫 ID 公開在 repo 裡，而且與 .env 實際值已經不一致——
+        # 真正的風險是 .env 漏載時 bot 會默默連到錯誤的九個資料庫而不是大聲失敗。
+        # 缺欄位時留空，由 bot.py 啟動檢查擋下（見 _missing_data_source_env）。
+        ds_artists=os.getenv("NOTION_DS_ARTISTS", ""),
+        ds_availability_slots=os.getenv("NOTION_DS_AVAILABILITY_SLOTS", ""),
+        ds_audit_log=os.getenv("NOTION_DS_AUDIT_LOG", ""),
+        ds_tasks=os.getenv("NOTION_DS_TASKS", ""),
+        ds_projects=os.getenv("NOTION_DS_PROJECTS", ""),
+        ds_people=os.getenv("NOTION_DS_PEOPLE", ""),
+        ds_submissions=os.getenv("NOTION_DS_SUBMISSIONS", ""),
+        ds_bulletin=os.getenv("NOTION_DS_BULLETIN", ""),
+        ds_course_meetings=os.getenv("NOTION_DS_COURSE_MEETINGS", ""),
         tz=ZoneInfo("Asia/Taipei"),
         public_task_types=tuple(
             value.strip()
@@ -174,11 +182,14 @@ def _load_karikari_from_env() -> TenantConfig:
         remind_before_deadline_hours=_env_float("REMIND_BEFORE_DEADLINE_HOURS", 6),
         task_ack_reminder_hours=_env_float("TASK_ACK_REMINDER_HOURS", 12),
         file_upload_wait_minutes=_env_int("FILE_UPLOAD_WAIT_MINUTES", 180),
+        # 2026-09-20 起預設只剩「當天」：提前幾天交件由「提前交件」＋「提交期限」決定，
+        # 不再靠提醒規則硬塞 5 天。上課等不提前交件的任務因此不會再收到 T-5。
         default_reminder_rules=tuple(
             value.strip()
-            for value in os.getenv("DEFAULT_REMINDER_RULES", "5 天前").split(",")
+            for value in os.getenv("DEFAULT_REMINDER_RULES", "當天").split(",")
             if value.strip()
         ),
+        approval_lead_days=_env_int("APPROVAL_LEAD_DAYS", 5),
         reminder_interval_minutes=_env_float("REMINDER_INTERVAL_MINUTES", 30),
         review_reminder_interval_hours=_env_float("REVIEW_REMINDER_INTERVAL_HOURS", 12),
         review_reminder_after_hours=_env_float("REVIEW_REMINDER_AFTER_HOURS", 24),
@@ -208,6 +219,31 @@ TENANT = _load_karikari_from_env()
 def get_tenant() -> TenantConfig:
     """目前運行中的租戶設定。多租戶時改由 registry 依 guild 解析。"""
     return TENANT
+
+
+# 租戶欄位 → .env 變數名。Data Source ID 沒有合理預設值：連錯資料庫比連不上更糟，
+# 所以缺任何一個就讓 bot 啟動失敗，而不是讓它帶著空字串去打 Notion。
+DATA_SOURCE_ENV_VARS = {
+    "ds_artists": "NOTION_DS_ARTISTS",
+    "ds_availability_slots": "NOTION_DS_AVAILABILITY_SLOTS",
+    "ds_audit_log": "NOTION_DS_AUDIT_LOG",
+    "ds_tasks": "NOTION_DS_TASKS",
+    "ds_projects": "NOTION_DS_PROJECTS",
+    "ds_people": "NOTION_DS_PEOPLE",
+    "ds_submissions": "NOTION_DS_SUBMISSIONS",
+    "ds_bulletin": "NOTION_DS_BULLETIN",
+    "ds_course_meetings": "NOTION_DS_COURSE_MEETINGS",
+}
+
+
+def missing_data_source_env(tenant: TenantConfig | None = None) -> list[str]:
+    """回傳未設定的 Data Source 環境變數名稱（已排序）。空 list 代表九組都齊。"""
+    target = tenant if tenant is not None else get_tenant()
+    return sorted(
+        env_name
+        for field, env_name in DATA_SOURCE_ENV_VARS.items()
+        if not str(getattr(target, field, "") or "").strip()
+    )
 
 
 # ======================================================================

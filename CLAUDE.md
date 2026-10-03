@@ -19,7 +19,7 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 | [ARCHITECTURE.md](docs/foundation/ARCHITECTURE.md) | 程式模組責任、資料邊界、平轉狀態 |
 | [PROJECT_PRINCIPLES.md](docs/foundation/PROJECT_PRINCIPLES.md) | 產品原則（多租戶平展化、資料安全）——Johnny 親寫，架構決策的最高依據 |
 | [NOTION_SCHEMA.md](docs/foundation/NOTION_SCHEMA.md) | Notion 資料庫交互邏輯 |
-| [FLOWCHART.md](docs/foundation/FLOWCHART.md) | Mermaid 主流程圖與資料庫責任分界 |
+| [FLOWCHART.md](docs/foundation/FLOWCHART.md) | **系統架構＋7 張流程圖**：架構分層、任務一生、死線判定、月度排課、藝人端資料邊界、背景自動化、資料庫責任分界 |
 
 **`docs/sop/`**（給控方與藝人的操作手冊，改行為要同步更新）：
 
@@ -80,7 +80,12 @@ python bot.py                      # 需 .env（見 README）
 4. 破壞性操作先預覽；封存（archive）不刪除；重要操作寫 `audit.log_event`
 5. 互動處理第一行先 `defer()` 或立即回應（Discord 3 秒硬限）；autocomplete 必須走快取
 6. 每個功能配純函式測試；新增測試工廠前先 grep `tests/`（曾發生同名 `task()` 遮蔽既有工廠）
-7. **模組化／積木化**（Johnny 明確要求）：共用邏輯放 services/（permissions、repositories…）、
+7. **藝人端零 Notion 入口**（Johnny 2026-09-18 拍板）：任何藝人看得到的輸出都不得帶 Notion 網址——
+   私訊、公告區、課程助教、link button 全部算。原因是 Notion 的逐頁權限管不到頁面上方的導覽列，
+   藝人拿到任一頁網址就能往上翻到整個資料庫（一筆任務 → 全部藝人的 Tasks）。
+   網址也不能進 LLM context，模型會照抄。控方／老師頻道不受限。
+   工具：`services/notion_links.py`；守門測試：`tests/test_artist_no_notion_links.py`
+8. **模組化／積木化**（Johnny 明確要求）：共用邏輯放 services/（permissions、repositories…）、
    共用 UI helper 放獨立模組（channel_guard、ui_text 模式）；**cog 之間不 import 彼此的私有函式**；
    helper 重複第二次就抽出來
 
@@ -89,18 +94,31 @@ python bot.py                      # 需 .env（見 README）
 - **時段去重是性質無關、較寬窗勝出**：`_slot_nature_priority` 恆回 1 是故意的；
   測試 `test_long_legacy_slot_replaces_contained_legacy_slot_without_priority` 明文保護
 - **逾期提醒不看提醒規則一律觸發**（含規則空白的任務）；截止前提醒才照規則
-- **提醒規則空白＝套用 `default_reminder_rules`（預設「5 天前」）**，不是不提醒；
-  一旦勾了任何規則就完全以勾選為準，預設不疊加（否則控方無法把提醒收斂成只剩當天）
+- **提醒規則空白＝套用 `default_reminder_rules`（2026-09-20 起預設「當天」）**，不是不提醒；
+  一旦勾了任何規則就完全以勾選為準，預設不疊加（否則控方無法把提醒收斂成只剩當天）。
+  「5 天前」已從 Notion 選項與預設移除——提前幾天交件改由「提前交件」決定，不再靠提醒規則塞
 - **「逾期」不在 `REMINDER_RULE_DAYS` 裡，但不是無用選項**：只勾它＝規則非空、擋掉預設，
   等於「事前別提醒，逾期再講」。這是控方關閉事前提醒的唯一方式
+- **「提前交件」☑ 會把追蹤的期限換成交件死線**（`approval_submission_deadline`）：`提交期限` 有填用它，
+  沒填＝`截止日 − approval_lead_days`。逾期以交件日判定，藝人看到「交件 9/25」不是「截止 9/30」。
+  一個任務進行到底、不拆兩筆，所以發布日當天沒有提醒——這是客戶決議的取捨，不是漏做
+- **「待審核」不發截止前提醒**（`compute_due_reminder_stages`）：東西交出去了球在公司，
+  再催藝人會被當成 bug。逾期判定同樣停在待審核
 - **date-only 截止日當天整天有效，隔天才算逾期**（`task_deadline_passed`）
 - 任務「待審核」優先於「逾期」分區（已交出＝球在公司，不對藝人顯示逾期）
+- **「提醒確認(From 藝人)」欄位是 text 不是 checkbox，且 Bot 送出提醒時自己先寫一行「已發送給 N 人」**：
+  多藝人任務要逐人逐階段記，checkbox 記不了誰按了；送出行讓控方分得出「還沒發」和「發了沒人按」。
+  同一行重複不再寫（`merge_reminder_ack_line`）；欄位不存在時降級只留 Audit Log，不炸流程
 - 提醒去重：排課類在記憶體 `_sent`（重啟最多重發一次，可接受）；
   任務逾期用 Notion 狀態「已逾期」持久化（重啟不重複轟炸）
 
 ## Notion 資料層
 
-- Runtime 目前讀寫 9 個 Notion Data Sources（ID 內建在 `config.py`）；其他 workspace 資料庫與 views 不代表 Bot 會讀取
+- Runtime 目前讀寫 9 個 Notion Data Sources；**ID 全部必填於 `.env`，程式碼不留 fallback**
+  （本 repo 是 public；且 .env 漏載時連到錯誤資料庫比連不上更難發現）。
+  缺任一組由 `bot.py` 啟動時 `config.missing_data_source_env()` 擋下；
+  守門測試 `tests/test_no_hardcoded_data_source_ids.py`。
+  其他 workspace 資料庫與 views 不代表 Bot 會讀取
 - 速率 ~3 req/s per integration token——這是產品天花板，效能問題先想快取，不是拆節流
 - 欄位級 schema 與功能對應：見 RESEARCH.md 第二節
 - Audit Log 寫入失敗不阻斷主流程（audit.py 已包好）
