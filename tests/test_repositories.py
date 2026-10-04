@@ -1294,12 +1294,14 @@ def display_task(
     end: datetime | None = None,
     end_has_time: bool = False,
     task_type: str | None = None,
+    project_types: list[str] | None = None,
 ):
     return repositories.TaskItem(
         page_id=f"task-{name}",
         name=name,
         status=status,
         task_type=task_type,
+        project_types=project_types if project_types is not None else [],
         end=end,
         end_has_time=end_has_time,
     )
@@ -1392,6 +1394,118 @@ def reminder_task(rules: list[str], end: datetime | None, status: str = "進行�
     t = display_task(status=status, end=end)
     t.reminder_rules = rules
     return t
+
+
+def course_task(end: datetime | None, status: str = "進行中"):
+    """課程培訓類任務（分類經 關聯專案 的 專案類型，不是 任務類型）。"""
+    return display_task(
+        name="編曲課",
+        status=status,
+        end=end,
+        project_types=[repositories.PROJECT_TYPE_COURSE_TRAINING],
+    )
+
+
+class TestCourseTasksSkipOverdue:
+    """M5-03：課程任務不判逾期。
+
+    課程同時有「上課時間」與「課後交付」兩個期限，混在一起判逾期會在上課日
+    隔天把所有課程任務標紅，而實際上只是老師還沒發東西。
+    """
+
+    PAST = datetime(2026, 7, 1, tzinfo=config.TZ)  # NOW 是 7/8，已過期 7 天
+
+    def test_course_task_past_deadline_sends_no_reminder_at_all(self):
+        """不是「不發逾期、改發別的」——是整個回空。
+
+        往下走規則分支會出事：期限已過時 days_left 是負的，`days_left <= days`
+        對每一條規則都成立，等於把 D-5／D-3／當天一次全部補發。
+        """
+        t = course_task(self.PAST)
+        t.reminder_rules = ["3 天前", "當天"]
+
+        assert repositories.compute_due_reminder_stages(
+            t, NOW, default_rules=("5 天前", "3 天前")) == []
+
+    def test_non_course_task_past_deadline_still_overdue(self):
+        t = display_task(name="錄音", end=self.PAST)
+
+        assert repositories.compute_due_reminder_stages(
+            t, NOW, default_rules=("5 天前",)) == [repositories.OVERDUE_STAGE]
+
+    def test_course_task_still_gets_pre_deadline_reminders(self):
+        """只擋逾期。期限還沒到的課程任務照樣發 D-5／D-3。"""
+        t = course_task(datetime(2026, 7, 13, tzinfo=config.TZ))  # 剩 5 天
+
+        assert repositories.compute_due_reminder_stages(
+            t, NOW, default_rules=("5 天前", "3 天前")) == ["5 天前"]
+
+    def test_course_task_is_not_marked_overdue_in_notion(self):
+        """「不只是不顯示」：reminders.py 的 update_task_status("已逾期") 與
+        🚨 管理層升級都掛在 `OVERDUE_STAGE in stages`，回空就一併不發生。"""
+        t = course_task(self.PAST)
+
+        stages = repositories.compute_due_reminder_stages(t, NOW, default_rules=())
+
+        assert repositories.OVERDUE_STAGE not in stages
+
+    def test_course_task_past_deadline_shows_as_open_not_overdue(self):
+        """也不能掉進「即將到期」——過期任務的 days_left 是負的。"""
+        buckets = repositories.classify_tasks_for_display([course_task(self.PAST)], NOW)
+
+        assert buckets["overdue"] == []
+        assert buckets["due_soon"] == []
+        assert [t.name for t in buckets["open"]] == ["編曲課"]
+
+    def test_manually_marked_overdue_is_still_respected(self):
+        """控方在 Notion 手動設成「已逾期」仍然照顯示。
+
+        系統不自己判，但人的判斷不該被默默蓋掉——隱藏一個 Notion 上看得到的
+        狀態比標紅更難理解。
+        """
+        buckets = repositories.classify_tasks_for_display(
+            [course_task(self.PAST, status="已逾期")], NOW
+        )
+
+        assert [t.name for t in buckets["overdue"]] == ["編曲課"]
+
+    def test_other_project_types_are_not_exempt(self):
+        """只有課程培訓豁免；發文／行程／週任務照判逾期。"""
+        for project_type in (
+            repositories.PROJECT_TYPE_PUBLISHING,
+            repositories.PROJECT_TYPE_ITINERARY,
+            repositories.PROJECT_TYPE_WEEKLY,
+        ):
+            t = display_task(name="x", end=self.PAST, project_types=[project_type])
+
+            assert not repositories.task_skips_overdue(t), f"{project_type} 不該豁免逾期"
+            assert repositories.compute_due_reminder_stages(
+                t, NOW, default_rules=()) == [repositories.OVERDUE_STAGE]
+
+    def test_task_without_project_type_still_judges_overdue(self):
+        """沒分類的任務照判逾期——豁免要明確命中課程培訓才成立，不是預設豁免。"""
+        t = display_task(name="無分類", end=self.PAST, project_types=[])
+
+        assert not repositories.task_skips_overdue(t)
+        assert repositories.compute_due_reminder_stages(
+            t, NOW, default_rules=()) == [repositories.OVERDUE_STAGE]
+
+    def test_course_task_type_does_not_grant_exemption(self):
+        """Tasks 的 任務類型「課程時間&作業繳交」不是豁免依據。
+
+        豁免看的是 Projects 的 專案類型「課程培訓」。這兩個名字很像、很容易寫錯
+        （M5-03 的 Notion 卡片特別標了這一點）。
+        """
+        t = display_task(
+            name="作業",
+            end=self.PAST,
+            task_type=repositories.COURSE_TASK_TYPE,
+            project_types=[],
+        )
+
+        assert not repositories.task_skips_overdue(t)
+        assert repositories.compute_due_reminder_stages(
+            t, NOW, default_rules=()) == [repositories.OVERDUE_STAGE]
 
 
 class TestComputeDueReminderStages:

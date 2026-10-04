@@ -969,6 +969,22 @@ def task_has_project_type(task: TaskItem, project_type: str) -> bool:
     return project_type in task.project_types
 
 
+# 不進逾期流程的專案類型（規則 M5-03，Johnny 2026-10-03 拍板）。
+# 課程任務同時有「上課時間」與「課後交付」兩個期限，混在一起判逾期會在上課日
+# 隔天把所有課程任務標紅——而實際上只是老師還沒發東西。一片紅的看板等於沒有看板。
+# 代價：課程任務沒有逾期這個警訊，完全靠 M5-01 的催老師機制。
+NO_OVERDUE_PROJECT_TYPES = {PROJECT_TYPE_COURSE_TRAINING}
+
+
+def task_skips_overdue(task: TaskItem) -> bool:
+    """系統要不要對這個任務跳過逾期判定（不判、不通知、也不寫「已逾期」）。
+
+    只擋系統自己的判定。控方在 Notion 手動設成「已逾期」仍然照顯示——那是人的
+    判斷，不是系統算出來的，默默隱藏一個 Notion 上看得到的狀態會更難理解。
+    """
+    return any(t in NO_OVERDUE_PROJECT_TYPES for t in task.project_types)
+
+
 def _is_active_task(task: TaskItem) -> bool:
     if task.status in INACTIVE_TASK_STATUSES:
         return False
@@ -1355,9 +1371,14 @@ def classify_tasks_for_display(tasks: list[TaskItem], now: datetime) -> dict[str
     for task in tasks:
         if task.status in INACTIVE_TASK_STATUSES:
             continue
+        # 課程任務不判逾期（M5-03）：過了期限就落到「未完成」，不標紅。
+        # 它也不會進「即將到期」——task_due_within 對過期的任務回 False。
+        is_overdue = task.status == "已逾期" or (
+            task_deadline_passed(task, now) and not task_skips_overdue(task)
+        )
         if task.status == "待審核":
             buckets["in_review"].append(task)
-        elif task.status == "已逾期" or task_deadline_passed(task, now):
+        elif is_overdue:
             buckets["overdue"].append(task)
         elif task.status == "需修改":
             buckets["needs_fix"].append(task)
@@ -1404,12 +1425,17 @@ def compute_due_reminder_stages(
       公司沒勾規則的任務也不會默默爛掉。
     - 「待審核」不提醒：東西已經交出去了，球在公司手上，再催藝人只會被當成 bug
       （與 classify_tasks_for_display 把待審核排在逾期前面是同一個原則）。
+    - **課程任務過了期限回空 list**（M5-03）：不發逾期、也不往下走規則分支。
+      往下走會出事——期限已過時 `days_left` 是負的，`days_left <= days` 對每一條
+      規則都成立，等於把 D-5／D-3／當天全部一次補發。所以必須在這裡就 return。
+      呼叫端 `cogs/reminders.py` 的「標記已逾期」與「🚨 管理層升級」都掛在
+      `OVERDUE_STAGE in stages` 上，回空的同時那兩個動作也一併不發生。
     """
     deadline, _ = task_action_deadline(task)
     if task.status in INACTIVE_TASK_STATUSES or task.status == "待審核" or not deadline:
         return []
     if task_deadline_passed(task, now):
-        return [OVERDUE_STAGE]
+        return [] if task_skips_overdue(task) else [OVERDUE_STAGE]
     if default_rules is None:
         default_rules = config.get_tenant().default_reminder_rules
     active_rules = set(task.reminder_rules) | set(default_rules)
