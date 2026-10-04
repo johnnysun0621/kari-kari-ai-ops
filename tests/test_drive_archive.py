@@ -8,7 +8,7 @@ from services import drive_archive, repositories
 NOW = datetime(2026, 7, 10, 15, 0, tzinfo=config.TZ)
 
 
-def task(task_type: str | None = "課程作業", drive_folder_url: str = ""):
+def task(task_type: str | None = "課程時間&作業繳交", drive_folder_url: str = ""):
     return repositories.TaskItem(
         page_id="task-1",
         name="編曲作業",
@@ -39,30 +39,29 @@ class TestExtractDriveFolderId:
 
 class TestTypeFolderMapping:
     def test_each_type_gets_own_folder(self):
-        assert drive_archive.type_folder_for_task("課程與作業") == "課程與作業"
-        assert drive_archive.type_folder_for_task("課程作業") == "課程作業"
+        assert drive_archive.type_folder_for_task("課程時間&作業繳交") == "課程與作業"
         assert drive_archive.type_folder_for_task("創作交付") == "創作交付"
-        assert drive_archive.type_folder_for_task("業配內容") == "業配內容"
+        assert drive_archive.type_folder_for_task("方晨業配內容") == "業配內容"
 
     def test_unknown_type_falls_back(self):
         assert drive_archive.type_folder_for_task(None) == "其他"
         assert drive_archive.type_folder_for_task("神秘類型") == "其他"
 
     def test_tenant_can_override_mapping(self):
-        mapping = {"課程作業": "功課"}
-        assert drive_archive.type_folder_for_task("課程作業", mapping) == "功課"
+        mapping = {"課程時間&作業繳交": "功課"}
+        assert drive_archive.type_folder_for_task("課程時間&作業繳交", mapping) == "功課"
         assert drive_archive.type_folder_for_task("創作交付", mapping) == "其他"
 
 
 class TestArchivePath:
     def test_path_is_type_folder_then_month(self):
         assert drive_archive.archive_path_for_submission(task(), NOW) == [
-            "課程作業", "2026-07", "2026.07.10_編曲作業",
+            "課程與作業", "2026-07", "2026.07.10_編曲作業",
         ]
 
     def test_review_feedback_path_is_fixed_folder_then_month(self):
         assert drive_archive.archive_path_for_review_feedback(task(), NOW) == [
-            "課程作業", "2026-07", "2026.07.10_編曲作業", "老師回饋",
+            "課程與作業", "2026-07", "2026.07.10_編曲作業", "老師回饋",
         ]
 
     def test_task_name_is_sanitized_and_task_id_makes_folder_stable(self):
@@ -115,7 +114,7 @@ class TestResolveArchiveTarget:
 
     def test_zone_with_type_and_month_path(self):
         assert drive_archive.resolve_archive_target(task(), self.ZONE, NOW) == (
-            "ZoneId123", ["課程作業", "2026-07", "2026.07.10_編曲作業"],
+            "ZoneId123", ["課程與作業", "2026-07", "2026.07.10_編曲作業"],
         )
 
     def test_no_usable_folder_returns_none(self):

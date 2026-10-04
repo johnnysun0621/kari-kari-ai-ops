@@ -139,7 +139,7 @@ class TestTaskSubmissionFallback:
             page_id="task-1",
             name="測試任務",
             status="待審核",
-            task_type="課程與作業",
+            task_type="課程時間&作業繳交",
         )
 
         async def fake_query(data_source_id, filter_=None):
@@ -270,7 +270,7 @@ class TestTaskScheduleImpact:
 
     def test_course_and_homework_session_with_explicit_time_is_busy(self):
         item = task(
-            task_type="課程與作業",
+            task_type="課程時間&作業繳交",
             course_category="歌唱課",
             start=datetime(2026, 8, 1, 14, 0, tzinfo=config.TZ),
             end=datetime(2026, 8, 1, 17, 0, tzinfo=config.TZ),
@@ -282,7 +282,7 @@ class TestTaskScheduleImpact:
 
     def test_homework_date_range_is_warning_only(self):
         item = task(
-            task_type="課程與作業",
+            task_type="課程時間&作業繳交",
             course_category="歌唱課",
             start=datetime(2026, 8, 1, 0, 0, tzinfo=config.TZ),
             end=datetime(2026, 8, 3, 0, 0, tzinfo=config.TZ),
@@ -294,7 +294,7 @@ class TestTaskScheduleImpact:
 
     def test_course_without_category_is_warning_only(self):
         item = task(
-            task_type="課程與作業",
+            task_type="課程時間&作業繳交",
             course_category=None,
             start=datetime(2026, 8, 1, 14, 0, tzinfo=config.TZ),
             end=datetime(2026, 8, 1, 17, 0, tzinfo=config.TZ),
@@ -328,7 +328,7 @@ class TestFinalizedSchemaMapping:
             "properties": {
                 "任務名稱": {"title": [{"plain_text": "歌唱課"}]},
                 "任務狀態": {"select": {"name": "尚未開始"}},
-                "任務類型": {"select": {"name": "課程與作業"}},
+                "任務類型": {"select": {"name": "課程時間&作業繳交"}},
                 "課程類別": {"select": {"name": "歌唱課"}},
                 "課程與會議記錄": {"relation": [{"id": "meeting-1"}]},
                 "提交期限": {"date": {"start": "2026-08-20T23:59:00+08:00"}},
@@ -350,7 +350,7 @@ class TestFinalizedSchemaMapping:
             "properties": {
                 "任務名稱": {"title": [{"plain_text": "聽力訓練&樂理課-260915"}]},
                 "任務狀態": {"select": {"name": "尚未開始"}},
-                "任務類型": {"select": {"name": "課程與作業"}},
+                "任務類型": {"select": {"name": "課程時間&作業繳交"}},
                 "開始日": {
                     "date": {
                         "start": "2026-09-15T13:00:00.000+08:00",
@@ -1271,58 +1271,97 @@ def reminder_task(rules: list[str], end: datetime | None, status: str = "進行�
 
 
 class TestComputeDueReminderStages:
+    """提醒階段計算。
+
+    除了逾期與待審核那幾條（會提早 return，不碰規則），**每個測試都明確傳
+    `default_rules`**：預設值與勾選值自 2026-10-03 起是聯集，不傳就會被 .env
+    影響，測試會因為本機設定不同而變色。
+    """
+
     def test_respects_configured_rules_only(self):
         end = datetime(2026, 7, 11, tzinfo=config.TZ)  # 3 天後
         with_rule = reminder_task(["3 天前"], end)
         without_rule = reminder_task(["當天"], end)
 
-        assert repositories.compute_due_reminder_stages(with_rule, NOW) == ["3 天前"]
-        assert repositories.compute_due_reminder_stages(without_rule, NOW) == []
+        assert repositories.compute_due_reminder_stages(
+            with_rule, NOW, default_rules=()) == ["3 天前"]
+        assert repositories.compute_due_reminder_stages(
+            without_rule, NOW, default_rules=()) == []
 
     def test_catchup_fires_missed_stage(self):
         end = datetime(2026, 7, 9, tzinfo=config.TZ)  # 剩 1 天，但規則是 3 天前
         t = reminder_task(["3 天前"], end)
 
-        assert repositories.compute_due_reminder_stages(t, NOW) == ["3 天前"]
+        assert repositories.compute_due_reminder_stages(t, NOW, default_rules=()) == ["3 天前"]
 
     def test_five_days_before_rule(self):
         """客戶要的「截止前 5 天提醒」；沿用既有機制，只是多一個規則值。"""
         not_yet = reminder_task(["5 天前"], datetime(2026, 7, 14, tzinfo=config.TZ))  # 剩 6 天
         due = reminder_task(["5 天前"], datetime(2026, 7, 13, tzinfo=config.TZ))      # 剩 5 天
 
-        assert repositories.compute_due_reminder_stages(not_yet, NOW) == []
-        assert repositories.compute_due_reminder_stages(due, NOW) == ["5 天前"]
+        assert repositories.compute_due_reminder_stages(not_yet, NOW, default_rules=()) == []
+        assert repositories.compute_due_reminder_stages(due, NOW, default_rules=()) == ["5 天前"]
 
     def test_multiple_rules_return_far_to_near(self):
         """同時勾多個規則時，回傳順序由遠到近，訊息才不會倒著念。"""
         t = reminder_task(["當天", "5 天前", "1 天前"], datetime(2026, 7, 8, tzinfo=config.TZ))
 
-        assert repositories.compute_due_reminder_stages(t, NOW) == ["5 天前", "1 天前", "當天"]
+        assert repositories.compute_due_reminder_stages(
+            t, NOW, default_rules=()) == ["5 天前", "1 天前", "當天"]
 
     def test_empty_rules_fall_back_to_default(self):
-        """控方沒勾任何規則時，套用租戶預設，不必逐筆維護。
-
-        預設值明確傳入，不吃 .env——測試不該因為本機設定不同而變色。
-        """
+        """控方沒勾任何規則時，套用租戶預設，不必逐筆維護。"""
         not_yet = reminder_task([], datetime(2026, 7, 14, tzinfo=config.TZ))  # 剩 6 天
         due = reminder_task([], datetime(2026, 7, 13, tzinfo=config.TZ))      # 剩 5 天
 
         assert repositories.compute_due_reminder_stages(not_yet, NOW, default_rules=("5 天前",)) == []
         assert repositories.compute_due_reminder_stages(due, NOW, default_rules=("5 天前",)) == ["5 天前"]
 
-    def test_tenant_default_is_same_day_only(self):
-        """2026-09-20 起預設只剩「當天」：上課不再收到 T-5，提前交件改走「需審批」。"""
-        five_days_left = reminder_task([], datetime(2026, 7, 13, tzinfo=config.TZ))
-        today = reminder_task([], datetime(2026, 7, 8, tzinfo=config.TZ))
+    def test_tenant_default_is_d5_and_d3(self):
+        """租戶預設＝D-5 ＋ D-3（09/22 會議「兩個節點並行」，2026-10-03 對齊）。
 
-        assert repositories.compute_due_reminder_stages(five_days_left, NOW, default_rules=("當天",)) == []
-        assert repositories.compute_due_reminder_stages(today, NOW, default_rules=("當天",)) == ["當天"]
+        這條釘住的是商業決定，不是程式細節。要改預設就要同時改 `.env`、
+        `.env.example`、`config.py` 的 fallback 與這個測試，四處一致。
+        """
+        assert config.get_tenant().default_reminder_rules == ("5 天前", "3 天前")
 
-    def test_explicit_rules_override_default_entirely(self):
-        """有勾就完全以勾選為準，預設不疊加——否則控方無法把提醒收斂成只剩當天。"""
+    def test_tenant_default_fires_both_nodes(self):
+        """D-5 與 D-3 各觸發一次，不是只發最近的那個。"""
+        default = ("5 天前", "3 天前")
+        six_days = reminder_task([], datetime(2026, 7, 14, tzinfo=config.TZ))  # 剩 6 天
+        five_days = reminder_task([], datetime(2026, 7, 13, tzinfo=config.TZ))  # 剩 5 天
+        three_days = reminder_task([], datetime(2026, 7, 11, tzinfo=config.TZ))  # 剩 3 天
+
+        assert repositories.compute_due_reminder_stages(six_days, NOW, default_rules=default) == []
+        assert repositories.compute_due_reminder_stages(
+            five_days, NOW, default_rules=default) == ["5 天前"]
+        # 進入 D-3 後兩個階段都算「該觸發」；實際只各發一次，由呼叫端的 _once 去重
+        assert repositories.compute_due_reminder_stages(
+            three_days, NOW, default_rules=default) == ["5 天前", "3 天前"]
+
+    def test_explicit_rules_are_unioned_with_default(self):
+        """勾選與預設是聯集（Johnny 2026-10-03 拍板）。
+
+        勾選只能往上加，不能減少。這條以前是反的（替換式），改動理由見
+        compute_due_reminder_stages 的 docstring。
+        """
         t = reminder_task(["當天"], datetime(2026, 7, 13, tzinfo=config.TZ))  # 剩 5 天
 
-        assert repositories.compute_due_reminder_stages(t, NOW) == []
+        assert repositories.compute_due_reminder_stages(
+            t, NOW, default_rules=("5 天前",)) == ["5 天前"]
+
+    def test_checking_a_rule_cannot_reduce_reminders(self):
+        """疊加的代價：控方無法用勾選把提醒收斂掉。
+
+        勾「當天」不會關掉預設的 D-5。這是刻意的取捨，不是 bug —— 想減少
+        提醒只能改租戶預設值。
+        """
+        default = ("5 天前", "3 天前")
+        t = reminder_task(["當天"], datetime(2026, 7, 11, tzinfo=config.TZ))  # 剩 3 天
+
+        stages = repositories.compute_due_reminder_stages(t, NOW, default_rules=default)
+
+        assert stages == ["5 天前", "3 天前"]  # 當天還沒到，但預設的兩個都在
 
     def test_default_rules_can_be_disabled(self):
         """租戶把預設設成空的時候，回到「沒勾就不提醒」的舊行為。"""
@@ -1330,17 +1369,20 @@ class TestComputeDueReminderStages:
 
         assert repositories.compute_due_reminder_stages(t, NOW, default_rules=()) == []
 
-    def test_overdue_only_rule_opts_out_of_pre_deadline_reminders(self):
-        """只勾「逾期」＝「事前別吵我，逾期再講」。
+    def test_overdue_only_rule_no_longer_opts_out(self):
+        """只勾「逾期」不再能關閉事前提醒 —— 疊加之後預設照樣生效。
 
-        「逾期」不在 REMINDER_RULE_DAYS 裡，但它讓 reminder_rules 變成非空，
-        因而擋掉預設的「5 天前」。這是控方關閉事前提醒的唯一方式，別把它當成
-        無用選項刪掉。
+        改成疊加前，「逾期」讓 reminder_rules 變成非空、因而擋掉預設，是控方
+        關閉事前提醒的唯一方式。現在預設與勾選聯集，這個手法失效了：剩 5 天
+        的任務即使只勾「逾期」，仍會收到預設的 D-5。
         """
         before = reminder_task(["逾期"], datetime(2026, 7, 13, tzinfo=config.TZ))  # 剩 5 天
         after = reminder_task(["逾期"], datetime(2026, 7, 1, tzinfo=config.TZ))    # 已逾期
 
-        assert repositories.compute_due_reminder_stages(before, NOW) == []
+        assert repositories.compute_due_reminder_stages(
+            before, NOW, default_rules=("5 天前",)) == ["5 天前"]
+        # 預設為空時才回到「事前不吵」
+        assert repositories.compute_due_reminder_stages(before, NOW, default_rules=()) == []
         assert repositories.compute_due_reminder_stages(after, NOW) == [repositories.OVERDUE_STAGE]
 
     def test_overdue_fires_regardless_of_rules(self):
@@ -1598,14 +1640,14 @@ class TestDynamicSelectOptions:
             return {
                 "properties": {
                     "任務類型": {
-                        "select": {"options": [{"name": "通告"}, {"name": "課程與作業"}, {"name": " "}]}
+                        "select": {"options": [{"name": "通告"}, {"name": "課程時間&作業繳交"}, {"name": " "}]}
                     }
                 }
             }
 
         monkeypatch.setattr(repositories.notion_api, "retrieve_data_source", fake_retrieve)
 
-        assert asyncio.run(repositories.get_task_type_options()) == ["通告", "課程與作業"]
+        assert asyncio.run(repositories.get_task_type_options()) == ["通告", "課程時間&作業繳交"]
 
     def test_get_course_type_options_reads_live_schema(self, monkeypatch):
         async def fake_retrieve(data_source_id):

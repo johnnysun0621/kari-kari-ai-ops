@@ -53,7 +53,9 @@ def task(
     *,
     status: str | None = "待提交",
     open_for_submission: bool = True,
-    task_type: str | None = "課程作業",
+    # 2026-10-04：原本預設是「課程作業」，那是 Submissions 的檔案類型、
+    # 不是 Notion「任務類型」的選項。用真實選項，否則測試會跟程式一起錯而測不出來。
+    task_type: str | None = "課程時間&作業繳交",
     submit_method: str | None = None,
     description: str = "",
 ):
@@ -123,15 +125,25 @@ class TestLinkValidation:
 
 class TestSubmissionFileType:
     def test_maps_known_task_types(self):
-        assert repositories.submission_file_type_for_task("課程與作業") == "課程作業"
-        assert repositories.submission_file_type_for_task("課程作業") == "課程作業"
+        assert repositories.submission_file_type_for_task("課程時間&作業繳交") == "課程作業"
         assert repositories.submission_file_type_for_task("創作交付") == "Demo"
         assert repositories.submission_file_type_for_task("企劃提案") == "企劃書"
+        assert repositories.submission_file_type_for_task("方晨業配內容") == "業配素材"
         assert repositories.submission_file_type_for_task("錄音") == "錄音檔"
 
     def test_unknown_type_falls_back_to_other(self):
         assert repositories.submission_file_type_for_task("行政") == "其他"
         assert repositories.submission_file_type_for_task(None) == "其他"
+
+    def test_old_dead_strings_no_longer_map(self):
+        """2026-10-04 前程式硬編這些字串，但它們都不是 Notion 的有效選項。
+
+        留這個測試是為了釘住「死值已經清掉」——如果有人把它們加回來，
+        守門測試 test_notion_option_values 會先失敗，這裡再補一層。
+        """
+        assert repositories.submission_file_type_for_task("課程與作業") == "其他"
+        assert repositories.submission_file_type_for_task("課程作業") == "其他"
+        assert repositories.submission_file_type_for_task("業配內容") == "其他"
 
 
 class TestBuildSubmissionProps:
@@ -274,7 +286,7 @@ class TestSubmitTaskFirstStepText:
         text = submit_task_option_description(task(submit_method="檔案"), now)
 
         assert "交檔案" in text
-        assert "課程作業" in text
+        assert "課程時間&作業繳交" in text
         assert "無截止日" in text
         assert len(text) <= 100
 

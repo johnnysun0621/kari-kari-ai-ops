@@ -660,8 +660,16 @@ async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
 # ---------- Tasks / Projects formal schedule impact ----------
 
 ACTIVE_TASK_STATUSES = {"尚未開始", "進行中", "待提交", "待審核", "需修改", "已逾期"}
-INACTIVE_TASK_STATUSES = {"已完成", "已取消", "已封存"}
-HARD_BLOCK_TASK_TYPES = {"課程場次", "錄音", "演出", "會議溝通"}
+# 「已完成發文」是發文類的終態（客戶自己建的選項，就是會議說的「已發布」）。
+# 2026-10-04 補進來——在此之前它既不在 ACTIVE 也不在 INACTIVE，落到這個狀態的
+# 任務會從 active 查詢裡靜默消失、也不算終態。
+# 「已取消」即將從 Notion 選項移除（規則 M2-11），但要留在這裡才讀得懂歷史資料。
+INACTIVE_TASK_STATUSES = {"已完成", "已完成發文", "已取消", "已封存"}
+COURSE_TASK_TYPE = "課程時間&作業繳交"
+# 無條件硬擋時段的任務類型。值必須是 Notion「任務類型」的既有選項，
+# 寫不存在的選項永遠不命中（曾經寫過「課程場次」，那不是有效選項，是死值）。
+# 課程類不放這裡——它只在有「課程類別」時才硬擋，見 classify_task_time_impact。
+HARD_BLOCK_TASK_TYPES = {"錄音", "演出", "會議溝通"}
 INACTIVE_PROJECT_STATUSES = {"已完成", "已取消", "已封存"}
 
 
@@ -910,7 +918,7 @@ def classify_task_time_impact(task: TaskItem) -> str | None:
     if (
         (
             task.task_type in HARD_BLOCK_TASK_TYPES
-            or (task.task_type == "課程與作業" and bool(task.course_category))
+            or (task.task_type == COURSE_TASK_TYPE and bool(task.course_category))
         )
         and task.start
         and task.end
@@ -1316,10 +1324,15 @@ def compute_due_reminder_stages(
 ) -> list[str]:
     """回傳此刻該觸發的提醒階段（去重由呼叫端的 _once 處理）。
 
-    - 「5 天前 / 3 天前 / 1 天前 / 當天」依任務的提醒規則設定，且用 <= 判斷：
+    - 「5 天前 / 3 天前 / 1 天前 / 當天」的天數從 task_action_deadline() 回傳的
+      **追蹤期限**往前算（勾了「提前交件」就是交件日，不是截止日），且用 <= 判斷：
       loop 每 30 分鐘跑一次，若 bot 停機錯過整點，補跑時仍會觸發一次。
-    - 任務**沒勾任何規則**時套用 `default_reminder_rules`（預設「5 天前」），
-      讓控方不必逐筆勾也有基本提醒；勾了就完全以勾選為準，不再疊加預設。
+      所以語意是「進入這個窗口就觸發一次」，不是「正好那天才觸發」。
+    - **`default_reminder_rules` 與任務勾選的規則是聯集（Johnny 2026-10-03 拍板改為疊加）。**
+      預設永遠生效，勾選只能往上加。所以每個任務至少都會收到預設的那幾次提醒，
+      控方無法用留空或改勾選來減少 —— 這是刻意的取捨，不是 bug。
+      （先前為替換式：勾了就完全以勾選為準。改成疊加後，「只勾逾期來關閉事前提醒」
+      這個手法不再有效。）
     - 「逾期」不看規則、一律觸發（Kickoff：逾期需提醒或升級處理），
       公司沒勾規則的任務也不會默默爛掉。
     - 「待審核」不提醒：東西已經交出去了，球在公司手上，再催藝人只會被當成 bug
@@ -1332,7 +1345,7 @@ def compute_due_reminder_stages(
         return [OVERDUE_STAGE]
     if default_rules is None:
         default_rules = config.get_tenant().default_reminder_rules
-    active_rules = task.reminder_rules or list(default_rules)
+    active_rules = set(task.reminder_rules) | set(default_rules)
     days_left = (deadline.date() - now.date()).days
     return [
         rule for rule, days in REMINDER_RULE_DAYS.items()
@@ -1608,13 +1621,14 @@ def task_description_field(description: str, *field_names: str) -> str:
 
 # Submissions.檔案類型 的 select 選項對應任務類型；對不上的一律「其他」
 SUBMISSION_FILE_TYPE_BY_TASK_TYPE = {
-    # Tasks 已統一為「課程與作業」；Submissions 的檔案類型先維持舊選項，
-    # 避免為了改名而批次改動歷史提交紀錄。
-    "課程與作業": "課程作業",
-    "課程作業": "課程作業",
+    # key 必須是 Notion「任務類型」的既有選項，value 必須是「檔案類型」的既有選項。
+    # 2026-10-04 修正三個死 key：「課程與作業」（實際是 課程時間&作業繳交）、
+    # 「課程作業」（那是檔案類型不是任務類型）、「業配內容」（實際是 方晨業配內容）。
+    # 對不上的任務類型一律落到「其他」，這是刻意的，不必把每個類型都列出來。
+    COURSE_TASK_TYPE: "課程作業",
     "創作交付": "Demo",
     "企劃提案": "企劃書",
-    "業配內容": "業配素材",
+    "方晨業配內容": "業配素材",
     "錄音": "錄音檔",
 }
 

@@ -186,7 +186,9 @@ def _load_karikari_from_env() -> TenantConfig:
         # 不再靠提醒規則硬塞 5 天。上課等不提前交件的任務因此不會再收到 T-5。
         default_reminder_rules=tuple(
             value.strip()
-            for value in os.getenv("DEFAULT_REMINDER_RULES", "當天").split(",")
+            # 預設＝D-5 ＋ D-3（09/22 會議「兩個節點並行」）。與任務勾選的規則取聯集，
+            # 不是替換 —— 見 repositories.compute_due_reminder_stages()
+            for value in os.getenv("DEFAULT_REMINDER_RULES", "5 天前,3 天前").split(",")
             if value.strip()
         ),
         approval_lead_days=_env_int("APPROVAL_LEAD_DAYS", 5),

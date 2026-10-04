@@ -94,11 +94,18 @@ python bot.py                      # 需 .env（見 README）
 - **時段去重是性質無關、較寬窗勝出**：`_slot_nature_priority` 恆回 1 是故意的；
   測試 `test_long_legacy_slot_replaces_contained_legacy_slot_without_priority` 明文保護
 - **逾期提醒不看提醒規則一律觸發**（含規則空白的任務）；截止前提醒才照規則
-- **提醒規則空白＝套用 `default_reminder_rules`（2026-09-20 起預設「當天」）**，不是不提醒；
-  一旦勾了任何規則就完全以勾選為準，預設不疊加（否則控方無法把提醒收斂成只剩當天）。
-  「5 天前」已從 Notion 選項與預設移除——提前幾天交件改由「提前交件」決定，不再靠提醒規則塞
-- **「逾期」不在 `REMINDER_RULE_DAYS` 裡，但不是無用選項**：只勾它＝規則非空、擋掉預設，
-  等於「事前別提醒，逾期再講」。這是控方關閉事前提醒的唯一方式
+- **`default_reminder_rules` 與任務勾選的規則是聯集，不是替換**（Johnny 2026-10-03 拍板）：
+  預設永遠生效，勾選只能往上加。所以每個任務至少都會收到預設的那幾次提醒，
+  **控方無法用留空或改勾選來減少**——要減少只能改租戶預設值。這是刻意的取捨。
+  預設＝`5 天前,3 天前`（09/22 會議「D-5、D-3 兩個節點並行」）。
+  改預設要同時改 `.env`、`.env.example`、`config.py` fallback 與
+  `test_tenant_default_is_d5_and_d3`，四處一致
+- **提醒天數從「追蹤期限」往前算，不是從截止日**：`task_action_deadline()` 在勾了
+  「提前交件」時回交件日，所以 D-5 是交件日前 5 天。語意是「進入窗口就觸發一次」，
+  不是「正好那天才觸發」（`days_left <= days`，bot 停機補跑仍會發）
+- **「逾期」不在 `REMINDER_RULE_DAYS` 裡，且改成疊加後已無法用來關閉事前提醒**：
+  以前只勾它＝規則非空、擋掉預設，等於「事前別提醒，逾期再講」；現在預設照樣生效，
+  這個手法失效。保留它是為了語意完整（`test_overdue_only_rule_no_longer_opts_out` 釘住）
 - **「提前交件」☑ 會把追蹤的期限換成交件死線**（`approval_submission_deadline`）：`提交期限` 有填用它，
   沒填＝`截止日 − approval_lead_days`。逾期以交件日判定，藝人看到「交件 9/25」不是「截止 9/30」。
   一個任務進行到底、不拆兩筆，所以發布日當天沒有提醒——這是客戶決議的取捨，不是漏做
@@ -127,5 +134,13 @@ python bot.py                      # 需 .env（見 README）
 ## 目前狀態（2026-08-08）
 
 月度時間池主流程、任務查詢、任務提醒、雙頻道分流、Drive 檔案歸檔、`/我的任務` 內建提交入口、`/審核提交` 已落地。  
-藝人檔案提交統一走 Bot 建立的公司 Google Drive 指定資料夾；Discord 不接收藝人作業附件，也不提供私人 Drive 連結替代入口。入口 3 小時有效。
+藝人檔案提交的**最終存放處**統一是 Bot 建立的公司 Google Drive 資料夾，藝人不決定存放位置。
+但 **Discord 是正式上傳通道**：附件 ≤ `FREE_DISCORD_UPLOAD_MB`（10MB，刻意以免費 Discord 帳號為準）
+時 Bot 代為上傳到版本化資料夾；超過才擋下並請藝人改用資料夾入口自行上傳（入口 3 小時有效）。
+Drive 路徑：`<藝人名>/<類型夾>/<YYYY-MM>/<YYYY.MM.DD_任務名>/<任務名_日期_ver.N>`；
+任務自填 `Google Drive Folder` 時直接用那個夾。每次提交建新的 ver.N，退件重繳留完整歷史。
+**`提交方式` 欄位已決議全部移除**（Johnny 2026-10-03）：只留「上傳檔案到公司 Drive」一種，
+不再有「貼雲端連結」與「純文字」——藝人貼自己的連結時檔案不會進公司 Drive，與上面的原則衝突。
+待拆：`submission_method_conflict()`、`modal_field_spec()`、`submit_hint_for_task()`、
+`TaskItem.submit_method`、`task_notifications` 的提交方式文案，以及 Notion 的 `提交方式` 欄位。
 老師外部確認連結屬歷史相容功能，目前不啟動；主流程是 `/從時間池建立任務` 後由控方在 Tasks 完成正式安排。
