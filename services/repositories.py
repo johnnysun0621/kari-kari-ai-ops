@@ -151,6 +151,23 @@ def _read_multi_select(page: dict, name: str) -> list[str]:
     return [i["name"] for i in items]
 
 
+def _read_rollup_select_names(page: dict, name: str) -> list[str]:
+    """讀 rollup 欄位裡的 select 名稱（Tasks「專案類型」是 rollup，不是 select）。
+
+    rollup 的 `show_unique` 會回陣列，所以一筆任務關聯到兩個不同類型的專案時會有兩個值。
+    欄位不存在或 rollup 算不出來時回空 list——呼叫端要當成「沒有分類」處理，不是炸掉。
+    """
+    rollup = page.get("properties", {}).get(name, {}).get("rollup") or {}
+    names: list[str] = []
+    for entry in rollup.get("array", []):
+        # 只認有 select 的 entry：rollup 被改成別的函式（number／date）時 array 裡
+        # 沒有 select，自然被跳過。`get("name")` 是便宜的防炸，不是業務邏輯。
+        select = entry.get("select")
+        if select and select.get("name"):
+            names.append(select["name"])
+    return names
+
+
 def _read_people_names(page: dict, name: str) -> list[str]:
     """讀取 Notion person 欄位的顯示名稱；未授權讀取時保留空值。"""
     people = page.get("properties", {}).get(name, {}).get("people", [])
@@ -672,6 +689,24 @@ COURSE_TASK_TYPE = "課程時間&作業繳交"
 HARD_BLOCK_TASK_TYPES = {"錄音", "演出", "會議溝通"}
 INACTIVE_PROJECT_STATUSES = {"已完成", "已取消", "已封存"}
 
+# 會被程式比對的「專案類型」（Projects 的 select 選項）。任務的分類一律看
+# 關聯專案 的 專案類型，不看 Tasks 自己的 任務類型——後者管公告區與硬擋時段
+# （Johnny 2026-10-03 拍板）。
+#
+# 這兩個發文／行程的字串是客戶手打的，**半角空格 ＋ 全角括號**：
+#
+#     月度排程 （發文）
+#             ↑  ↑↑
+#          U+0020 U+FF08 … U+FF09
+#
+# 差一個字元就永遠不命中，而且不報錯——跟 M1-05 那批死值同一種病。所以一律引用
+# 這幾個常數，不要在各處重打字串；守門測試 tests/test_notion_option_values.py
+# 會拿 Notion 實際選項核對。
+PROJECT_TYPE_PUBLISHING = "月度排程 （發文）"
+PROJECT_TYPE_ITINERARY = "月度排程 （行程）"
+PROJECT_TYPE_COURSE_TRAINING = "課程培訓"
+PROJECT_TYPE_WEEKLY = "週任務"
+
 
 @dataclass
 class ProjectItem:
@@ -698,6 +733,9 @@ class TaskItem:
     reviewer_page_ids: list[str] = field(default_factory=list)
     artist_page_ids: list[str] = field(default_factory=list)
     project_page_ids: list[str] = field(default_factory=list)
+    # 關聯專案 的 專案類型，由 Notion 的 rollup（show_unique）帶進來，決定任務的分類。
+    # 空 list ＝ 沒關聯專案，或 rollup 被改壞——兩種都當「沒有分類」。
+    project_types: list[str] = field(default_factory=list)
     start: datetime | None = None
     end: datetime | None = None
     start_has_time: bool = False
@@ -826,6 +864,7 @@ def _to_task(page: dict) -> TaskItem:
         reviewer_page_ids=_read_relation_ids(page, "審核人員"),
         artist_page_ids=_read_relation_ids(page, "關聯藝人"),
         project_page_ids=_read_relation_ids(page, "關聯專案"),
+        project_types=_read_rollup_select_names(page, TASK_PROJECT_TYPE_PROPERTY),
         start=start.value,
         end=end.value,
         start_has_time=start.has_time,
@@ -879,6 +918,9 @@ TASK_DISCORD_VISIBLE_LEGACY_PROPERTY = "Discord 可見"
 TASK_NEEDS_APPROVAL_PROPERTY = "提前交件"
 # 括號是半形、「From」後有一個半形空格——Notion 是用名稱找欄位，差一個字元就寫不進去。
 TASK_REMINDER_ACK_PROPERTY = "提醒確認(From 藝人)"
+# Tasks 這一欄是 rollup（經 關聯專案 取 Projects 的 專案類型），不是 select。
+# Notion 欄位說明寫著「自動繼承關聯專案的專案類型，勿手動維護」。
+TASK_PROJECT_TYPE_PROPERTY = "專案類型"
 
 
 def _task_discord_visible(page: dict) -> bool:
@@ -900,6 +942,31 @@ def task_applies_to_artist(
         if project and artist_page_id in project.artist_page_ids:
             return True
     return False
+
+
+def task_project_types(task: TaskItem) -> list[str]:
+    """任務的分類：關聯專案 的 專案類型（Notion rollup 帶進來的）。
+
+    回空 list 的三種情況，呼叫端都要當成「沒有分類」：沒關聯專案、關聯的專案沒填
+    專案類型、Notion 的 rollup 被改壞或改名。
+    """
+    return list(task.project_types)
+
+
+def task_project_type(task: TaskItem) -> str | None:
+    """任務唯一的分類；沒有分類或同時屬於多個類型時回 None。
+
+    rollup 用的是 `show_unique`，所以任務關聯到兩個不同類型的專案時會有兩個值。
+    那種情況沒有「唯一的分類」可回，硬選一個會讓行為取決於 Notion 的回傳順序——
+    要判斷「是不是某一類」請用 `task_has_project_type`，它對多值是正確的。
+    """
+    types = task.project_types
+    return types[0] if len(types) == 1 else None
+
+
+def task_has_project_type(task: TaskItem, project_type: str) -> bool:
+    """任務是否屬於某個專案類型。字串必須完全相符（見 PROJECT_TYPE_* 的空格陷阱）。"""
+    return project_type in task.project_types
 
 
 def _is_active_task(task: TaskItem) -> bool:
@@ -1104,7 +1171,7 @@ async def get_course_training_projects() -> list[ProjectItem]:
     return sorted(
         [
             project for project in projects
-            if project.project_type == "課程培訓"
+            if project.project_type == PROJECT_TYPE_COURSE_TRAINING
             and project.status not in INACTIVE_PROJECT_STATUSES
         ],
         key=lambda project: project.name,

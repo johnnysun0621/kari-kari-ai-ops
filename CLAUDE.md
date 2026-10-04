@@ -93,6 +93,16 @@ python bot.py                      # 需 .env（見 README）
 
 - **時段去重是性質無關、較寬窗勝出**：`_slot_nature_priority` 恆回 1 是故意的；
   測試 `test_long_legacy_slot_replaces_contained_legacy_slot_without_priority` 明文保護
+- **任務的分類只看 `關聯專案` 的 `專案類型`，不看 `任務類型`**（Johnny 2026-10-03 拍板）：
+  `任務類型` 管公告區（`PUBLIC_TASK_TYPES`）與硬擋時段（`HARD_BLOCK_TASK_TYPES`），
+  兩套各管各的。分類走 `TaskItem.project_types`，值由 Notion 的 rollup
+  （`專案類型`，`show_unique`，經 `關聯專案`）帶進來——所以 bot 不必額外查 Projects。
+  判斷用 `task_has_project_type()`（對多值正確）；`task_project_type()` 在多值時回 None，
+  因為硬選一個會讓行為取決於 Notion 的回傳順序。
+  **`月度排程 （發文）`／`（行程）` 是半角空格 ＋ 全角括號**，客戶手打的；一律引用
+  `PROJECT_TYPE_*` 常數，別重打字串。rollup 被改名或改壞時 `project_types` 回空
+  ＝「沒有分類」，不炸流程——代價是靠分類的功能會靜默失效，所以
+  `tests/test_notion_option_values.py` 那份選項清單要在 Notion 改動後人工同步
 - **逾期提醒不看提醒規則一律觸發**（含規則空白的任務）；截止前提醒才照規則
 - **`default_reminder_rules` 與任務勾選的規則是聯集，不是替換**（Johnny 2026-10-03 拍板）：
   預設永遠生效，勾選只能往上加。所以每個任務至少都會收到預設的那幾次提醒，

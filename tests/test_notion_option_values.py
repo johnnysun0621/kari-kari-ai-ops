@@ -73,6 +73,29 @@ class TestTaskTypeValues:
         assert not dead, f"PUBLIC_TASK_TYPES 有死值 {sorted(dead)}，那些類型不會同步到公告區"
 
 
+class TestProjectTypeValues:
+    """`專案類型` 決定任務的分類，而發文／行程那兩個字串是客戶手打的。"""
+
+    def test_compared_project_types_are_real_options(self):
+        compared = {
+            repositories.PROJECT_TYPE_PUBLISHING,
+            repositories.PROJECT_TYPE_ITINERARY,
+            repositories.PROJECT_TYPE_COURSE_TRAINING,
+            repositories.PROJECT_TYPE_WEEKLY,
+        }
+        dead = compared - PROJECT_TYPE_OPTIONS
+
+        assert not dead, f"PROJECT_TYPE_* 有死值 {sorted(dead)}，那幾類的判斷永遠為假"
+
+    def test_publishing_and_itinerary_keep_the_exact_spacing(self):
+        """半角空格 ＋ 全角括號。整個分類功能靠這兩個字串相符，所以逐字元釘住。
+
+        2026-10-04 以 bot token 實撈 Projects 的選項確認過 codepoints。
+        """
+        assert repositories.PROJECT_TYPE_PUBLISHING == "月度排程 （發文）"
+        assert repositories.PROJECT_TYPE_ITINERARY == "月度排程 （行程）"
+
+
 class TestTaskStatusValues:
     def test_status_sets_only_contain_real_options(self):
         declared = repositories.ACTIVE_TASK_STATUSES | repositories.INACTIVE_TASK_STATUSES

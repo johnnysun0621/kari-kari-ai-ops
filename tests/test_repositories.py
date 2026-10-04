@@ -210,6 +210,7 @@ def task(
     status: str | None = "進行中",
     artist_page_ids: list[str] | None = None,
     project_page_ids: list[str] | None = None,
+    project_types: list[str] | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
     start_has_time: bool = True,
@@ -223,6 +224,7 @@ def task(
         course_category=course_category,
         artist_page_ids=artist_page_ids if artist_page_ids is not None else ["artist-1"],
         project_page_ids=project_page_ids if project_page_ids is not None else [],
+        project_types=project_types if project_types is not None else [],
         start=start,
         end=end,
         start_has_time=start_has_time,
@@ -301,6 +303,128 @@ class TestTaskScheduleImpact:
         )
 
         assert repositories.classify_task_time_impact(item) == "warning"
+
+
+class TestTaskProjectType:
+    """M2-01：任務的分類只看 關聯專案 的 專案類型（經 Notion rollup 帶進來）。"""
+
+    def test_reads_project_type_from_rollup(self):
+        page = {
+            "id": "task-1",
+            "url": "",
+            "properties": {
+                "任務名稱": {"title": [{"plain_text": "10 月發文"}]},
+                "任務狀態": {"select": {"name": "進行中"}},
+                "關聯專案": {"relation": [{"id": "project-1"}]},
+                "專案類型": {
+                    "rollup": {
+                        "type": "array",
+                        "function": "show_unique",
+                        "array": [
+                            {"type": "select", "select": {"name": "月度排程 （發文）"}},
+                        ],
+                    }
+                },
+            },
+        }
+
+        item = repositories._to_task(page)
+
+        assert item.project_types == ["月度排程 （發文）"]
+        assert repositories.task_project_type(item) == repositories.PROJECT_TYPE_PUBLISHING
+
+    def test_publishing_matches_only_on_exact_string(self):
+        """半角空格 ＋ 全角括號。差一個字元就不該命中——這是 M2-01 的字串陷阱。
+
+        反過來說，差一個字元若還命中，代表有人把比對改成模糊比對了。
+        """
+        exact = task(project_types=[repositories.PROJECT_TYPE_PUBLISHING])
+        assert repositories.task_has_project_type(
+            exact, repositories.PROJECT_TYPE_PUBLISHING
+        )
+
+        for wrong in (
+            "月度排程（發文）",       # 少了半角空格
+            "月度排程 (發文)",        # 全角括號寫成半角
+            "月度排程  （發文）",     # 兩個空格
+            "月度排程 （發文） ",     # 尾隨空格
+            "月度排程",               # 只有前綴
+        ):
+            item = task(project_types=[wrong])
+            assert not repositories.task_has_project_type(
+                item, repositories.PROJECT_TYPE_PUBLISHING
+            ), f"{wrong!r} 不該被當成發文類"
+
+    def test_task_without_project_has_no_type(self):
+        """沒關聯專案要回 None／空 list，不是炸掉——155 筆實際資料裡有 6 筆是這樣。"""
+        item = task(project_page_ids=[], project_types=[])
+
+        assert repositories.task_project_types(item) == []
+        assert repositories.task_project_type(item) is None
+        assert not repositories.task_has_project_type(
+            item, repositories.PROJECT_TYPE_PUBLISHING
+        )
+
+    def test_missing_or_broken_rollup_degrades_to_no_type(self):
+        """Notion 的 rollup 被改名或改壞時，當成「沒有分類」，不要讓 _to_task 炸掉。
+
+        代價：M4-15／M5-03 這些靠分類的功能會靜默失效。守門測試擋不到 Notion 端
+        的改動，所以 test_notion_option_values 那份選項清單要人工同步。
+        """
+        base = {
+            "任務名稱": {"title": [{"plain_text": "無 rollup"}]},
+            "任務狀態": {"select": {"name": "進行中"}},
+            "關聯專案": {"relation": [{"id": "project-1"}]},
+        }
+        for broken in (
+            {},                                                  # 欄位整個不存在
+            {"專案類型": {"rollup": {"type": "array", "array": []}}},   # rollup 算不出值
+            {"專案類型": {"rollup": {"type": "number", "number": 3}}},  # 被改成別的 rollup 函式
+            {"專案類型": {"rollup": {"type": "array", "array": [
+                {"type": "select", "select": None},
+            ]}}},                                                # 關聯的專案沒填專案類型
+        ):
+            item = repositories._to_task({"id": "t", "url": "", "properties": {**base, **broken}})
+
+            assert item.project_types == [], f"{broken} 應該退化成沒有分類"
+            assert repositories.task_project_type(item) is None
+
+    def test_multiple_project_types_have_no_single_type_but_still_match(self):
+        """rollup 用 show_unique，關聯到兩個不同類型的專案時會回兩個值。
+
+        那時沒有「唯一的分類」可回（硬選一個會讓行為取決於 Notion 的回傳順序），
+        但「是不是某一類」的判斷仍要正確。
+        """
+        item = task(
+            project_types=[
+                repositories.PROJECT_TYPE_PUBLISHING,
+                repositories.PROJECT_TYPE_WEEKLY,
+            ],
+        )
+
+        assert repositories.task_project_type(item) is None
+        assert repositories.task_has_project_type(
+            item, repositories.PROJECT_TYPE_PUBLISHING
+        )
+        assert repositories.task_has_project_type(item, repositories.PROJECT_TYPE_WEEKLY)
+        assert not repositories.task_has_project_type(
+            item, repositories.PROJECT_TYPE_ITINERARY
+        )
+
+    def test_task_type_is_not_used_for_classification(self):
+        """任務類型 管公告區與硬擋時段，不管分類（Johnny 2026-10-03 拍板）。
+
+        所以 任務類型 寫「發布上架」但關聯專案是課程培訓時，它是課程培訓類。
+        """
+        item = task(
+            task_type="發布上架",
+            project_types=[repositories.PROJECT_TYPE_COURSE_TRAINING],
+        )
+
+        assert repositories.task_project_type(item) == repositories.PROJECT_TYPE_COURSE_TRAINING
+        assert not repositories.task_has_project_type(
+            item, repositories.PROJECT_TYPE_PUBLISHING
+        )
 
 
 class TestFinalizedSchemaMapping:
