@@ -34,6 +34,30 @@ _UNSAFE_FILENAME_CHARS = re.compile(r'[\\/:*?"<>\|\r\n\t]+')
 _WHITESPACE_CHARS = re.compile(r"\s+")
 
 
+async def notify_submission_reviewers(
+    client: discord.Client, task: repositories.TaskItem, message: str,
+) -> None:
+    """新提交待審核的通知對象（M4-15）：`審核人員` 有填就私訊那些人，沒填才退回控方頻道。
+
+    不是「兩邊都發」——跟 cogs/reminders.py 的待審核催辦（_check_review_reminders）不同，
+    那支會同時通知指定審核人員與控方頻道；這支是單純 fallback，有人接手就不吵控方頻道。
+    不寫死人名，符合多租戶平展化原則；`審核人員` 填了人但那個人缺 Discord ID，
+    視同沒有可通知對象，一樣退回控方頻道，不會讓提交默默沒人知道。
+    """
+    reviewers = await repositories.get_people_by_ids(task.reviewer_page_ids)
+    notifiable = [r for r in reviewers if r.discord_user_id]
+    if not notifiable:
+        internal = client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+        await channel_guard.try_send(internal, content=message)
+        return
+    for reviewer in notifiable:
+        try:
+            user = await client.fetch_user(int(reviewer.discord_user_id))
+            await user.send(message)
+        except Exception:
+            logger.exception("審核人員通知失敗：%s", reviewer.name)
+
+
 @dataclass
 class PendingFileSubmission:
     task: repositories.TaskItem
@@ -632,16 +656,13 @@ class SubmissionModal(discord.ui.Modal):
             after=f"{submit_type}｜任務轉待審核" + (f"｜取代 {replaced} 筆舊版" if replaced else ""),
         )
 
-        # 通知控方（營運內部通知）。通知失敗只記 log，不影響藝人的提交確認
-        internal = interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+        # 通知審核人員（有指定就私訊，沒指定才退回控方）。通知失敗只記 log，不影響藝人的提交確認
         link_part = f"\n連結：{link_url}" if link_url else ""
-        await channel_guard.try_send(
-            internal,
-            content=(
-                f"📥 **新提交待審核**\n"
-                f"任務：{self.task.name}｜{artist.name}｜{submit_type}"
-                f"{link_part}\nNotion：{submission_page.get('url', '')}"
-            ),
+        await notify_submission_reviewers(
+            interaction.client, self.task,
+            f"📥 **新提交待審核**\n"
+            f"任務：{self.task.name}｜{artist.name}｜{submit_type}"
+            f"{link_part}\nNotion：{submission_page.get('url', '')}",
         )
 
         resubmit_note = f"\n（已取代先前 {replaced} 筆提交，這筆為最新版）" if replaced else ""
@@ -862,14 +883,11 @@ async def _archive_file_submission_batch(
         after=f"{display_files}｜{file_size_mb}MB｜{folder_text}"
               + (f"｜取代 {replaced} 筆舊版" if replaced else ""),
     )
-    internal = client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-    await channel_guard.try_send(
-        internal,
-        content=(
-            f"📥 **新提交待審核（檔案）**\n"
-            f"任務：{task.name}｜{artist.name}｜{len(uploaded_files)} 個檔案（{file_size_mb}MB）\n"
-            f"Drive：{folder_url}\nNotion：{submission_page.get('url', '')}"
-        ),
+    await notify_submission_reviewers(
+        client, task,
+        f"📥 **新提交待審核（檔案）**\n"
+        f"任務：{task.name}｜{artist.name}｜{len(uploaded_files)} 個檔案（{file_size_mb}MB）\n"
+        f"Drive：{folder_url}\nNotion：{submission_page.get('url', '')}",
     )
     resubmit_note = f"\n（已取代先前 {replaced} 筆提交，這筆為最新版）" if replaced else ""
     return True, (
@@ -1514,14 +1532,11 @@ class SubmissionsCog(commands.Cog):
             target_url=submission_page.get("url", ""),
             after=f"{len(files)} 個檔案｜{total_mb}MB｜{pending.folder_url}",
         )
-        internal = interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-        await channel_guard.try_send(
-            internal,
-            content=(
-                f"📥 **新提交待審核（Drive 資料夾）**\n"
-                f"任務：{pending.task.name}｜{pending.artist.name}｜{len(files)} 個檔案（{total_mb}MB）\n"
-                f"Drive：{pending.folder_url}\nNotion：{submission_page.get('url', '')}"
-            ),
+        await notify_submission_reviewers(
+            interaction.client, pending.task,
+            f"📥 **新提交待審核（Drive 資料夾）**\n"
+            f"任務：{pending.task.name}｜{pending.artist.name}｜{len(files)} 個檔案（{total_mb}MB）\n"
+            f"Drive：{pending.folder_url}\nNotion：{submission_page.get('url', '')}",
         )
         await interaction.followup.send(
             f"✅ 已驗證 Drive 資料夾並提交：**{pending.task.name}**\n"

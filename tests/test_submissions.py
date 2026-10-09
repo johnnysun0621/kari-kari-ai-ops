@@ -4,6 +4,8 @@ import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 import config
 from cogs.submissions import (
     FREE_DISCORD_UPLOAD_MB,
@@ -28,6 +30,7 @@ from cogs.submissions import (
     is_valid_link,
     large_file_drive_instruction,
     modal_field_spec,
+    notify_submission_reviewers,
     notion_page_url,
     prefixed_review_feedback_filename,
     prefixed_submission_filename,
@@ -58,6 +61,7 @@ def task(
     task_type: str | None = "課程時間&作業繳交",
     submit_method: str | None = None,
     description: str = "",
+    reviewer_page_ids: list[str] | None = None,
 ):
     return repositories.TaskItem(
         page_id="task-1",
@@ -67,6 +71,7 @@ def task(
         open_for_submission=open_for_submission,
         submit_method=submit_method,
         description=description,
+        reviewer_page_ids=reviewer_page_ids if reviewer_page_ids is not None else [],
     )
 
 
@@ -655,3 +660,129 @@ class TestReviewResultMapping:
 
         assert repositories.review_submission_ready_for_auto_notify(with_feedback)
         assert repositories.review_submission_ready_for_auto_notify(with_source)
+
+
+class _FakeDMChannel:
+    """假的控方頻道：只記下送出的訊息，不真的打 Discord。"""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send(self, **kwargs):
+        self.sent.append(kwargs)
+
+
+class _FakeDiscordUser:
+    """假的審核人員 Discord 帳號：只記下收到的私訊。"""
+
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+        self.sent: list[str] = []
+
+    async def send(self, content):
+        self.sent.append(content)
+
+
+class _FakeClient:
+    """假的 discord.Client：get_channel 同步、fetch_user 非同步，跟真的介面一致即可。"""
+
+    def __init__(self, channel=None, users: dict[int, "_FakeDiscordUser"] | None = None):
+        self._channel = channel
+        self._users = users or {}
+
+    def get_channel(self, _channel_id):
+        return self._channel
+
+    async def fetch_user(self, user_id):
+        user = self._users.get(int(user_id))
+        if user is None:
+            raise ValueError(f"no such discord user: {user_id}")
+        return user
+
+
+class TestNotifySubmissionReviewers:
+    """M4-15：審核人員 有填就私訊那些人，沒填才退回控方頻道——不是兩邊都發。"""
+
+    def _patch_people(self, monkeypatch, people_by_page_id: dict[str, repositories.PersonItem]):
+        async def fake_get_people_by_ids(page_ids):
+            return [people_by_page_id[pid] for pid in page_ids if pid in people_by_page_id]
+        monkeypatch.setattr(repositories, "get_people_by_ids", fake_get_people_by_ids)
+
+    def test_no_reviewer_set_falls_back_to_admin_channel(self, monkeypatch):
+        self._patch_people(monkeypatch, {})
+        channel = _FakeDMChannel()
+        client = _FakeClient(channel=channel)
+
+        asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=[]), "msg"))
+
+        assert channel.sent == [{"content": "msg"}]
+
+    def test_reviewer_without_discord_id_falls_back_to_admin_channel(self, monkeypatch):
+        """審核人員欄位有填人，但那個人缺 Discord ID——視同沒有可通知對象，
+        不能默默不通知任何人（QA 卡的反向對照）。"""
+        self._patch_people(monkeypatch, {
+            "p1": repositories.PersonItem(page_id="p1", name="甲", discord_user_id=""),
+        })
+        channel = _FakeDMChannel()
+        client = _FakeClient(channel=channel)
+
+        asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=["p1"]), "msg"))
+
+        assert channel.sent == [{"content": "msg"}]
+
+    def test_single_reviewer_is_dmed_and_admin_channel_stays_silent(self, monkeypatch):
+        """有指定審核人員時是純 fallback，不是「兩邊都發」——
+        跟 cogs/reminders.py 待審核催辦（兩邊都發）不同，別混淆。"""
+        self._patch_people(monkeypatch, {
+            "p1": repositories.PersonItem(page_id="p1", name="甲", discord_user_id="111"),
+        })
+        channel = _FakeDMChannel()
+        jia = _FakeDiscordUser(111)
+        client = _FakeClient(channel=channel, users={111: jia})
+
+        asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=["p1"]), "msg"))
+
+        assert jia.sent == ["msg"]
+        assert channel.sent == []
+
+    def test_switching_reviewer_only_notifies_the_new_one(self, monkeypatch):
+        """改了審核人員，收通知的人要跟著改；舊的審核人員不該再收到。"""
+        self._patch_people(monkeypatch, {
+            "p1": repositories.PersonItem(page_id="p1", name="甲", discord_user_id="111"),
+            "p2": repositories.PersonItem(page_id="p2", name="乙", discord_user_id="222"),
+        })
+        jia, yi = _FakeDiscordUser(111), _FakeDiscordUser(222)
+        client = _FakeClient(channel=_FakeDMChannel(), users={111: jia, 222: yi})
+
+        asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=["p2"]), "msg"))
+
+        assert yi.sent == ["msg"]
+        assert jia.sent == []
+
+    def test_multiple_reviewers_all_notified(self, monkeypatch):
+        self._patch_people(monkeypatch, {
+            "p1": repositories.PersonItem(page_id="p1", name="甲", discord_user_id="111"),
+            "p2": repositories.PersonItem(page_id="p2", name="乙", discord_user_id="222"),
+        })
+        jia, yi = _FakeDiscordUser(111), _FakeDiscordUser(222)
+        client = _FakeClient(channel=_FakeDMChannel(), users={111: jia, 222: yi})
+
+        asyncio.run(notify_submission_reviewers(
+            client, task(reviewer_page_ids=["p1", "p2"]), "msg",
+        ))
+
+        assert jia.sent == ["msg"]
+        assert yi.sent == ["msg"]
+
+    def test_unreachable_reviewer_does_not_raise_or_fall_back(self, monkeypatch):
+        """私訊失敗（例如 bot 跟那個人沒有共同伺服器）只記 log，不炸流程，
+        也不會因此悄悄改發控方頻道——那樣控方會以為沒人被通知，但其實已經試過了。"""
+        self._patch_people(monkeypatch, {
+            "p1": repositories.PersonItem(page_id="p1", name="甲", discord_user_id="999"),
+        })
+        channel = _FakeDMChannel()
+        client = _FakeClient(channel=channel, users={})  # 999 抓不到
+
+        asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=["p1"]), "msg"))
+
+        assert channel.sent == []
