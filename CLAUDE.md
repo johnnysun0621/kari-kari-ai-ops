@@ -34,7 +34,7 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 |---|---|
 | [TESTING.md](docs/operations/TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
 | [SUBMISSION_FLOW.md](docs/operations/SUBMISSION_FLOW.md) | 任務提交方式、Google Drive 資料夾、審核通知 |
-| [DRIVE_OAUTH_SETUP.md](docs/operations/DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔 OAuth 設定教學（含平轉重跑流程） |
+| [DRIVE_OAUTH_SETUP.md](docs/operations/DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔認證設定教學——服務帳號（推薦）與 OAuth（舊方式）兩條路線，含平轉重跑流程 |
 
 **`docs/history/`**（決策當下的規劃紀錄，凍結不回頭改）：
 

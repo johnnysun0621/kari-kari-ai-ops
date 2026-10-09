@@ -20,23 +20,50 @@ _services: dict[str, object] = {}
 _version_folder_locks: dict[str, asyncio.Lock] = {}
 
 
+_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+
+def _service_account_path() -> str:
+    return os.getenv("GOOGLE_SERVICE_ACCOUNT_KEY_PATH", "credentials/service_account.json")
+
+
 def _token_path() -> str:
     return os.getenv("GOOGLE_OAUTH_TOKEN_PATH", "credentials/token.json")
 
 
+def _credential_path() -> str:
+    """服務帳號優先於 OAuth 使用者授權。
+
+    服務帳號沒有同意畫面、沒有 refresh token，不會像 OAuth 使用者授權那樣在
+    Google Cloud 專案處於「測試中」狀態時 7 天不活動就失效（這個專案已經
+    踩過這個坑，見 DRIVE_OAUTH_SETUP.md「常見問題」）。兩者都設定時服務帳號
+    贏，方便從 OAuth 切換過去時不必刪舊檔案。
+    """
+    service_account_path = _service_account_path()
+    if Path(service_account_path).exists():
+        return service_account_path
+    return _token_path()
+
+
 def is_configured() -> bool:
-    """Drive 歸檔是否可用（token 已透過 scripts/authorize_drive.py 產生）。"""
-    return Path(_token_path()).exists()
+    """Drive 歸檔是否可用（服務帳號金鑰或 OAuth token 其中之一已就緒）。"""
+    return Path(_service_account_path()).exists() or Path(_token_path()).exists()
 
 
 def _get_service():
-    key = _token_path()
+    key = _credential_path()
     service = _services.get(key)
     if service is None:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        creds = Credentials.from_authorized_user_file(key)
+        if key == _service_account_path():
+            from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+
+            creds = ServiceAccountCredentials.from_service_account_file(key, scopes=_DRIVE_SCOPES)
+        else:
+            from google.oauth2.credentials import Credentials
+
+            creds = Credentials.from_authorized_user_file(key)
         service = build("drive", "v3", credentials=creds, cache_discovery=False)
         _services[key] = service
     return service
