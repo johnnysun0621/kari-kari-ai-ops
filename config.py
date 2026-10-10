@@ -34,6 +34,27 @@ def _env_float(name: str, default: float = 0.0) -> float:
         return default
 
 
+def _env_weekday(name: str, default: int) -> int:
+    """0＝週一 … 6＝週日；`daily`／`每天` 回 -1（每天都發）。無法解析就用預設。"""
+    value = os.getenv(name, "").strip().lower()
+    if not value:
+        return default
+    if value in {"daily", "每天"}:
+        return -1
+    try:
+        weekday = int(value)
+    except ValueError:
+        return default
+    return weekday if 0 <= weekday <= 6 else default
+
+
+def _env_tuple(name: str, default: str) -> tuple[str, ...]:
+    """逗號分隔的 .env 清單轉 tuple；值必須是 Notion 既有選項字串，一字不對就永遠不命中。"""
+    return tuple(
+        value.strip() for value in os.getenv(name, default).split(",") if value.strip()
+    )
+
+
 @dataclass(frozen=True)
 class TenantConfig:
     """一間公司（租戶）的完整設定：Discord、Notion 資料層、業務常數。"""
@@ -77,6 +98,11 @@ class TenantConfig:
     tz: ZoneInfo
     # 這些 Task 類型除了私訊藝人，也會發到公告頻道。
     public_task_types: tuple[str, ...]
+    # 無條件硬擋藝人可配合時段的任務類型（M1-05）。新增類型想套用這個既有行為，
+    # 改這裡就好，不用改程式碼——跟 public_task_types 同一個模式。
+    hard_block_task_types: tuple[str, ...]
+    # 不判逾期的專案類型（M5-03）。同上，新增類型想套用「不判逾期」就改這裡。
+    no_overdue_project_types: tuple[str, ...]
     # SLA：排課需求建立後 N 小時內要完成發布通告
     sla_hours: int
     sla_hard_limit_hours: int
@@ -100,6 +126,11 @@ class TenantConfig:
     default_fill_deadline_hours: int
     # Notion 布告欄背景同步間隔（分鐘）
     bulletin_sync_interval_minutes: int = 5
+    # 發文類停在「已完成」的待確認發布彙整（M2-05）：星期幾發（0＝週一…6＝週日，-1＝每天）、
+    # 幾點發、截止日過幾天才列入
+    publish_confirm_digest_weekday: int = 0
+    publish_confirm_digest_hour: int = 10
+    publish_confirm_digest_after_days: int = 3
 
     # === Google Drive（作業歸檔）===
     # 總資料夾 ID（底下放各藝人專區）；空字串＝Drive 歸檔未啟用
@@ -177,6 +208,8 @@ def _load_karikari_from_env() -> TenantConfig:
             for value in os.getenv("PUBLIC_TASK_TYPES", "通告,演出").split(",")
             if value.strip()
         ),
+        hard_block_task_types=_env_tuple("HARD_BLOCK_TASK_TYPES", "錄音,演出,會議溝通"),
+        no_overdue_project_types=_env_tuple("NO_OVERDUE_PROJECT_TYPES", "課程培訓"),
         sla_hours=48,
         sla_hard_limit_hours=72,
         remind_before_deadline_hours=_env_float("REMIND_BEFORE_DEADLINE_HOURS", 6),
@@ -197,6 +230,9 @@ def _load_karikari_from_env() -> TenantConfig:
         review_reminder_after_hours=_env_float("REVIEW_REMINDER_AFTER_HOURS", 24),
         default_fill_deadline_hours=24,
         bulletin_sync_interval_minutes=_env_int("BULLETIN_SYNC_INTERVAL_MINUTES", 5),
+        publish_confirm_digest_weekday=_env_weekday("PUBLISH_CONFIRM_DIGEST_WEEKDAY", 0),
+        publish_confirm_digest_hour=min(max(_env_int("PUBLISH_CONFIRM_DIGEST_HOUR", 10), 0), 23),
+        publish_confirm_digest_after_days=max(_env_int("PUBLISH_CONFIRM_DIGEST_AFTER_DAYS", 3), 0),
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
         llm_api_key=os.getenv("LLM_API_KEY", ""),
         llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
@@ -280,6 +316,8 @@ DS_COURSE_MEETINGS = TENANT.ds_course_meetings
 # === 業務常數 ===
 TZ = TENANT.tz
 PUBLIC_TASK_TYPES = list(TENANT.public_task_types)
+HARD_BLOCK_TASK_TYPES = set(TENANT.hard_block_task_types)
+NO_OVERDUE_PROJECT_TYPES = set(TENANT.no_overdue_project_types)
 SLA_HOURS = TENANT.sla_hours
 SLA_HARD_LIMIT_HOURS = TENANT.sla_hard_limit_hours
 REMIND_BEFORE_DEADLINE_HOURS = TENANT.remind_before_deadline_hours

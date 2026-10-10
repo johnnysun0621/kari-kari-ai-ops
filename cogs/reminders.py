@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands, tasks
 
 import config
-from cogs import ui_text
+from cogs import channel_guard, ui_text
 from services import audit, repositories, scheduling_sla, task_notifications, time_collection
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ class RemindersCog(commands.Cog):
             await self._check_review_reminders()
             await self._check_revision_deadlines()
             await self._check_task_reminders()
+            await self._check_publish_confirm_digest()
         except Exception:
             logger.exception("提醒 loop 執行失敗")
 
@@ -438,6 +439,50 @@ class RemindersCog(commands.Cog):
                 target_db="Submissions & Tasks", target_url=submission.url,
                 after=f"指定審核人員通知 {sent_reviewers} 位｜控方頻道已通知",
             )
+
+    async def _check_publish_confirm_digest(self):
+        """發文類停在「已完成」的任務，彙整成一則提醒控方確認實際發布（M2-05）。"""
+        tenant = config.get_tenant()
+        now = datetime.now(tenant.tz)
+        state = task_notifications.load_state(task_notifications.PUBLISH_DIGEST_STATE_PATH)
+        if not task_notifications.publish_confirm_digest_due(
+            now,
+            state.get("last_sent_on"),
+            tenant.publish_confirm_digest_weekday,
+            tenant.publish_confirm_digest_hour,
+        ):
+            return
+        tasks = await repositories.get_tasks_by_status(["已完成"])
+        waiting = repositories.tasks_awaiting_publish_confirmation(
+            tasks, now, tenant.publish_confirm_digest_after_days
+        )
+        if waiting:
+            artist_map = await repositories.get_artist_map()
+            artist_names = {page_id: artist.name for page_id, artist in artist_map.items()}
+            admin_channel = (
+                self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
+                or self.bot.get_channel(config.TASK_CHANNEL_ID)
+                or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+            )
+            sent = await channel_guard.try_send(
+                admin_channel,
+                content=task_notifications.publish_confirm_digest_message(
+                    waiting, artist_names, tenant.publish_confirm_digest_after_days
+                ),
+            )
+            if sent is None:
+                return  # 沒發出去就不記已發送，下一輪再試
+            await audit.log_event(
+                event_name="發文待確認發布彙整",
+                action_type="提醒", operator="System", source="System",
+                target_db="Tasks",
+                after=f"列出 {len(waiting)} 筆：" + "、".join(task.name for task in waiting[:10]),
+            )
+        # 沒有待確認任務也記下今天已檢查，避免整天每輪都重查 Notion
+        task_notifications.save_state(
+            {"last_sent_on": now.date().isoformat()},
+            task_notifications.PUBLISH_DIGEST_STATE_PATH,
+        )
 
     async def _check_revision_deadlines(self):
         """需修改期限前提醒藝人，逾時通知控方。"""

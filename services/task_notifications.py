@@ -358,6 +358,46 @@ def was_assignment_notified(task_id: str, state: dict) -> bool:
     return str(task_id) in {str(value) for value in state.get("notified_task_ids", [])}
 
 
+PUBLISH_DIGEST_STATE_PATH = Path(".state/publish_confirm_digest.json")
+PUBLISH_DIGEST_MAX_LINES = 20
+
+
+def publish_confirm_digest_due(
+    now: datetime, last_sent_on: str | None, weekday: int, hour: int
+) -> bool:
+    """今天是不是該發「待確認發布」彙整：指定星期幾（-1＝每天）、過了指定整點、今天還沒發。
+
+    last_sent_on 是持久化的最後發送日期，重啟後不會同一天重複發。
+    """
+    if weekday >= 0 and now.weekday() != weekday:
+        return False
+    if now.hour < hour:
+        return False
+    return last_sent_on != now.date().isoformat()
+
+
+def publish_confirm_digest_message(
+    tasks: list[TaskItem], artist_names: dict[str, str], after_days: int
+) -> str:
+    """彙整成一則訊息；只放任務名稱、藝人與截止日，不放 Notion 網址。"""
+    lines = [
+        f"📋 **發文待確認發布**（{len(tasks)} 筆）",
+        f"以下發文任務審核已通過，但截止日過了 {after_days} 天仍停在「已完成」。",
+        "已確認實際發布的，請回 Notion 把狀態改成「已完成發文」。",
+        "",
+    ]
+    for task in tasks[:PUBLISH_DIGEST_MAX_LINES]:
+        names = "、".join(
+            artist_names[page_id] for page_id in task.artist_page_ids if page_id in artist_names
+        )
+        due = f"｜截止 {task.end.strftime('%m/%d')}" if task.end else ""
+        lines.append(f"• {task.name[:60]}" + (f"｜{names}" if names else "") + due)
+    hidden = len(tasks) - PUBLISH_DIGEST_MAX_LINES
+    if hidden > 0:
+        lines.append(f"…另有 {hidden} 筆，請到 Notion 篩選「發文類＋已完成」查看。")
+    return "\n".join(lines)
+
+
 def mark_assignment_notified(task_id: str, state: dict) -> dict:
     notified = [str(value) for value in state.get("notified_task_ids", [])]
     if str(task_id) not in notified:

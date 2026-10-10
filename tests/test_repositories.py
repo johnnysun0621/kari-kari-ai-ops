@@ -1563,6 +1563,17 @@ class TestComputeDueReminderStages:
         """
         assert config.get_tenant().default_reminder_rules == ("5 天前", "3 天前")
 
+    def test_tenant_hard_block_and_no_overdue_defaults(self):
+        """HARD_BLOCK_TASK_TYPES／NO_OVERDUE_PROJECT_TYPES 從 .env 注入（M1-05／M5-03）。
+
+        新增類型想套用這兩個既有行為，改 .env 就好，不用改程式碼——跟
+        PUBLIC_TASK_TYPES 同一個模式。這條釘住現行預設值不漂移。
+        """
+        assert config.get_tenant().hard_block_task_types == ("錄音", "演出", "會議溝通")
+        assert config.get_tenant().no_overdue_project_types == ("課程培訓",)
+        assert repositories.HARD_BLOCK_TASK_TYPES == {"錄音", "演出", "會議溝通"}
+        assert repositories.NO_OVERDUE_PROJECT_TYPES == {"課程培訓"}
+
     def test_tenant_default_fires_both_nodes(self):
         """D-5 與 D-3 各觸發一次，不是只發最近的那個。"""
         default = ("5 天前", "3 天前")

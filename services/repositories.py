@@ -683,10 +683,12 @@ ACTIVE_TASK_STATUSES = {"尚未開始", "進行中", "待提交", "待審核", "
 # 「已取消」即將從 Notion 選項移除（規則 M2-11），但要留在這裡才讀得懂歷史資料。
 INACTIVE_TASK_STATUSES = {"已完成", "已完成發文", "已取消", "已封存"}
 COURSE_TASK_TYPE = "課程時間&作業繳交"
-# 無條件硬擋時段的任務類型。值必須是 Notion「任務類型」的既有選項，
-# 寫不存在的選項永遠不命中（曾經寫過「課程場次」，那不是有效選項，是死值）。
+# 無條件硬擋時段的任務類型，從 .env 的 HARD_BLOCK_TASK_TYPES 注入（跟
+# PUBLIC_TASK_TYPES 同一個模式）。想讓新任務類型套用這個既有行為，改 .env 就好，
+# 不用改程式碼。值必須是 Notion「任務類型」的既有選項，寫不存在的選項永遠不命中
+# （曾經寫過「課程場次」，那不是有效選項，是死值）。
 # 課程類不放這裡——它只在有「課程類別」時才硬擋，見 classify_task_time_impact。
-HARD_BLOCK_TASK_TYPES = {"錄音", "演出", "會議溝通"}
+HARD_BLOCK_TASK_TYPES = config.HARD_BLOCK_TASK_TYPES
 INACTIVE_PROJECT_STATUSES = {"已完成", "已取消", "已封存"}
 
 # 會被程式比對的「專案類型」（Projects 的 select 選項）。任務的分類一律看
@@ -969,11 +971,12 @@ def task_has_project_type(task: TaskItem, project_type: str) -> bool:
     return project_type in task.project_types
 
 
-# 不進逾期流程的專案類型（規則 M5-03，Johnny 2026-10-03 拍板）。
+# 不進逾期流程的專案類型（規則 M5-03，Johnny 2026-10-03 拍板），從 .env 的
+# NO_OVERDUE_PROJECT_TYPES 注入。想讓新專案類型套用「不判逾期」，改 .env 就好。
 # 課程任務同時有「上課時間」與「課後交付」兩個期限，混在一起判逾期會在上課日
 # 隔天把所有課程任務標紅——而實際上只是老師還沒發東西。一片紅的看板等於沒有看板。
 # 代價：課程任務沒有逾期這個警訊，完全靠 M5-01 的催老師機制。
-NO_OVERDUE_PROJECT_TYPES = {PROJECT_TYPE_COURSE_TRAINING}
+NO_OVERDUE_PROJECT_TYPES = config.NO_OVERDUE_PROJECT_TYPES
 
 
 def task_skips_overdue(task: TaskItem) -> bool:
@@ -1295,6 +1298,31 @@ async def get_active_tasks() -> list[TaskItem]:
 async def get_all_tasks() -> list[TaskItem]:
     pages = await notion_api.query_data_source(config.DS_TASKS)
     return [_to_task(page) for page in pages if not page.get("archived")]
+
+
+async def get_tasks_by_status(statuses: list[str]) -> list[TaskItem]:
+    """依任務狀態撈任務；供不在 ACTIVE 集合內的狀態（例如已完成）使用。"""
+    conditions = [{"property": "任務狀態", "select": {"equals": s}} for s in statuses]
+    pages = await notion_api.query_data_source(config.DS_TASKS, filter_={"or": conditions})
+    return [_to_task(page) for page in pages if not page.get("archived")]
+
+
+def tasks_awaiting_publish_confirmation(
+    tasks: list[TaskItem], now: datetime, after_days: int
+) -> list[TaskItem]:
+    """發文類停在「已完成」、等控方確認實際發布並改成「已完成發文」的任務（M2-05）。
+
+    Tasks 沒有「完成時間」欄位，所以用截止日已過 after_days 天判斷「停太久」；
+    沒有截止日的無從判斷新舊，一律列入（寧可多提醒也不要永遠沒人看到）。
+    """
+    waiting = [
+        task for task in tasks
+        if task.status == "已完成"
+        and task_has_project_type(task, PROJECT_TYPE_PUBLISHING)
+        and (task.end is None or (now.date() - task.end.date()).days >= after_days)
+    ]
+    far_future = datetime.max.replace(tzinfo=now.tzinfo)
+    return sorted(waiting, key=lambda task: (task.end or far_future, task.name))
 
 
 def approval_submission_deadline(
