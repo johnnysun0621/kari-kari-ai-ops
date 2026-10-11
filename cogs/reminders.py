@@ -14,6 +14,7 @@ from services import (
     repositories,
     scheduling_sla,
     task_notifications,
+    teacher_reminder,
     time_collection,
 )
 
@@ -68,6 +69,7 @@ class RemindersCog(commands.Cog):
             await self._check_unacknowledged_task_notifications()
             await self._check_batch_resend()
             await self._check_daily_nags()
+            await self._check_teacher_post_class()
             await self._check_revision_deadlines()
             await self._check_task_reminders()
             await self._check_publish_confirm_digest()
@@ -433,6 +435,65 @@ class RemindersCog(commands.Cog):
             await channel_guard.try_send(
                 self._admin_channel(),
                 content="🔁 **批次重送結果**\n" + "\n".join(results[:30]),
+            )
+
+    async def _check_teacher_post_class(self):
+        """課後提醒負責老師到論壇發布作業要求與評語（M5-01），結案就停，最多催 N 天。"""
+        tenant = config.get_tenant()
+        now = datetime.now(tenant.tz)
+        state = notification_log.shared()
+        records = state.setdefault("teacher_reminders", {})
+        tasks = await repositories.get_active_tasks()
+        actions = []
+        for task in tasks:
+            action = teacher_reminder.next_action(
+                task, now, records.get(task.page_id),
+                after_hours=tenant.teacher_reminder_after_hours,
+                daily_hour=tenant.daily_nag_hour,
+                max_days=tenant.teacher_reminder_max_days,
+            )
+            if action:
+                actions.append((task, action))
+        if not actions:
+            return
+        artist_map = await repositories.get_artist_map()
+        admin_channel = self._admin_channel()
+        for task, action in actions:
+            record = records.setdefault(task.page_id, {"count": 0})
+            record["last_date"] = now.date().isoformat()
+            teachers = await repositories.get_people_items_by_ids(task.teacher_page_ids)
+            teacher_names = [t.name for t in teachers]
+            if action == "escalate":
+                record["escalated"] = True
+                notification_log.persist()
+                await channel_guard.try_send(
+                    admin_channel,
+                    content=teacher_reminder.escalation_message(task, teacher_names, record["count"]),
+                )
+                continue
+            record["count"] = int(record.get("count", 0)) + 1
+            notification_log.persist()
+            artist_names = [artist_map[p].name for p in task.artist_page_ids if p in artist_map]
+            message = teacher_reminder.teacher_message(task, artist_names)
+            sent = 0
+            for teacher in teachers:
+                if not teacher.discord_user_id:
+                    continue
+                try:
+                    user = await self.bot.fetch_user(int(teacher.discord_user_id))
+                    await user.send(message)
+                    sent += 1
+                except Exception:
+                    logger.exception("課後提醒老師失敗：%s", teacher.name)
+            if not sent:
+                await channel_guard.try_send(
+                    admin_channel, content=teacher_reminder.unreachable_message(task, teacher_names)
+                )
+            await audit.log_event(
+                event_name=f"課後提醒老師｜{task.name}",
+                action_type="提醒", operator="System", source="System",
+                target_db="Tasks", target_url=task.url,
+                after=f"第 {record['count']} 次｜私訊 {sent} 位老師" + ("" if sent else "｜已轉控方頻道"),
             )
 
     async def _check_daily_nags(self):

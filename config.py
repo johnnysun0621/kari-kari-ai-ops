@@ -133,6 +133,9 @@ class TenantConfig:
     publish_confirm_digest_after_days: int = 3
     # 每日催辦（M3-11）：已逾期／需修改催藝人、待審核催審核人員，每天這個整點跑一次
     daily_nag_hour: int = 10
+    # 課後提醒老師（M5-01）：課程結束後幾小時發第一次、最多每天催幾天（之後改通知控方）
+    teacher_reminder_after_hours: float = 2
+    teacher_reminder_max_days: int = 7
 
     # === Google Drive（作業歸檔）===
     # 總資料夾 ID（底下放各藝人專區）；空字串＝Drive 歸檔未啟用
@@ -236,6 +239,8 @@ def _load_karikari_from_env() -> TenantConfig:
         publish_confirm_digest_hour=min(max(_env_int("PUBLISH_CONFIRM_DIGEST_HOUR", 10), 0), 23),
         publish_confirm_digest_after_days=max(_env_int("PUBLISH_CONFIRM_DIGEST_AFTER_DAYS", 3), 0),
         daily_nag_hour=min(max(_env_int("DAILY_NAG_HOUR", 10), 0), 23),
+        teacher_reminder_after_hours=max(_env_float("TEACHER_REMINDER_AFTER_HOURS", 2), 0),
+        teacher_reminder_max_days=max(_env_int("TEACHER_REMINDER_MAX_DAYS", 7), 1),
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),
         llm_api_key=os.getenv("LLM_API_KEY", ""),
         llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
