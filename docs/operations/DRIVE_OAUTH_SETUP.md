@@ -173,15 +173,15 @@ Notion Artists 的「Google Drive 資料夾」欄位**，歸檔就接通了。
 
 ## 檔案上傳流程（設計說明）
 
-提交方式由 Notion `Tasks.提交方式` 決定；Discord 端只依設定引導。  
+交件只有一種方式：上傳到公司 Google Drive（2026-10-11 起 `Tasks.提交方式` 停用）。  
 藝人作業檔案統一走 Google Drive，避免 Discord 附件大小、Nitro 方案與 Bot 下載轉傳負載差異。
 
 | 提交內容 | 入口 | 流程 |
 |---|---|---|
-| 雲端連結／文字 | `/我的任務` → `提交任務` | 選任務 → Bot 依 Notion `提交方式` 開對應表單 → 寫 Notion |
 | 檔案 | `/我的任務` → `提交任務` | 選任務 → Bot 建立指定 Drive 資料夾（入口 3 小時有效） → 藝人上傳 → 按「我已上傳到 Drive」→ 寫 Submissions |
 
 - 藝人檔案不受 Discord 10MB 限制，直接放入 Bot 建立的公司指定資料夾
+- 不接受藝人自己的雲端連結或文字表單；文字內容請存成檔案上傳
 - 上傳失敗不寫入半套資料：Bot 會提示重新驗證或聯絡控方檢查公司 Drive；Drive 成功但 Notion 失敗時保留資料夾連結供營運補登
 - 老師批改檔附件是獨立審核流程，不代表藝人端恢復 Discord 作業上傳
 - 歸檔路徑邏輯在 `services/drive_archive.py`（純函式）；Drive API 操作在 `services/drive_api.py`

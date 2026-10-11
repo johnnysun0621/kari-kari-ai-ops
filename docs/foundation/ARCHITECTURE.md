@@ -166,8 +166,7 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 主要責任：
 
-- 讀 Notion `Tasks.提交方式`，依控方指派方式引導提交。
-- 支援 `檔案`、`Drive 連結`、`文字`、`混合`。
+- 交件只有一種：選任務後直接進入公司 Drive 上傳流程（`start_file_upload_wait(..., drive_only=True)`）。`Tasks.提交方式` 2026-10-11 起不再讀取，原本的分流函式與 `SubmissionModal` 已移除。
 - 藝人檔案統一上傳到 Bot 建立的公司 Google Drive 指定資料夾；不接收 Discord 作業附件，也不提供私人 Drive 連結作為檔案提交 fallback。
 - 老師批改檔仍使用獨立 pending attachment／Drive 回饋流程。
 - 寫 `Submissions & File Index`。
@@ -182,11 +181,18 @@ KariKari AI Ops Bot 是一個 Discord 操作入口，加上 Notion 營運資料�
 
 主要責任：
 
-- 月度時間池未填提醒。
-- 月度時間池全員完成通知。
-- Tasks 截止提醒與逾期升級。
+- 月度時間池未填提醒、全員完成通知、排課 SLA。
+- 任務派發、課後作業通知、未確認重送（藝人＋`相關同仁`）。
+- 批次重送：撈 Tasks `重送通知`=true，先取消勾選再重送（`_check_batch_resend`）。
+- 每日催辦（`_check_daily_nags`，`DAILY_NAG_HOUR`）：已逾期／需修改催藝人、待審核催審核人員。
+- 課後提醒老師（`_check_teacher_post_class`），同一堂課合併一則。
+- 修改期限逾時通知控方（`_check_revision_deadlines`）。
+- Tasks 截止前提醒與逾期升級（`_check_task_reminders`）。
+- 發文待確認發布每週彙整（`_check_publish_confirm_digest`）。
 
 提醒 loop 間隔由 `REMINDER_INTERVAL_MINUTES` 控制，目前預設 30 分鐘。
+
+**去重狀態不放記憶體**：截止前提醒、每日催辦日期、課後提醒次數、任務通知的訊息編號都寫在 `.state/task_notification_log.json`（`services/notification_log.py`，同一 process 共用一份快取，避免 loop 與按鈕 callback 互相覆蓋）。逾期升級只靠 Notion 狀態 `已逾期` 去重。
 
 ### `cogs/course_qa.py`
 
@@ -301,6 +307,22 @@ Audit Log 寫入。
 
 - 寫入重要操作紀錄。
 - 失敗不阻斷主流程。
+
+### `services/notification_log.py`
+
+任務通知的持久化紀錄（M3-23）：已送出的提醒階段（key＝任務｜階段｜期限日）、每則帶按鈕通知的訊息編號（按「收到任務」時編輯成已收到）、每日催辦最後日期、課後提醒次數。保留 45 天。
+
+### `services/daily_nag.py` / `services/teacher_reminder.py`
+
+每日催辦與課後提醒老師的純邏輯（分組、到期判斷、訊息文字），cog 只負責發送與寫狀態。
+
+### `services/monthly_board.py`
+
+公告頻道的月度排程（M6-02）：篩選當月已派發的公開類型任務、組訊息、算內容指紋。由 `cogs/bulletin.py` 的 `sync_monthly_board()` 隨布告欄同步呼叫，內容有變才原地編輯同一則；狀態在 `.state/monthly_board.json`。
+
+### `services/task_notifications.py`
+
+所有任務類私訊的文字（派發、課後作業、截止前提醒、同仁知會、發文待確認彙整）。藝人端一律不含 Notion 網址：任務說明經 `_artist_facing_description()` 清掉內部欄位與 Notion 連結。
 
 ### `services/scheduling_sla.py`
 

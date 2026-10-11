@@ -9,7 +9,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 
 `/時間資訊蒐集` → 藝人填月度可配合時段 → `/從時間池建立任務` → 建立課程 Task／其他安排草稿 → 控方在 Notion 填正式時間並勾選 `Discord 顯示=true` → Bot 自動通知藝人
 
-課程與作業、錄音、通告與其他正式事項都以 `Tasks` 為唯一安排來源。
+課程、錄音、通告與其他正式事項都以 `Tasks` 為唯一安排來源。
 
 ## 常用文件
 
@@ -48,7 +48,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 | [OPERATIONS_PLAYBOOK.md](docs/operations/OPERATIONS_PLAYBOOK.md) | 控方營運 SOP（完整版，含流程背景與判斷原則）|
 | [SERVER_MIGRATION.md](docs/operations/SERVER_MIGRATION.md) | Discord 正式伺服器初始化與平轉 SOP |
 | [CLIENT_SETUP_REQUIREMENTS.md](docs/operations/CLIENT_SETUP_REQUIREMENTS.md) | 導入時客戶需要準備的帳號與權限 |
-| [SUBMISSION_FLOW.md](docs/operations/SUBMISSION_FLOW.md) | 任務提交方式、Drive 資料夾、審核通知 |
+| [SUBMISSION_FLOW.md](docs/operations/SUBMISSION_FLOW.md) | 任務提交（一律上傳公司 Drive）、Drive 資料夾、審核通知 |
 | [DRIVE_OAUTH_SETUP.md](docs/operations/DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔 OAuth 設定教學 |
 | [TESTING.md](docs/operations/TESTING.md) | 自動測試、Discord 驗收、Notion 驗收 |
 
@@ -112,6 +112,12 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 | 變數 | 說明 |
 |---|---|
 | `GOOGLE_DRIVE_ROOT_FOLDER_ID` | 啟用任務提交與老師回饋的公司 Google Drive 資料夾 |
+| `DAILY_NAG_HOUR` | 每日催辦與課後提醒老師的整點（預設 10） |
+| `TEACHER_REMINDER_AFTER_HOURS`／`TEACHER_REMINDER_MAX_DAYS` | 課後提醒老師：結束後幾小時第一次（2）、最多幾天（7） |
+| `PUBLISH_CONFIRM_DIGEST_WEEKDAY`／`_HOUR`／`_AFTER_DAYS` | 發文待確認發布彙整：星期幾（0＝週一，`daily`）、幾點、截止日過幾天 |
+| `HARD_BLOCK_TASK_TYPES`／`NO_OVERDUE_PROJECT_TYPES` | 硬擋藝人時段的任務類型、不判逾期的專案類型 |
+
+完整時間設定與預設值見 [ADMIN_SOP.md](docs/sop/ADMIN_SOP.md) 的「所有時間設定一覽」。
 
 ## Discord / Notion 前置設定
 
@@ -138,6 +144,10 @@ services/
   notion_api.py           # Notion REST 封裝（2025-09-03，含重試）
   repositories.py         # Notion 資料庫 CRUD（中文欄位名 → API payload 唯一對應處）
   overlap.py              # 共同時段交集演算法（純函式）
+  notification_log.py     # 任務通知去重與訊息紀錄（.state/，重啟不重發）
+  daily_nag.py            # 每日催辦的分組與文字
+  teacher_reminder.py     # 課後提醒老師的到期判斷與文字
+  monthly_board.py        # 公告區月度排程
   timeparse.py            # Modal 輸入解析、候選時段文字格式
   audit.py                # Audit Log 寫入（失敗不阻斷主流程）
 cogs/
@@ -145,9 +155,9 @@ cogs/
   scheduling_artist.py    # 填寫按鈕 + Modal + /管理可配合時間
   tasks_artist.py         # /我的任務 /任務總覽 /任務通知重送
   submissions.py          # /我的任務內的提交操作 + /審核提交
-  bulletin.py             # /布告欄同步 + Notion 公告背景同步
+  bulletin.py             # /布告欄同步 + Notion 公告背景同步 + 月度排程公告
   course_qa.py            # 小律（會議秘書）頻道自然對話
   server_setup.py         # /伺服器初始化（角色、頻道、env 清單）
-  reminders.py            # 月度時間池、排課 SLA、任務與審核提醒
+  reminders.py            # 月度時間池、排課 SLA、任務提醒、每日催辦、課後提醒老師、批次重送、發文彙整
 tests/                    # 純函式、互動邏輯、資料層測試
 ```

@@ -10,7 +10,7 @@
 3. [ROADMAP.md](../history/ROADMAP.md)：目前進度與下一步。
 4. [DISCORD_CHANNELS.md](../operations/DISCORD_CHANNELS.md)：Discord 頻道組成與 slash command 分流。
 5. [DISCORD_COMMANDS.md](../operations/DISCORD_COMMANDS.md)：每個 slash command 用途與 Notion 互動。
-6. [SUBMISSION_FLOW.md](../operations/SUBMISSION_FLOW.md)：任務提交方式、Drive 資料夾、審核通知。
+6. [SUBMISSION_FLOW.md](../operations/SUBMISSION_FLOW.md)：任務提交（一律上傳公司 Drive）、Drive 資料夾、審核通知。
 7. [NOTION_SCHEMA.md](NOTION_SCHEMA.md)：Notion 資料庫交互邏輯。
 8. [ARCHITECTURE.md](ARCHITECTURE.md)：工程架構與程式責任切分。
 9. [TESTING.md](../operations/TESTING.md)：測試與驗收方式。
@@ -52,7 +52,7 @@ KariKari 是第一個測試租戶，但此專案不是一次性客製。
 2. 需要藝人看到時，勾 `Discord 顯示`。
 3. 藝人在 `任務查詢入口` 執行 `/我的任務`。
 4. 控方在 `營運內部通知` 執行 `/任務總覽`。
-5. 需要交作業／作品時，藝人執行 `/我的任務` → `提交任務`，Bot 依 Notion `提交方式` 引導。
+5. 需要交作業／作品時，藝人執行 `/我的任務` → `提交任務`，選任務後把檔案上傳到 Bot 提供的公司 Drive 資料夾。
 6. 控方在 `營運內部通知` 用 `/審核提交` 回覆通過／需修改／退回，Bot DM 藝人審核結果。
 
 目前共有 10 個 slash commands；藝人從 `/我的任務` 的「提交任務」按鈕進入提交流程，小律則在指定頻道直接對話。頻道與角色對應以 [DISCORD_CHANNELS.md](../operations/DISCORD_CHANNELS.md) 為準。藝人作業檔案不走 Discord 附件，統一上傳至 Bot 建立的公司 Drive 指定資料夾；老師批改附件是獨立流程。
@@ -121,6 +121,9 @@ pgrep -fl "python.*bot.py"
 | Audit Log | `services/audit.py` |
 | 租戶設定 | `config.py`、`.env.example` |
 | 背景提醒 | `cogs/reminders.py` |
+| 提醒去重、收到任務後清舊通知 | `services/notification_log.py` |
+| 每日催辦、課後提醒老師 | `services/daily_nag.py`、`services/teacher_reminder.py` |
+| 月度排程公告 | `services/monthly_board.py`、`cogs/bulletin.py` |
 | 正式伺服器初始化 | `cogs/server_setup.py`、`SERVER_MIGRATION.md` |
 
 ## 文件更新對照表
@@ -130,8 +133,9 @@ pgrep -fl "python.*bot.py"
 | 新增 / 修改 slash command | `DISCORD_COMMANDS.md` |
 | 調整 Discord 頻道或權限 | `DISCORD_CHANNELS.md`、`OPERATIONS_PLAYBOOK.md` |
 | 改 Notion 欄位或資料庫用途 | `NOTION_SCHEMA.md` |
-| 改提交方式 / 檔案大小分界 | `SUBMISSION_FLOW.md`、`DISCORD_COMMANDS.md`、`OPERATIONS_PLAYBOOK.md` |
-| 改營運流程 | `OPERATIONS_PLAYBOOK.md` |
+| 改交件流程 / 檔案大小分界 | `SUBMISSION_FLOW.md`、`DISCORD_COMMANDS.md`、`OPERATIONS_PLAYBOOK.md` |
+| 改營運流程 | `OPERATIONS_PLAYBOOK.md`、`sop/ADMIN_SOP.md`、`sop/ARTIST_SOP.md` |
+| 改提醒／催辦時間或對象 | `sop/ADMIN_SOP.md`（系統會自己做的事、時間設定一覽）、`sop/ARTIST_SOP.md`、`DISCORD_COMMANDS.md`、`DISCORD_CHANNELS.md` |
 | 改工程架構 | `ARCHITECTURE.md` |
 | 改測試方式或驗收情境 | `TESTING.md` |
 | 改產品方向 / 平轉原則 | `PROJECT_PRINCIPLES.md` |

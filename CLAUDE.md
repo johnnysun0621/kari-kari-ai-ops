@@ -33,7 +33,7 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 | 文件 | 內容 |
 |---|---|
 | [TESTING.md](docs/operations/TESTING.md) | 本機測試、Discord 手動驗收、Notion 驗收 |
-| [SUBMISSION_FLOW.md](docs/operations/SUBMISSION_FLOW.md) | 任務提交方式、Google Drive 資料夾、審核通知 |
+| [SUBMISSION_FLOW.md](docs/operations/SUBMISSION_FLOW.md) | 任務提交（一律上傳公司 Drive）、Google Drive 資料夾、審核通知 |
 | [DRIVE_OAUTH_SETUP.md](docs/operations/DRIVE_OAUTH_SETUP.md) | Google Drive 歸檔認證設定教學——服務帳號（推薦）與 OAuth（舊方式）兩條路線，含平轉重跑流程 |
 
 **`docs/history/`**（決策當下的規劃紀錄，凍結不回頭改）：
@@ -138,7 +138,19 @@ python bot.py                      # 需 .env（見 README）
   多藝人任務要逐人逐階段記，checkbox 記不了誰按了；送出行讓控方分得出「還沒發」和「發了沒人按」。
   同一行重複不再寫（`merge_reminder_ack_line`）；欄位不存在時降級只留 Audit Log，不炸流程
 - 提醒去重：排課類在記憶體 `_sent`（重啟最多重發一次，可接受）；
-  任務逾期用 Notion 狀態「已逾期」持久化（重啟不重複轟炸）
+  任務逾期**只**用 Notion 狀態「已逾期」去重——控方改回進行中但沒延期，下一輪就再通知一次（M2-13），
+  不要再加記憶體去重，否則行為又會取決於 bot 有沒有重啟過；
+  截止前提醒、每日催辦日期、課後提醒次數、通知訊息編號寫在 `.state/task_notification_log.json`
+  （`services/notification_log.py`，一律經 `shared()`／`persist()` 存取，loop 與按鈕 callback 各自 load/save 會互蓋）。
+  第一次啟用持久化時，窗口內的階段只記錄不補發（`reminders_baseline_done`），否則一上線又整批重發
+- **每日催辦（M3-11）取代了「待審核每 12 小時」與「修改期限 24 小時前」**：先寫 `daily_nag_last_date` 再發送，
+  中途失敗也不會同一天每 30 分鐘重試轟炸。`REVIEW_REMINDER_INTERVAL_HOURS` 已不生效
+- **同仁通知用 `相關同仁`（relation → People），不是靠 M7-06 改名**：`關聯藝人` 指向 Artists、同仁在 People，
+  一個 relation 只能指向一個資料庫。同仁訊息沿用藝人版內容（同樣不帶 Notion 網址）、沒有按鈕；
+  有藝人時派發是否完成只看藝人，否則同仁私訊失敗會讓整筆重試、藝人重複收到
+- **M7-06 改名在獨立分支 `feat/m7-06-rename-related-people`，不可單獨合併部署**：
+  Notion 還叫 `關聯藝人` 時部署，`_read_relation_ids` 讀不到欄位回空 → 藝人端全空、提醒全停，而且不報錯
+- **課後提醒老師依「課名＋結束時間＋負責老師」合併**：Notion 上同一堂課是每位學生各一筆任務
 
 ## Notion 資料層
 
@@ -156,12 +168,12 @@ python bot.py                      # 需 .env（見 README）
 
 月度時間池主流程、任務查詢、任務提醒、雙頻道分流、Drive 檔案歸檔、`/我的任務` 內建提交入口、`/審核提交` 已落地。  
 藝人檔案提交的**最終存放處**統一是 Bot 建立的公司 Google Drive 資料夾，藝人不決定存放位置。
-但 **Discord 是正式上傳通道**：附件 ≤ `FREE_DISCORD_UPLOAD_MB`（10MB，刻意以免費 Discord 帳號為準）
-時 Bot 代為上傳到版本化資料夾；超過才擋下並請藝人改用資料夾入口自行上傳（入口 3 小時有效）。
+藝人選任務後一律拿到 Bot 建立的版本資料夾自行上傳（`start_file_upload_wait(..., drive_only=True)`，入口 3 小時有效）；
+**藝人的 Discord 附件一律拒收**並引導回資料夾。Discord 附件代傳只保留給老師批改檔流程。
 Drive 路徑：`<藝人名>/<類型夾>/<YYYY-MM>/<YYYY.MM.DD_任務名>/<任務名_日期_ver.N>`；
 任務自填 `Google Drive Folder` 時直接用那個夾。每次提交建新的 ver.N，退件重繳留完整歷史。
-**`提交方式` 欄位已決議全部移除**（Johnny 2026-10-03）：只留「上傳檔案到公司 Drive」一種，
+**`提交方式` 欄位已全部停用**（Johnny 2026-10-03 決議，2026-10-11 拆除）：只留「上傳檔案到公司 Drive」一種，
 不再有「貼雲端連結」與「純文字」——藝人貼自己的連結時檔案不會進公司 Drive，與上面的原則衝突。
-待拆：`submission_method_conflict()`、`modal_field_spec()`、`submit_hint_for_task()`、
-`TaskItem.submit_method`、`task_notifications` 的提交方式文案，以及 Notion 的 `提交方式` 欄位。
+程式端的分流函式、`SubmissionModal`、`TaskItem.submit_method` 都已移除；剩 Notion 的 `提交方式` 欄位，
+**要在新程式上線後才能刪**（順序反過來無妨，但仍建議先匯出備份）。
 老師外部確認連結屬歷史相容功能，目前不啟動；主流程是 `/從時間池建立任務` 後由控方在 Tasks 完成正式安排。

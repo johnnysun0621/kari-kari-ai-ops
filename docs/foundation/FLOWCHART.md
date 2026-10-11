@@ -69,7 +69,7 @@ flowchart TD
     Start(["控方例會／月度規劃"]) --> Build["在 Notion Tasks 建任務<br/>或用 /時間交集查詢 建草稿"]
     Build --> Draft["草稿狀態<br/>Discord 顯示 = false"]
 
-    Draft --> Fill["補齊：任務說明、關聯藝人<br/>截止日、提交方式"]
+    Draft --> Fill["補齊：任務說明、關聯藝人<br/>截止日（同仁填 相關同仁）"]
     Fill --> NeedEarly{"要先審核嗎？"}
 
     NeedEarly -->|"是<br/>勾 提前交件"| Early["死線 = 提交期限<br/>或 截止日 − 5 天"]
@@ -82,29 +82,29 @@ flowchart TD
     Gate -->|否| Hidden["藝人完全看不到<br/>也不佔用他的可配合時段"]
     Hidden -.控方補完再勾.-> Gate
 
-    Gate -->|是| Dispatch["背景輪詢 ≤30 分鐘<br/>私訊每位關聯藝人"]
-    Dispatch --> Notify["通知含：任務名・類型・死線<br/>任務說明・提交方式<br/>按鈕：收到任務 ／ 有問題"]
+    Gate -->|是| Dispatch["背景輪詢 ≤30 分鐘<br/>私訊每位關聯藝人＋相關同仁"]
+    Dispatch --> Notify["通知含：任務名・類型・死線<br/>任務說明・交件指引<br/>按鈕：收到任務 ／ 有問題"]
 
     Notify --> Ack{"藝人按收到任務？"}
     Ack -->|否| Nag["每 12 小時重送<br/>直到按下為止"]
     Nag --> Ack
     Ack -->|"有問題・無法配合"| Return["退回 尚未開始<br/>取消 Discord 顯示<br/>清空通知與提醒確認"]
     Return --> Fill
-    Ack -->|是| Doing["任務狀態 → 進行中<br/>寫入 Discord 收到時間"]
+    Ack -->|是| Doing["任務狀態 → 進行中<br/>寫入 Discord 收到時間<br/>舊通知全部改成 已收到"]
 
-    Doing --> Remind["截止前提醒<br/>依 提醒規則，留空＝死線當天<br/>附按鈕：收到通知"]
+    Doing --> Remind["截止前提醒<br/>一律 D-5、D-3，提醒規則再加<br/>附按鈕：收到通知"]
     Remind --> AckLog["藝人按下 → 寫入<br/>提醒確認(From 藝人)"]
 
     AckLog --> Submit{"死線前交了嗎？"}
     Remind --> Submit
-    Submit -->|否| Overdue["任務狀態 → 已逾期<br/>私訊藝人（無按鈕）<br/>＋通知控方頻道"]
+    Submit -->|否| Overdue["任務狀態 → 已逾期<br/>私訊藝人（無按鈕）＋通知控方<br/>之後每天 10:00 催藝人"]
     Overdue -.控方追進度.-> Submit
 
-    Submit -->|是| Review["任務狀態 → 待審核<br/>停止所有提醒"]
+    Submit -->|是| Review["任務狀態 → 待審核<br/>不再催藝人<br/>滿 24 小時起每天 10:00 催審核人"]
     Review --> Judge{"/審核提交"}
     Judge -->|通過| Done(["已完成"])
     Judge -->|"需修改／退回"| Fix["任務狀態 → 需修改<br/>寫入 修改期限 1～7 天"]
-    Fix --> Refix["24 小時前提醒藝人<br/>逾時通知控方（狀態不變）"]
+    Fix --> Refix["每天 10:00 催藝人<br/>逾時通知控方（狀態不變）"]
     Refix --> Review
 ```
 
@@ -200,7 +200,7 @@ flowchart LR
 
 ## 五、背景自動化（每 30 分鐘一輪）
 
-`cogs/reminders.py` 的 `check_loop`，依序跑 8 項：
+`cogs/reminders.py` 的 `check_loop`，依序跑以下各項：
 
 ```mermaid
 flowchart LR
@@ -209,15 +209,19 @@ flowchart LR
     Loop --> A3["任務派發通知<br/>勾 DC 顯示後"]
     Loop --> A4["課後作業通知<br/>勾 開放提交後"]
     Loop --> A5["未確認任務重送<br/>每 12 小時"]
-    Loop --> A6["審核催辦<br/>24 小時後每 12 小時"]
-    Loop --> A7["修改期限提醒<br/>24 小時前"]
+    Loop --> A9["批次重送<br/>Notion 勾 重送通知"]
+    Loop --> A6["每日催辦 10:00<br/>逾期・需修改・待審核"]
+    Loop --> A10["課後提醒老師<br/>每天，最多 7 天"]
+    Loop --> A7["修改期限逾時<br/>通知控方"]
     Loop --> A8["截止前提醒＋逾期升級"]
+    Loop --> A11["發文待確認發布<br/>每週一 10:00"]
 ```
 
-另有獨立的布告欄同步（預設 5 分鐘）與小律問答（即時觸發）。
+另有獨立的布告欄同步＋月度排程公告（預設 5 分鐘）與小律問答（即時觸發）。
 
 **去重機制**：排課類在記憶體 `_sent`（重啟最多重發一次，可接受）；
-任務逾期用 Notion 狀態 `已逾期` 持久化（重啟不重複轟炸）。
+任務逾期用 Notion 狀態 `已逾期` 持久化（重啟不重複轟炸）；
+截止前提醒、每日催辦、課後提醒老師寫在 `.state/task_notification_log.json`（重啟不重發）。
 
 ---
 
