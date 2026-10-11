@@ -458,22 +458,34 @@ class RemindersCog(commands.Cog):
             return
         artist_map = await repositories.get_artist_map()
         admin_channel = self._admin_channel()
+        # 同一堂課在 Notion 是每位學生各一筆任務（同名、同時間、同老師），老師只該收到一則。
+        groups: dict[tuple, list] = {}
         for task, action in actions:
-            record = records.setdefault(task.page_id, {"count": 0})
-            record["last_date"] = now.date().isoformat()
-            teachers = await repositories.get_people_items_by_ids(task.teacher_page_ids)
+            key = (action, task.name, teacher_reminder.class_ended_at(task), tuple(sorted(task.teacher_page_ids)))
+            groups.setdefault(key, []).append(task)
+        for (action, _, _, teacher_ids), group in groups.items():
+            task = group[0]
+            counts = []
+            for item in group:
+                record = records.setdefault(item.page_id, {"count": 0})
+                record["last_date"] = now.date().isoformat()
+                if action == "escalate":
+                    record["escalated"] = True
+                else:
+                    record["count"] = int(record.get("count", 0)) + 1
+                counts.append(int(record.get("count", 0)))
+            notification_log.persist()
+            teachers = await repositories.get_people_items_by_ids(list(teacher_ids))
             teacher_names = [t.name for t in teachers]
             if action == "escalate":
-                record["escalated"] = True
-                notification_log.persist()
                 await channel_guard.try_send(
                     admin_channel,
-                    content=teacher_reminder.escalation_message(task, teacher_names, record["count"]),
+                    content=teacher_reminder.escalation_message(task, teacher_names, max(counts)),
                 )
                 continue
-            record["count"] = int(record.get("count", 0)) + 1
-            notification_log.persist()
-            artist_names = [artist_map[p].name for p in task.artist_page_ids if p in artist_map]
+            artist_names = list(dict.fromkeys(
+                artist_map[p].name for item in group for p in item.artist_page_ids if p in artist_map
+            ))
             message = teacher_reminder.teacher_message(task, artist_names)
             sent = 0
             for teacher in teachers:
@@ -489,12 +501,14 @@ class RemindersCog(commands.Cog):
                 await channel_guard.try_send(
                     admin_channel, content=teacher_reminder.unreachable_message(task, teacher_names)
                 )
-            await audit.log_event(
-                event_name=f"課後提醒老師｜{task.name}",
-                action_type="提醒", operator="System", source="System",
-                target_db="Tasks", target_url=task.url,
-                after=f"第 {record['count']} 次｜私訊 {sent} 位老師" + ("" if sent else "｜已轉控方頻道"),
-            )
+            for item in group:
+                await audit.log_event(
+                    event_name=f"課後提醒老師｜{item.name}",
+                    action_type="提醒", operator="System", source="System",
+                    target_db="Tasks", target_url=item.url,
+                    after=f"第 {records[item.page_id]['count']} 次｜私訊 {sent} 位老師"
+                    + ("" if sent else "｜已轉控方頻道") + f"｜同堂 {len(group)} 筆合併一則",
+                )
 
     async def _check_daily_nags(self):
         """每日催辦（M3-11）：已逾期／需修改催藝人，待審核催審核人員，一天一次、不帶按鈕。

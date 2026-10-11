@@ -139,3 +139,22 @@ class TestTeacherReminderCog:
             h.run()
         assert len(h.dms) == 7
         assert len(h.admin) == 1 and "未結案" in h.admin[0]
+
+    def test_同一堂課每位學生各一筆_老師只收一則(self, monkeypatch):
+        # Notion 上同一堂課是每位學生各建一筆（10/10 製作課有 5 筆），不合併老師會收到 5 則。
+        tasks = []
+        for i, aid in enumerate(["a1", "a2"]):
+            t = course()
+            t.page_id, t.artist_page_ids = f"c{i}", [aid]
+            tasks.append(t)
+        h = Harness(monkeypatch, tasks, [TEACHER], CLASS_END + timedelta(hours=3))
+
+        async def artist_map():
+            return {"a1": Artist(page_id="a1", name="辰葳", discord_user_id="1"),
+                    "a2": Artist(page_id="a2", name="SOMA", discord_user_id="2")}
+
+        monkeypatch.setattr(repositories, "get_artist_map", artist_map)
+        h.run()
+        assert len(h.dms) == 1 and "辰葳" in h.dms[0] and "SOMA" in h.dms[0]
+        h.run()
+        assert len(h.dms) == 1  # 兩筆都記為已提醒
