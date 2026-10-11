@@ -1298,6 +1298,20 @@ async def get_all_tasks() -> list[TaskItem]:
     return [_to_task(page) for page in pages if not page.get("archived")]
 
 
+async def get_tasks_in_range(first: date, last: date) -> list[TaskItem]:
+    """開始日或截止日落在區間內的任務（月度排程公告用），不撈全表。"""
+    def within(prop: str) -> dict:
+        return {"and": [
+            {"property": prop, "date": {"on_or_after": first.isoformat()}},
+            {"property": prop, "date": {"on_or_before": last.isoformat()}},
+        ]}
+
+    pages = await notion_api.query_data_source(
+        config.DS_TASKS, filter_={"or": [within("開始日"), within("截止日")]}
+    )
+    return [_to_task(page) for page in pages if not page.get("archived")]
+
+
 async def get_tasks_by_status(statuses: list[str]) -> list[TaskItem]:
     """依任務狀態撈任務；供不在 ACTIVE 集合內的狀態（例如已完成）使用。"""
     conditions = [{"property": "任務狀態", "select": {"equals": s}} for s in statuses]

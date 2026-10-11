@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 
 import config
 from cogs import channel_guard
-from services import repositories
+from services import monthly_board, repositories
 from services.permissions import is_admin
 
 logger = logging.getLogger(__name__)
@@ -199,12 +199,49 @@ class BulletinCog(commands.Cog):
         _save_state(state)
         return created, updated, skipped
 
+    async def sync_monthly_board(self) -> str:
+        """月度排程固定公告區（M6-02）：每月一則，內容有變才原地編輯。回傳 created／updated／skipped。"""
+        channel = self.bot.get_channel(bulletin_channel_id())
+        if channel is None:
+            return "skipped"
+        tenant = config.get_tenant()
+        now = datetime.now(tenant.tz)
+        first, last = monthly_board.month_range(now.date())
+        tasks_in_month = await repositories.get_tasks_in_range(first, last)
+        picked = monthly_board.board_tasks(tasks_in_month, now.date(), tenant.public_task_types)
+        names = {pid: a.name for pid, a in (await repositories.get_artist_map()).items()} if picked else {}
+        lines = monthly_board.board_lines(picked, names)
+        fingerprint = monthly_board.fingerprint(lines)
+        boards = monthly_board.load_state()
+        key = monthly_board.month_key(now.date())
+        record = boards.get(key, {})
+        if record.get("fingerprint") == fingerprint and record.get("message_id"):
+            return "skipped"
+        content = monthly_board.render(now.date(), lines, tenant.public_task_types, now)
+        message = None
+        if record.get("message_id"):
+            try:
+                message = await channel.fetch_message(int(record["message_id"]))
+                await message.edit(content=content)
+            except discord.NotFound:
+                message = None  # 被刪掉了就重發一則
+        status = "updated" if message else "created"
+        if message is None:
+            message = await channel.send(content)
+        boards[key] = {"message_id": str(message.id), "fingerprint": fingerprint}
+        monthly_board.save_state(boards)
+        return status
+
     @tasks.loop(minutes=config.BULLETIN_SYNC_INTERVAL_MINUTES)
     async def sync_loop(self):
         try:
             await self.sync_bulletins()
         except Exception:
             logger.exception("Notion 布告欄自動同步失敗")
+        try:
+            await self.sync_monthly_board()
+        except Exception:
+            logger.exception("月度排程公告同步失敗")
 
     @sync_loop.before_loop
     async def before_sync_loop(self):
