@@ -31,6 +31,32 @@ async def send_task_dm(user: discord.abc.User, task_id: str, content: str) -> di
     return message
 
 
+async def notify_staff(
+    bot,
+    task: repositories.TaskItem,
+    artist_content: str,
+    staff: list[repositories.PersonItem] | None = None,
+) -> int:
+    """私訊任務的相關同仁（M6-05）。沒有按鈕：收到／延期按鈕只認藝人。
+
+    沒有 Discord ID 的同仁略過，單人失敗不影響其他人；回傳實際送出幾則。
+    """
+    if staff is None:
+        staff = await repositories.get_people_items_by_ids(task.staff_page_ids)
+    content = task_notifications.staff_message(artist_content)
+    sent = 0
+    for person in staff:
+        if not person.discord_user_id:
+            continue
+        try:
+            user = await bot.fetch_user(int(person.discord_user_id))
+            await user.send(content)
+            sent += 1
+        except Exception:
+            logger.exception("相關同仁通知失敗：%s／%s", task.name, person.name)
+    return sent
+
+
 async def mark_previous_notifications_received(
     client: discord.Client,
     task_id: str,
@@ -432,35 +458,46 @@ class DispatchOutcome:
     """單筆任務派發通知的結果；供背景 loop 與 /任務通知重送 共用同一套發送邏輯。"""
     notifyable_artists: list[repositories.Artist] = field(default_factory=list)
     sent: int = 0
+    notifyable_staff: list[repositories.PersonItem] = field(default_factory=list)
+    staff_sent: int = 0
 
     @property
     def is_complete(self) -> bool:
-        return bool(self.notifyable_artists) and self.sent == len(self.notifyable_artists)
+        # 有藝人時只看藝人：同仁發失敗就重送整筆，藝人會重複收到。只掛同仁的任務才看同仁。
+        if self.notifyable_artists:
+            return self.sent == len(self.notifyable_artists)
+        return bool(self.notifyable_staff) and self.staff_sent == len(self.notifyable_staff)
 
 
 async def send_task_notification(bot, task: repositories.TaskItem) -> DispatchOutcome | None:
-    """對任務關聯的藝人送出派發通知（私訊＋公開類型另發公告頻道）。
+    """對任務關聯的藝人與相關同仁送出派發通知（私訊＋公開類型另發公告頻道）。
 
-    回傳 None 代表沒有找到任何有效收件人（沒有關聯藝人，或藝人缺 Discord User ID）；
+    回傳 None 代表沒有找到任何有效收件人（藝人與同仁都沒有，或都缺 Discord User ID）；
     呼叫端各自決定要怎麼提示（背景 loop 發警告到管理頻道，重送指令直接回覆操作者）。
     """
     artists = await repositories.get_artists_by_ids(task.artist_page_ids)
     notifyable_artists = [artist for artist in artists if artist.discord_user_id]
-    if not notifyable_artists:
+    staff = await repositories.get_people_items_by_ids(task.staff_page_ids)
+    notifyable_staff = [person for person in staff if person.discord_user_id]
+    if not notifyable_artists and not notifyable_staff:
         return None
+    # 任務說明已經寫在 notification_message 裡，藝人不需要開 Notion。
+    content = task_notifications.notification_message(task)
     sent = 0
-    for artist in artists:
-        if not artist.discord_user_id:
-            continue
+    for artist in notifyable_artists:
         try:
             user = await bot.fetch_user(int(artist.discord_user_id))
-            # 任務說明已經寫在 notification_message 裡，藝人不需要開 Notion。
-            await send_task_dm(user, task.page_id, task_notifications.notification_message(task))
+            await send_task_dm(user, task.page_id, content)
             sent += 1
         except Exception:
             logger.exception("任務派發通知失敗：%s／%s", task.name, artist.name)
-    if sent == len(notifyable_artists):
-        logger.info("任務派發通知成功：%s，已通知 %s 位藝人", task.name, sent)
+    staff_sent = await notify_staff(bot, task, content, notifyable_staff) if notifyable_staff else 0
+    outcome = DispatchOutcome(
+        notifyable_artists=notifyable_artists, sent=sent,
+        notifyable_staff=notifyable_staff, staff_sent=staff_sent,
+    )
+    if outcome.is_complete:
+        logger.info("任務派發通知成功：%s，已通知 %s 位藝人、%s 位同仁", task.name, sent, staff_sent)
         if task_notifications.is_public_announcement_task(
             task, config.get_tenant().public_task_types
         ):
@@ -482,7 +519,7 @@ async def send_task_notification(bot, task: repositories.TaskItem) -> DispatchOu
             await repositories.mark_task_discord_notified(task.page_id)
         except Exception:
             logger.exception("任務通知時間寫入 Notion 失敗：%s", task.page_id)
-    return DispatchOutcome(notifyable_artists=notifyable_artists, sent=sent)
+    return outcome
 
 
 class TaskResendSelect(discord.ui.Select):

@@ -734,6 +734,8 @@ class TaskItem:
     teacher_page_ids: list[str] = field(default_factory=list)
     reviewer_page_ids: list[str] = field(default_factory=list)
     artist_page_ids: list[str] = field(default_factory=list)
+    # M6-05：相關同仁（People）。只拿來發 Discord 私訊，不影響藝人端查詢與時段比對。
+    staff_page_ids: list[str] = field(default_factory=list)
     project_page_ids: list[str] = field(default_factory=list)
     # 關聯專案 的 專案類型，由 Notion 的 rollup（show_unique）帶進來，決定任務的分類。
     # 空 list ＝ 沒關聯專案，或 rollup 被改壞——兩種都當「沒有分類」。
@@ -836,7 +838,7 @@ def _to_project(page: dict) -> ProjectItem:
         name=_read_title(page, "專案名稱"),
         status=_read_select(page, "專案狀態"),
         project_type=_read_select(page, "專案類型"),
-        artist_page_ids=_read_relation_ids(page, "關聯藝人"),
+        artist_page_ids=_read_relation_ids(page, PROJECT_ARTIST_PROPERTY),
         start=start.value,
         end=end.value,
         start_has_time=start.has_time,
@@ -863,7 +865,8 @@ def _to_task(page: dict) -> TaskItem:
         course_meeting_page_ids=_read_relation_ids(page, "課程與會議記錄"),
         teacher_page_ids=_read_relation_ids(page, "負責老師"),
         reviewer_page_ids=_read_relation_ids(page, "審核人員"),
-        artist_page_ids=_read_relation_ids(page, "關聯藝人"),
+        artist_page_ids=_read_relation_ids(page, TASK_ARTIST_PROPERTY),
+        staff_page_ids=_read_relation_ids(page, TASK_STAFF_PROPERTY),
         project_page_ids=_read_relation_ids(page, "關聯專案"),
         project_types=_read_rollup_select_names(page, TASK_PROJECT_TYPE_PROPERTY),
         start=start.value,
@@ -921,6 +924,13 @@ TASK_REMINDER_ACK_PROPERTY = "提醒確認(From 藝人)"
 # Tasks 這一欄是 rollup（經 關聯專案 取 Projects 的 專案類型），不是 select。
 # Notion 欄位說明寫著「自動繼承關聯專案的專案類型，勿手動維護」。
 TASK_PROJECT_TYPE_PROPERTY = "專案類型"
+# M7-06：Tasks 的「關聯藝人」要改名為「相關人士」，改名時只動這一行（且必須與 Notion 同一次切換）。
+TASK_ARTIST_PROPERTY = "關聯藝人"
+# Projects 也有同名欄位，不在 M7-06 範圍，分開放免得一起被改掉。
+PROJECT_ARTIST_PROPERTY = "關聯藝人"
+# M6-05：公司同仁收通知。關聯藝人指向 Artists，同仁在 People，一個 relation 只能指向一個資料庫，
+# 所以另開這欄（relation → People）。欄位不存在時讀成空清單，不影響藝人通知。
+TASK_STAFF_PROPERTY = "相關同仁"
 
 
 def _task_discord_visible(page: dict) -> bool:
@@ -1166,7 +1176,7 @@ def warnings_for_window(
 async def get_projects_for_artist(artist_page_id: str) -> list[ProjectItem]:
     pages = await notion_api.query_data_source(
         config.DS_PROJECTS,
-        filter_={"property": "關聯藝人", "relation": {"contains": artist_page_id}},
+        filter_={"property": PROJECT_ARTIST_PROPERTY, "relation": {"contains": artist_page_id}},
     )
     return [_to_project(page) for page in pages]
 
@@ -1278,7 +1288,7 @@ async def get_discord_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
     `get_tasks_for_artist(..., discord_visible_only=True)`。
     """
     pages = await _query_tasks_requiring_discord_display(
-        [{"property": "關聯藝人", "relation": {"contains": artist_page_id}}]
+        [{"property": TASK_ARTIST_PROPERTY, "relation": {"contains": artist_page_id}}]
     )
     return [_to_task(p) for p in pages]
 
@@ -1716,7 +1726,7 @@ def _build_formal_arrangement_task_props(
         "任務名稱": _title(name),
         "任務狀態": _select("尚未開始"),
         "任務類型": _select(task_type),
-        "關聯藝人": _relation(artist_page_ids),
+        TASK_ARTIST_PROPERTY: _relation(artist_page_ids),
         "任務說明": _rich_text(description),
         "是否開放提交": _checkbox(False),
         "Discord 顯示": _checkbox(discord_visible),

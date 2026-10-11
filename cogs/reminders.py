@@ -259,7 +259,7 @@ class RemindersCog(commands.Cog):
                     if admin_channel:
                         await admin_channel.send(
                             f"⚠️ **任務通知未送出：{task.name}**\n"
-                            "找不到有效的關聯藝人或 Discord User ID，請回 Notion 補齊後再使用 `/任務通知重送`。"
+                            "找不到有效的關聯藝人／相關同仁或 Discord User ID，請回 Notion 補齊後再使用 `/任務通知重送`。"
                         )
                     self._dispatch_warning_sent.add(task.page_id)
                     await audit.log_event(
@@ -268,7 +268,7 @@ class RemindersCog(commands.Cog):
                         operator="System",
                         target_db="Tasks",
                         target_url=task.url,
-                        after="找不到有效的關聯藝人或 Discord User ID",
+                        after="找不到有效的關聯藝人／相關同仁或 Discord User ID",
                     )
                 continue
             self._dispatch_warning_sent.discard(task.page_id)
@@ -279,7 +279,7 @@ class RemindersCog(commands.Cog):
                     operator="System",
                     target_db="Tasks",
                     target_url=task.url,
-                    after=f"通知 {outcome.sent} 位藝人",
+                    after=f"通知 {outcome.sent} 位藝人、{outcome.staff_sent} 位同仁",
                 )
             else:
                 # 私訊失敗時不要永久標記已處理，下一輪會重新嘗試。
@@ -687,6 +687,10 @@ class RemindersCog(commands.Cog):
             return
 
         artist_map = await repositories.get_artist_map()  # 一輪只撈一次
+        staff_ids = sorted({pid for t, _, _ in due if t.discord_visible for pid in t.staff_page_ids})
+        staff_map = {
+            p.page_id: p for p in await repositories.get_people_items_by_ids(staff_ids)
+        } if staff_ids else {}
         admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
             or self.bot.get_channel(config.TASK_CHANNEL_ID) \
             or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
@@ -702,22 +706,25 @@ class RemindersCog(commands.Cog):
 
             # DM 藝人（僅 Discord 顯示的任務；內部行政任務不打擾藝人）
             if t.discord_visible:
-                from cogs.tasks_artist import reminder_view
+                from cogs.tasks_artist import notify_staff, reminder_view
+
+                staff = [staff_map[pid] for pid in t.staff_page_ids if pid in staff_map]
 
                 # 同一輪可能同時到期多個階段（bot 停機補跑），每個階段各發一則、各一顆按鈕，
                 # 藝人才分得出自己確認的是哪一次。逾期只有一種訊息、沒有按鈕。
                 for stage in ([repositories.OVERDUE_STAGE] if is_overdue else stages):
                     sent_count = 0
+                    overdue_text = (
+                        f"🔴 任務已逾期：**{t.name}**（{deadline_text}）\n"
+                        f"請盡快處理；若已完成請提交或聯絡營運。"
+                    )
                     for a in artists:
                         if not a.discord_user_id:
                             continue
                         try:
                             user = await self.bot.fetch_user(int(a.discord_user_id))
                             if is_overdue:
-                                await user.send(
-                                    f"🔴 任務已逾期：**{t.name}**（{deadline_text}）\n"
-                                    f"請盡快處理；若已完成請提交或聯絡營運。"
-                                )
+                                await user.send(overdue_text)
                             else:
                                 await user.send(
                                     task_notifications.reminder_message(t, stage, deadline_text),
@@ -726,6 +733,14 @@ class RemindersCog(commands.Cog):
                             sent_count += 1
                         except Exception:
                             pass
+                    if staff:
+                        # M6-05：同仁也收同一則提醒（沒有確認鈕，也不算進「已發送給 N 人」）。
+                        await notify_staff(
+                            self.bot, t,
+                            overdue_text if is_overdue
+                            else task_notifications.reminder_message(t, stage, deadline_text),
+                            staff,
+                        )
                     if not is_overdue and sent_count:
                         # 送出也記一行，控方才分得出「還沒發」和「發了沒人按」。
                         try:

@@ -27,7 +27,8 @@ def _task(**changes) -> repositories.TaskItem:
         status="進行中",
         task_type="通告",
         url=_NOTION_URL,
-        description="請在週五前交出第一版編曲，格式 wav。",
+        # 控方會把參考頁直接貼進任務說明，這條路徑之前漏掉過（2026-10-11 發現）。
+        description=f"請在週五前交出第一版編曲，格式 wav。\n參考：{_NOTION_URL}",
         artist_page_ids=["artist-1"],
         discord_visible=True,
         start=datetime(2026, 9, 20, 14, 0, tzinfo=config.TZ),
@@ -84,6 +85,8 @@ def _artist_facing_messages() -> dict[str, str]:
         "任務通知": task_notifications.notification_message(task),
         "任務派發通知": task_notifications.assignment_notification_message(task),
         "未確認提醒": task_notifications.acknowledgement_reminder_message([task]),
+        "截止前提醒": task_notifications.reminder_message(task, "3 天前", "截止 09/20"),
+        "同仁知會": task_notifications.staff_message(task_notifications.notification_message(task)),
         "公告區公開公告": task_notifications.public_announcement_message(task),
         "審核結果 DM": review_dm_text(
             submission,

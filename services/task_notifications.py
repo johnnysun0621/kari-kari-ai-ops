@@ -4,12 +4,21 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from services import notion_links
 from services.repositories import TaskItem
 
 STATE_PATH = Path(".state/task_dispatch_notifications.json")
 ASSIGNMENT_STATE_PATH = Path(".state/task_assignment_notifications.json")
 # 提交方式已全部停用（M4-03）：所有交件一律上傳到 Bot 提供的公司 Drive 資料夾。
 SUBMIT_GUIDE = "需要交件時，請用 `/我的任務` → 提交任務，檔案上傳到 Bot 提供的公司 Drive 資料夾。"
+STAFF_HEADER = "👥 同仁知會：你是這個任務的相關同仁，這則僅供通知，不需要按收到。"
+
+
+def staff_message(artist_content: str) -> str:
+    """M6-05：發給相關同仁的版本。沿用藝人那份內容（同樣不含 Notion 網址），
+    拿掉只對藝人有意義的交件指引——同仁不在 Artists，/我的任務 查不到這筆。"""
+    body = artist_content.replace(SUBMIT_GUIDE, "").strip()
+    return f"{STAFF_HEADER}\n\n{body}"[:2000]
 
 
 def format_reminder_interval(minutes: float) -> str:
@@ -112,9 +121,13 @@ def _description_value(description: str, field_name: str) -> str:
 
 
 def _artist_facing_description(description: str) -> str:
-    """移除控方排程欄位，保留真正給藝人的任務說明。"""
+    """移除控方排程欄位，保留真正給藝人的任務說明。
+
+    控方常把參考頁直接貼進任務說明；藝人拿到任何 Notion 網址都能往上翻到整個 Tasks（M7-04），
+    所以這裡一併清掉 Notion 連結（其他網址照留）。
+    """
     kept: list[str] = []
-    for line in description.splitlines():
+    for line in notion_links.strip_notion_links(description or "").splitlines():
         stripped = line.strip()
         if (
             not stripped
