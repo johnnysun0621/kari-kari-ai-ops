@@ -8,6 +8,8 @@ from services.repositories import TaskItem
 
 STATE_PATH = Path(".state/task_dispatch_notifications.json")
 ASSIGNMENT_STATE_PATH = Path(".state/task_assignment_notifications.json")
+# 提交方式已全部停用（M4-03）：所有交件一律上傳到 Bot 提供的公司 Drive 資料夾。
+SUBMIT_GUIDE = "需要交件時，請用 `/我的任務` → 提交任務，檔案上傳到 Bot 提供的公司 Drive 資料夾。"
 
 
 def format_reminder_interval(minutes: float) -> str:
@@ -42,21 +44,14 @@ def notification_message(task: TaskItem) -> str:
         if value:
             extra_lines.append(f"{label}：{value}")
     extra_text = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
-    submit_text = (
-        f"提交方式：{task.submit_method}"
-        if task.submit_method
-        else "提交方式／任務說明\n"
-        f"{description}"
-    )
-    description_block = "" if not task.submit_method else f"\n\n**任務內容**\n{description}"
     return (
         f"📌 **新任務通知**\n"
         f"任務：**{task.name}**\n"
         f"類型：{task.task_type or '任務'}\n"
         f"{deadline_line}"
-        f"{extra_text}\n"
-        f"{submit_text}{description_block}\n\n"
-        f"請先按「收到任務」確認你已看到這項任務；完成後再依指定方式提交。"
+        f"{extra_text}\n\n"
+        f"**任務內容**\n{description}\n\n"
+        f"請先按「收到任務」確認你已看到這項任務。{SUBMIT_GUIDE}"
     )
 
 
@@ -86,14 +81,12 @@ def assignment_notification_message(task: TaskItem) -> str:
         deadline = assignment_deadline.strftime(
             "%m/%d %H:%M" if assignment_has_time else "%m/%d"
         )
-    submit_method = task.submit_method or "請依任務說明"
     return (
         f"📚 **課後作業通知**\n"
         f"任務：**{task.name}**\n"
-        f"截止：{deadline}\n"
-        f"提交方式：{submit_method}\n\n"
+        f"截止：{deadline}\n\n"
         f"**作業要求**\n{description}\n\n"
-        f"請先按「收到任務」確認你已看到這項作業；完成後再依指定方式提交。"
+        f"請先按「收到任務」確認你已看到這項作業。{SUBMIT_GUIDE}"
     )
 
 
@@ -175,15 +168,13 @@ def reminder_message(task: TaskItem, stage: str, deadline_text: str) -> str:
     """截止前提醒的私訊內容。
 
     藝人手上已經沒有 Notion 連結（藝人端零 Notion 入口），所以提醒必須自帶任務說明
-    和提交方式，不能只丟一個任務名稱。deadline_text 由呼叫端用 ui_text 產生，
+    ，不能只丟一個任務名稱。deadline_text 由呼叫端用 ui_text 產生，
     這裡不重算，避免兩邊的「交件／截止」稱呼不一致。
     """
     description = _artist_facing_description(task.description)
     if len(description) > 700:
         description = description[:697].rstrip() + "..."
     lines = [f"⏰ **任務提醒（{stage}）**", f"任務：**{task.name}**", deadline_text]
-    if task.submit_method:
-        lines.append(f"提交方式：{task.submit_method}")
     if description:
         lines.append(f"\n**任務內容**\n{description}")
     lines.append("\n看到這則提醒請按下方「收到通知」，讓控方知道你已掌握進度。")

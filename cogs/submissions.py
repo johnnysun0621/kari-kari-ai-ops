@@ -115,17 +115,6 @@ def disable_all_view_items(view) -> None:
             item.disabled = True
 
 
-def submission_type_for_input(link_url: str, content: str) -> str | None:
-    """依實際填寫內容決定 Submissions.提交類型；兩者皆空回 None（呼叫端擋下）。"""
-    if link_url and content:
-        return "混合"
-    if link_url:
-        return "Drive 連結"
-    if content:
-        return "文字"
-    return None
-
-
 def parse_revision_days(value: str) -> int | None:
     """審核人設定修改期限：只接受 1～7 個完整天數。"""
     try:
@@ -472,34 +461,14 @@ def review_feedback_file_dm_text(
     return "\n".join(lines)
 
 
-SUBMIT_METHOD_LABELS = {
-    "檔案": "📎 交檔案",
-    "Drive 連結": "🔗 貼連結",
-    "文字": "📝 填文字",
-    "混合": "📎🔗 檔案或連結",
-}
-
-
-def submit_method_label(method: str | None) -> str:
-    return SUBMIT_METHOD_LABELS.get(method or "", "🔗📝 連結或文字")
-
-
 def submit_task_option_description(task: repositories.TaskItem, now: datetime) -> str:
-    """Select option 描述：第一眼就知道這筆任務要交什麼。"""
-    return (
-        f"{submit_method_label(task.submit_method)}｜"
-        f"{task.task_type or '任務'}｜"
-        f"{ui_text.deadline_text(task, now)}"
-    )[:100]
+    """Select option 描述：任務類型與期限。提交一律是上傳檔案到公司 Drive（M4-03）。"""
+    return f"{task.task_type or '任務'}｜{ui_text.deadline_text(task, now)}"[:100]
 
 
 def _teacher_requirement_text(task: repositories.TaskItem) -> str:
     description = _clip(task_notifications._artist_facing_description(task.description), 120)
-    if description:
-        return f"\n  任務說明：{description}"
-    if task.submit_method == "檔案":
-        return "\n  老師要求：依 Notion 任務說明上傳指定檔案至 Drive。"
-    return ""
+    return f"\n  任務說明：{description}" if description else ""
 
 
 def submit_task_intro_text(
@@ -507,15 +476,14 @@ def submit_task_intro_text(
     tasks: list[repositories.TaskItem],
     now: datetime,
 ) -> str:
-    """提交第一關文案：先讓藝人知道有哪些任務、各自要交什麼。"""
+    """提交第一關文案：先讓藝人知道有哪些任務。"""
     lines = [
         f"📤 {artist_name} 可提交的任務（{len(tasks)}）：",
-        "先選任務；選定後我才會依 Notion 指定方式要求你上傳檔案、貼連結或填文字。",
+        "先選任務；選定後 Bot 會建立你的任務 Drive 資料夾，請把檔案上傳到那裡。",
         "",
     ]
     task_lines = [
-        f"・{task.name}｜{submit_method_label(task.submit_method)}｜"
-        f"{task.task_type or '任務'}｜{ui_text.deadline_text(task, now)}"
+        f"・{task.name}｜{task.task_type or '任務'}｜{ui_text.deadline_text(task, now)}"
         f"{_teacher_requirement_text(task)}"
         for task in tasks
     ]
@@ -526,151 +494,7 @@ def submit_task_intro_text(
     lines.extend(shown)
     if remaining:
         lines.append(f"...另 {remaining} 筆請用下方選單查看")
-    if any(task.submit_method in ("檔案", "混合") for task in tasks):
-        lines.append("")
-        lines.append(
-            "檔案／混合任務：選定後 Bot 會自動建立你的任務 Drive 資料夾。"
-        )
     return ui_text.trim_message("\n".join(lines))
-
-
-def submission_method_conflict(task: repositories.TaskItem, has_attachment: bool) -> str | None:
-    """依 Notion assign 的提交方式強制引導；回傳擋下訊息，None＝可以進行。
-
-    檔案任務沒帶附件時，會改走同頻道等待附件流程，不再要求重打指令。
-    """
-    method = task.submit_method
-    if has_attachment:
-        if method in ("Drive 連結", "文字"):
-            return (
-                f"❌ 「{task.name}」在 Notion 指定的提交方式是**{method}**，不收檔案上傳。\n"
-                "請回到 `/我的任務` 按「提交任務」，"
-                + ("貼上你的雲端連結。" if method == "Drive 連結" else "直接填文字內容。")
-            )
-        return None
-    return None
-
-
-def modal_field_spec(method: str | None) -> tuple[bool, bool, bool, bool]:
-    """依 assign 決定表單欄位：(顯示連結欄, 連結必填, 顯示文字欄, 文字必填)。"""
-    if method == "Drive 連結":
-        return True, True, True, False   # 連結必填，文字當補充說明
-    if method == "文字":
-        return False, False, True, True  # 只收文字
-    return True, False, True, False      # 混合／未指定：至少填一項（on_submit 驗證）
-
-
-def submit_hint_for_task(task: repositories.TaskItem) -> str:
-    """Modal 開頭給藝人的提示：依任務的提交方式引導。"""
-    method = task.submit_method
-    if method == "檔案":
-        return "此任務要求交檔案：請上傳至 Bot 指定的 Google Drive 資料夾。"
-    if method == "Drive 連結":
-        return "請貼上作品的雲端連結（記得開啟共用權限）。"
-    if method == "文字":
-        return "請直接填寫文字內容。"
-    return "可貼雲端連結、填文字內容，或兩者都填。"
-
-
-class SubmissionModal(discord.ui.Modal):
-    """提交表單：連結＋文字皆選填，但至少要填一項。"""
-
-    def __init__(self, task: repositories.TaskItem):
-        super().__init__(title=f"提交｜{task.name}"[:45])
-        self.task = task
-        show_link, link_required, show_content, content_required = modal_field_spec(task.submit_method)
-        self.link_input: discord.ui.TextInput | None = None
-        self.content_input: discord.ui.TextInput | None = None
-        if show_link:
-            self.link_input = discord.ui.TextInput(
-                label="作品連結" + ("（必填）" if link_required else "（選填）"),
-                placeholder="https://...",
-                required=link_required,
-                max_length=500,
-            )
-            self.add_item(self.link_input)
-        if show_content:
-            self.content_input = discord.ui.TextInput(
-                label="文字內容／說明" + ("（必填）" if content_required else "（選填）"),
-                style=discord.TextStyle.paragraph,
-                placeholder=submit_hint_for_task(task)[:100],
-                required=content_required,
-                max_length=1500,
-            )
-            self.add_item(self.content_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        link_url = (self.link_input.value or "").strip() if self.link_input else ""
-        content = (self.content_input.value or "").strip() if self.content_input else ""
-
-        submit_type = submission_type_for_input(link_url, content)
-        if submit_type is None:
-            await interaction.followup.send(
-                "❌ 連結和文字內容至少要填一項，請再按一次「提交任務」。", ephemeral=True
-            )
-            return
-        if link_url and not is_valid_link(link_url):
-            await interaction.followup.send(
-                "❌ 連結格式看起來不對（要以 http:// 或 https:// 開頭），請確認後重新提交。",
-                ephemeral=True,
-            )
-            return
-
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is None:
-            await interaction.followup.send(
-                "❌ 找不到你的藝人資料，請聯絡管理者確認 Notion 上的 Discord User ID 設定。",
-                ephemeral=True,
-            )
-            return
-
-        try:
-            # 先取消舊版最新標記，再建立新提交（順序反了會把新的一起取消）
-            replaced = await repositories.mark_previous_submissions_not_latest(self.task.page_id)
-            submission_page = await repositories.create_submission(
-                self.task, artist,
-                submit_type=submit_type, link_url=link_url, content=content,
-            )
-            await repositories.set_task_under_review(
-                self.task.page_id, submission_page.get("url", "")
-            )
-        except Exception:
-            logger.exception("建立提交失敗")
-            await interaction.followup.send("❌ 寫入 Notion 失敗，請稍後再試或聯絡管理者。", ephemeral=True)
-            await audit.log_event(
-                event_name=f"提交任務失敗｜{artist.name}｜{self.task.name}",
-                action_type="錯誤", operator=artist.name,
-                discord_user_id=str(interaction.user.id),
-                target_db="Submissions & File Index", result="失敗",
-                error_message="create_submission exception（詳見 bot log）",
-            )
-            return
-
-        await audit.log_event(
-            event_name=f"提交任務｜{artist.name}｜{self.task.name}",
-            action_type="提交", operator=artist.name,
-            discord_user_id=str(interaction.user.id),
-            target_db="Submissions & File Index",
-            target_url=submission_page.get("url", ""),
-            after=f"{submit_type}｜任務轉待審核" + (f"｜取代 {replaced} 筆舊版" if replaced else ""),
-        )
-
-        # 通知審核人員（有指定就私訊，沒指定才退回控方）。通知失敗只記 log，不影響藝人的提交確認
-        link_part = f"\n連結：{link_url}" if link_url else ""
-        await notify_submission_reviewers(
-            interaction.client, self.task,
-            f"📥 **新提交待審核**\n"
-            f"任務：{self.task.name}｜{artist.name}｜{submit_type}"
-            f"{link_part}\nNotion：{submission_page.get('url', '')}",
-        )
-
-        resubmit_note = f"\n（已取代先前 {replaced} 筆提交，這筆為最新版）" if replaced else ""
-        await interaction.followup.send(
-            f"✅ 已提交：**{self.task.name}**（{submit_type}）\n"
-            f"任務狀態已轉「待審核」，審核結果會再通知你。{resubmit_note}",
-            ephemeral=True,
-        )
 
 
 class ReviewFeedbackDriveLinkModal(discord.ui.Modal):
@@ -971,25 +795,8 @@ class SubmitTaskSelect(discord.ui.Select):
                 ephemeral=True,
             )
             return
-        conflict = submission_method_conflict(task, self.attachment is not None)
-        if conflict:
-            await interaction.response.send_message(conflict, ephemeral=True)
-            return
-        if task.submit_method == "檔案":
-            await self.cog.start_file_upload_wait(interaction, task, drive_only=True)
-            return
-        if task.submit_method == "Drive 連結":
-            await self.cog.start_file_upload_wait(interaction, task, drive_only=True)
-            return
-        if task.submit_method == "混合":
-            await interaction.response.send_message(
-                f"「{task.name}」可交檔案或貼連結／文字，請選擇提交方式：",
-                view=MixedSubmissionChoiceView(self.cog, task, self.tasks, self.now),
-                ephemeral=True,
-            )
-            return
-        # 連結/文字：Modal 必須是元件互動的第一個回應
-        await interaction.response.send_modal(SubmissionModal(task))
+        # 提交方式已全部停用（M4-03）：所有交件一律上傳到公司 Drive 的任務資料夾。
+        await self.cog.start_file_upload_wait(interaction, task, drive_only=True)
 
 
 class SubmitTaskView(discord.ui.View):
@@ -1007,36 +814,6 @@ class SubmitTaskView(discord.ui.View):
     @discord.ui.button(label="返回我的任務", style=discord.ButtonStyle.secondary, emoji="↩️")
     async def back_to_my_tasks(self, interaction: discord.Interaction, _: discord.ui.Button):
         await self.cog.return_to_my_tasks(interaction)
-
-
-class MixedSubmissionChoiceView(discord.ui.View):
-    def __init__(
-        self,
-        cog: "SubmissionsCog",
-        task: repositories.TaskItem,
-        tasks: list[repositories.TaskItem],
-        now: datetime,
-    ):
-        super().__init__(timeout=300)
-        self.cog = cog
-        self.task = task
-        self.tasks = tasks
-        self.now = now
-
-    @discord.ui.button(label="使用 Drive 提交", style=discord.ButtonStyle.primary)
-    async def upload_file(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.cog.start_file_upload_wait(interaction, self.task, drive_only=True)
-
-    @discord.ui.button(label="貼連結／文字", style=discord.ButtonStyle.secondary)
-    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(SubmissionModal(self.task))
-
-    @discord.ui.button(label="返回任務選擇", style=discord.ButtonStyle.secondary, emoji="↩️")
-    async def back_to_tasks(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.edit_message(
-            content="請重新選擇要提交的任務：",
-            view=SubmitTaskView(self.cog, self.tasks, self.now),
-        )
 
 
 class LargeFileSubmissionChoiceView(discord.ui.View):
@@ -1432,7 +1209,7 @@ class SubmissionsCog(commands.Cog):
             else f"📁 **{task.name}**\n請將檔案上傳至下方指定資料夾。\n\n"
         )
         upload_controls = (
-            "提交方式：\n"
+            "上傳完成後：\n"
             "・我已上傳到 Drive：檔案放入公司指定資料夾後按。\n\n"
         )
         await interaction.followup.send(

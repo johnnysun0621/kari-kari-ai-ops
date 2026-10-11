@@ -745,7 +745,6 @@ class TaskItem:
     # P0-2 任務查詢顯示用
     url: str = ""
     description: str = ""
-    submit_method: str | None = None
     open_for_submission: bool = False
     latest_submission_url: str = ""
     task_id: int | None = None
@@ -873,7 +872,6 @@ def _to_task(page: dict) -> TaskItem:
         end_has_time=end.has_time,
         url=page.get("url", ""),
         description=_read_rich_text(page, "任務說明"),
-        submit_method=_read_select(page, "提交方式"),
         open_for_submission=_read_checkbox(page, "是否開放提交"),
         latest_submission_url=_read_url(page, "最新提交 URL"),
         task_id=_read_unique_id(page, "Task ID"),

@@ -245,7 +245,7 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
         self.task_id = task_id
         self.reason = discord.ui.TextInput(
             label="請說明原因或需要調整的地方",
-            placeholder="例如：時間無法配合、任務內容不清楚、需要改提交方式…",
+            placeholder="例如：時間無法配合、任務內容不清楚、需要延期…",
             style=discord.TextStyle.paragraph,
             max_length=1000,
         )

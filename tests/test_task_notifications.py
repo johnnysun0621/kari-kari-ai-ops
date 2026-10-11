@@ -10,7 +10,6 @@ def make_task(
     *,
     page_id: str = "task-1",
     name: str = "歌唱課作業",
-    submit_method: str | None = "檔案",
     end: datetime | None = None,
     discord_notified_at: datetime | None = None,
     discord_acknowledged_at: datetime | None = None,
@@ -19,8 +18,7 @@ def make_task(
         page_id=page_id,
         name=name,
         status="尚未開始",
-        task_type="課程與作業",
-        submit_method=submit_method,
+        task_type="課程時間&作業繳交",
         end=end,
         end_has_time=end is not None,
         artist_page_ids=["artist-1"],
@@ -114,19 +112,21 @@ def test_course_notification_hides_internal_candidates_and_shows_formal_time():
     assert "負責老師：子喬" in message
 
 
-def test_missing_submit_method_shows_task_description_instead_of_placeholder():
-    task = make_task(submit_method=None)
+def test_notification_always_shows_task_content_and_drive_upload_guide():
+    """提交方式已停用（M4-03）：通知一律帶任務內容，並指向公司 Drive 上傳。"""
+    task = make_task()
     task.description = "請完成舞蹈練習，並於課後提交錄影。"
 
     message = task_notifications.notification_message(task)
 
-    assert "提交方式：請依任務說明" not in message
-    assert "提交方式／任務說明" in message
+    assert "提交方式" not in message
+    assert "**任務內容**" in message
     assert "請完成舞蹈練習，並於課後提交錄影。" in message
+    assert "公司 Drive 資料夾" in message
 
 
 def test_assignment_notification_requires_open_submission_and_has_assignment_copy():
-    task = make_task(submit_method="Drive 連結")
+    task = make_task()
     task.description = "請上傳課後練習錄影。"
     task.end = datetime(2026, 8, 14, 15, 30, tzinfo=config.TZ)
     task.end_has_time = True
@@ -139,7 +139,8 @@ def test_assignment_notification_requires_open_submission_and_has_assignment_cop
     message = task_notifications.assignment_notification_message(task)
     assert "課後作業通知" in message
     assert "請上傳課後練習錄影。" in message
-    assert "Drive 連結" in message
+    assert "公司 Drive 資料夾" in message
+    assert "提交方式" not in message
     assert "截止：08/20 23:59" in message
     assert "08/14 15:30" not in message
 
@@ -387,7 +388,7 @@ def test_reminder_message_carries_content_because_artist_has_no_notion_link():
     assert "任務提醒（當天）" in text
     assert "歌唱課作業" in text
     assert "交件 9/25（今天）" in text
-    assert "提交方式：檔案" in text
+    assert "提交方式" not in text
     assert "請交第一版編曲" in text
     assert "安排來源" not in text          # 控方內部行仍要濾掉
     assert "收到通知" in text

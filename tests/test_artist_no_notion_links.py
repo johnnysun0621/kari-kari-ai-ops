@@ -32,7 +32,6 @@ def _task(**changes) -> repositories.TaskItem:
         discord_visible=True,
         start=datetime(2026, 9, 20, 14, 0, tzinfo=config.TZ),
         end=datetime(2026, 9, 20, 16, 0, tzinfo=config.TZ),
-        submit_method="Google Drive",
         open_for_submission=True,
     )
     values.update(changes)

@@ -16,7 +16,6 @@ from cogs.submissions import (
     ReviewFeedbackDriveTarget,
     LargeFileSubmissionChoiceView,
     ReviewFeedbackLargeFileChoiceView,
-    MixedSubmissionChoiceView,
     PostReviewAttachmentView,
     ReviewActionView,
     ReviewSubmissionView,
@@ -29,7 +28,6 @@ from cogs.submissions import (
     file_upload_wait_label,
     is_valid_link,
     large_file_drive_instruction,
-    modal_field_spec,
     notify_submission_reviewers,
     notion_page_url,
     prefixed_review_feedback_filename,
@@ -39,13 +37,9 @@ from cogs.submissions import (
     review_dm_text,
     review_submission_detail_text,
     review_task_status_for_result,
-    submission_method_conflict,
     submit_task_intro_text,
     submit_task_option_description,
-    submission_type_for_input,
     task_links_text,
-    submit_hint_for_task,
-    submit_method_label,
     parse_revision_days,
 )
 from cogs import ui_text
@@ -59,7 +53,6 @@ def task(
     # 2026-10-04：原本預設是「課程作業」，那是 Submissions 的檔案類型、
     # 不是 Notion「任務類型」的選項。用真實選項，否則測試會跟程式一起錯而測不出來。
     task_type: str | None = "課程時間&作業繳交",
-    submit_method: str | None = None,
     description: str = "",
     reviewer_page_ids: list[str] | None = None,
 ):
@@ -69,7 +62,6 @@ def task(
         status=status,
         task_type=task_type,
         open_for_submission=open_for_submission,
-        submit_method=submit_method,
         description=description,
         reviewer_page_ids=reviewer_page_ids if reviewer_page_ids is not None else [],
     )
@@ -101,20 +93,6 @@ class TestRevisionDays:
     def test_rejects_empty_non_integer_and_out_of_range(self):
         for value in ("", "0", "8", "兩天", "1.5"):
             assert parse_revision_days(value) is None
-
-
-class TestSubmissionTypeForInput:
-    def test_link_only(self):
-        assert submission_type_for_input("https://a", "") == "Drive 連結"
-
-    def test_text_only(self):
-        assert submission_type_for_input("", "內容") == "文字"
-
-    def test_both_is_mixed(self):
-        assert submission_type_for_input("https://a", "內容") == "混合"
-
-    def test_neither_is_rejected(self):
-        assert submission_type_for_input("", "") is None
 
 
 class TestLinkValidation:
@@ -198,83 +176,33 @@ class TestReviewUpdateProps:
         assert props["審核通知時間"]["date"]["start"] == reviewed_at.isoformat()
 
 
-class TestSubmitHint:
-    def test_file_method_points_to_drive_upload(self):
-        hint = submit_hint_for_task(task(submit_method="檔案"))
-        assert "Google Drive" in hint
-        assert "私訊" not in hint
-        assert "尚未開通" not in hint  # 舊文案不得復活
-
-
-class TestSubmissionMethodConflict:
-    def test_file_task_without_attachment_can_start_dm_upload(self):
-        msg = submission_method_conflict(task(submit_method="檔案"), has_attachment=False)
-        assert msg is None
-
-    def test_link_or_text_task_rejects_attachment(self):
-        assert submission_method_conflict(task(submit_method="Drive 連結"), True) is not None
-        assert submission_method_conflict(task(submit_method="文字"), True) is not None
-
-    def test_matching_combinations_pass(self):
-        assert submission_method_conflict(task(submit_method="檔案"), True) is None
-        assert submission_method_conflict(task(submit_method="Drive 連結"), False) is None
-        assert submission_method_conflict(task(submit_method="文字"), False) is None
-        assert submission_method_conflict(task(submit_method="混合"), True) is None
-        assert submission_method_conflict(task(submit_method=None), False) is None
-
-
-class TestModalFieldSpec:
-    def test_link_task_requires_link(self):
-        assert modal_field_spec("Drive 連結") == (True, True, True, False)
-
-    def test_text_task_only_text_required(self):
-        assert modal_field_spec("文字") == (False, False, True, True)
-
-    def test_mixed_or_unset_shows_both_optional(self):
-        assert modal_field_spec("混合") == (True, False, True, False)
-        assert modal_field_spec(None) == (True, False, True, False)
-
-
-class TestSubmitMethodLabel:
-    def test_labels_each_method(self):
-        assert "📎" in submit_method_label("檔案")
-        assert "🔗" in submit_method_label("Drive 連結")
-        assert "📝" in submit_method_label("文字")
-        assert submit_method_label(None)  # 未指定也有預設標示
-
-    def test_text_method_asks_for_text(self):
-        assert "文字" in submit_hint_for_task(task(submit_method="文字"))
-
-
 class TestSubmitTaskFirstStepText:
-    def test_intro_lists_tasks_methods_and_teacher_requirements(self):
+    def test_intro_lists_tasks_and_teacher_requirements_and_points_to_drive(self):
         now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
         text = submit_task_intro_text(
             "Johnny",
             [
                 task(
-                    submit_method="檔案",
-                    task_type="課程作業",
+                    task_type="課程時間&作業繳交",
                     description="老師要求：請上傳 PDF 或簡報，不要傳壓縮檔。",
                 ),
-                task(submit_method="Drive 連結", task_type="錄音"),
+                task(task_type="錄音"),
             ],
             now,
         )
 
         assert "先選任務" in text
-        assert "交檔案" in text
-        assert "貼連結" in text
+        assert "Drive 資料夾" in text
         assert "老師要求" in text
         assert "PDF" in text
+        # 提交方式已停用（M4-03）：不再出現貼連結／填文字
+        assert "貼連結" not in text and "填文字" not in text
 
     def test_intro_stays_within_discord_limit_when_descriptions_are_long(self):
         """任務說明很長時，固定列 10 筆會超過 Discord 上限；應該改成依長度收斂並誠實說明還有幾筆。"""
         now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
         tasks = [
-            task(
-                submit_method="檔案",
-                task_type="課程作業",
+            task(task_type="課程作業",
                 description="老師要求：" + "請詳細說明本次作業的完成方式與注意事項。" * 6,
             )
             for _ in range(12)
@@ -286,13 +214,13 @@ class TestSubmitTaskFirstStepText:
         assert "...清單過長已截斷" not in text
         assert "請用下方選單查看" in text
 
-    def test_option_description_shows_method_type_and_deadline(self):
+    def test_option_description_shows_type_and_deadline(self):
         now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
-        text = submit_task_option_description(task(submit_method="檔案"), now)
+        text = submit_task_option_description(task(), now)
 
-        assert "交檔案" in text
         assert "課程時間&作業繳交" in text
         assert "無截止日" in text
+        assert "貼連結" not in text
         assert len(text) <= 100
 
 
@@ -408,7 +336,7 @@ class TestPendingFileSubmission:
         assert FILE_UPLOAD_WAIT_MINUTES == 180
         assert file_upload_wait_label() == "3 小時"
         pending = PendingFileSubmission(
-            task=task(submit_method="檔案"),
+            task=task(),
             artist=artist(),
             channel_id=456,
             created_at=now,
@@ -442,11 +370,11 @@ class TestExpiredPendingKeys:
     def test_returns_only_expired_keys(self):
         now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
         fresh = PendingFileSubmission(
-            task=task(submit_method="檔案"), artist=artist(), channel_id=1,
+            task=task(), artist=artist(), channel_id=1,
             created_at=now, expires_at=now + timedelta(minutes=10),
         )
         stale = PendingFileSubmission(
-            task=task(submit_method="檔案"), artist=artist(), channel_id=1,
+            task=task(), artist=artist(), channel_id=1,
             created_at=now - timedelta(hours=4), expires_at=now - timedelta(minutes=1),
         )
         pending_by_user = {111: fresh, 222: stale}
@@ -581,9 +509,6 @@ class TestReviewDisplayHelpers:
 
         task_view = SubmitTaskView(cog, [submit_task], now)
         assert any(getattr(item, "label", "") == "返回我的任務" for item in task_view.children)
-
-        mixed_view = MixedSubmissionChoiceView(cog, submit_task, [submit_task], now)
-        assert any(getattr(item, "label", "") == "返回任務選擇" for item in mixed_view.children)
 
         review_list = ReviewSubmissionView(cog, [submission])
         assert any(getattr(item, "label", "") == "取消" for item in review_list.children)
@@ -786,3 +711,26 @@ class TestNotifySubmissionReviewers:
         asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=["p1"]), "msg"))
 
         assert channel.sent == []
+
+
+class TestSubmitAlwaysUsesDrive:
+    """M4-03：提交方式已停用，選任務後一律進入公司 Drive 上傳，不再開連結／文字表單。"""
+
+    def test_selecting_a_task_always_starts_drive_upload(self):
+        from cogs.submissions import SubmitTaskSelect
+
+        calls = []
+
+        class Cog:
+            async def start_file_upload_wait(self, interaction, task, drive_only=False):
+                calls.append((task.page_id, drive_only))
+
+        now = datetime(2026, 10, 11, tzinfo=config.TZ)
+        submit_task = task()
+        select = SubmitTaskSelect(Cog(), [submit_task], now)
+        select._values = [submit_task.page_id]
+        interaction = SimpleNamespace(response=SimpleNamespace(send_modal=None, send_message=None))
+
+        asyncio.run(select.callback(interaction))
+
+        assert calls == [("task-1", True)]
