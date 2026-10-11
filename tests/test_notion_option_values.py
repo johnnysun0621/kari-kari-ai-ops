@@ -42,6 +42,23 @@ class TestTaskTypeValues:
 
         assert not dead, f"HARD_BLOCK_TASK_TYPES 有死值 {sorted(dead)}，這些類型永遠不會硬擋"
 
+    def test_no_hardcoded_task_type_literal_outside_options(self):
+        """程式裡任何 `task_type == "…"`／`task_type="…"` 的字面字串都必須是有效選項。
+
+        2026-10-10 在 cogs/scheduling_admin.py 又找到兩處寫死「課程與作業」，
+        時間池建立課程任務的分支因此永遠不觸發。常數有守門，散落的字面字串沒有，這條補上。
+        """
+        import re
+        from pathlib import Path
+
+        pattern = re.compile(r'task_type\s*(?:==|=)\s*"([^"]+)"')
+        dead = []
+        for path in sorted(Path("cogs").glob("*.py")) + sorted(Path("services").glob("*.py")):
+            for value in pattern.findall(path.read_text(encoding="utf-8")):
+                if value not in TASK_TYPE_OPTIONS:
+                    dead.append(f"{path}: {value}")
+        assert not dead, f"寫死了不存在的任務類型：{dead}"
+
     def test_course_task_type_is_a_real_option(self):
         """課程類型字串對不上的話，課程完全不會擋藝人時段——2026-10-03 就是這個狀況。"""
         assert repositories.COURSE_TASK_TYPE in TASK_TYPE_OPTIONS

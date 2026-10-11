@@ -1071,7 +1071,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
         try:
             task = await repositories.create_formal_arrangement_task(
                 name=request_name,
-                task_type="課程與作業",
+                task_type=repositories.COURSE_TASK_TYPE,
                 artist_page_ids=[a.page_id for a in self.artists],
                 description=description,
                 course_category=self.course_type,
@@ -1093,7 +1093,7 @@ class CourseArrangementModal(discord.ui.Modal, title="課程安排設定"):
             action_type="建立", operator=str(interaction.user),
             discord_user_id=str(interaction.user.id),
             target_db="Tasks", target_url=task.url,
-            after=f"課程與作業｜{self.course_type}｜老師 {self.teacher_name}｜{len(teacher_windows)} 個候選｜{names}",
+            after=f"{repositories.COURSE_TASK_TYPE}｜{self.course_type}｜老師 {self.teacher_name}｜{len(teacher_windows)} 個候選｜{names}",
         )
         lines = "\n".join(f"・{timeparse.humanize(s, e)}" for s, e in teacher_windows)
         task_link = f"\n🔗 [開啟 Notion Task，填正式時間]({task.url})" if task.url else ""
@@ -1138,7 +1138,7 @@ class TaskTypeView(discord.ui.View):
     async def on_select(self, interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         task_type = self.select.values[0]
-        if task_type == "課程與作業":
+        if task_type == repositories.COURSE_TASK_TYPE:
             try:
                 course_types = await repositories.get_course_type_options()
             except Exception:
