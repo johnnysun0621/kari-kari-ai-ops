@@ -1550,6 +1550,29 @@ async def reset_task_discord_notification(page_id: str) -> None:
         await notion_api.update_page(page_id, props)
 
 
+# 批次重送（M3-22）：控方在 Notion 勾這個欄位，bot 下一輪輪詢時重送並自動取消勾選。
+# Notion 沒有 webhook，所以只能勾選＋輪詢，最多延遲一輪（REMINDER_INTERVAL_MINUTES）。
+TASK_RESEND_PROPERTY = "重送通知"
+
+
+async def get_tasks_flagged_for_resend() -> list[TaskItem] | None:
+    """勾了「重送通知」的任務。回傳 None＝Notion 還沒建這個欄位（功能停用，不報錯）。"""
+    try:
+        pages = await notion_api.query_data_source(
+            config.DS_TASKS,
+            filter_={"property": TASK_RESEND_PROPERTY, "checkbox": {"equals": True}},
+        )
+    except NotionAPIError as exc:
+        if TASK_RESEND_PROPERTY in str(exc):
+            return None
+        raise
+    return [_to_task(page) for page in pages if not page.get("archived")]
+
+
+async def clear_task_resend_flag(page_id: str) -> None:
+    await notion_api.update_page(page_id, {TASK_RESEND_PROPERTY: {"checkbox": False}})
+
+
 # Notion 沒有「追加一行」的原子操作，只能讀→改→寫。兩位藝人同時按確認會互相蓋掉，
 # 所以同一筆任務的寫入用鎖串起來。鎖以 page id 為 key，跨租戶不會撞。
 _reminder_ack_locks: dict[str, asyncio.Lock] = {}

@@ -66,6 +66,7 @@ class RemindersCog(commands.Cog):
             await self._check_task_dispatch_notifications()
             await self._check_task_assignment_notifications()
             await self._check_unacknowledged_task_notifications()
+            await self._check_batch_resend()
             await self._check_daily_nags()
             await self._check_revision_deadlines()
             await self._check_task_reminders()
@@ -390,6 +391,49 @@ class RemindersCog(commands.Cog):
             or self.bot.get_channel(config.TASK_CHANNEL_ID)
             or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
         )
+
+    async def _check_batch_resend(self):
+        """批次重送（M3-22）：Notion 勾了「重送通知」的任務，重送給藝人並取消勾選。
+
+        先取消勾選再送：送到一半出錯時也不會每輪無限重送。已結案或沒開 Discord 顯示的略過。
+        """
+        flagged = await repositories.get_tasks_flagged_for_resend()
+        if not flagged:
+            return  # None＝欄位還沒建；空清單＝沒人勾
+        from cogs.tasks_artist import send_task_notification
+
+        results: list[str] = []
+        for task in flagged:
+            try:
+                await repositories.clear_task_resend_flag(task.page_id)
+            except Exception:
+                logger.exception("取消重送勾選失敗，這輪先不送以免重複：%s", task.name)
+                continue
+            if not task.discord_visible or task.status in repositories.INACTIVE_TASK_STATUSES:
+                results.append(f"⏭️ {task.name}：未開 Discord 顯示或已結案，略過")
+                continue
+            try:
+                await repositories.reset_task_discord_notification(task.page_id)
+                outcome = await send_task_notification(self.bot, task)
+            except Exception:
+                logger.exception("批次重送失敗：%s", task.name)
+                results.append(f"❌ {task.name}：重送失敗，請稍後再勾一次")
+                continue
+            if outcome is None:
+                results.append(f"❌ {task.name}：找不到有效的關聯藝人或 Discord User ID")
+                continue
+            results.append(f"✅ {task.name}：已重送 {outcome.sent}／{len(outcome.notifyable_artists)} 位")
+            await audit.log_event(
+                event_name=f"批次重送任務通知｜{task.name}",
+                action_type="更新", operator="System（Notion 勾選）", source="System",
+                target_db="Tasks", target_url=task.url,
+                after=f"重新通知 {outcome.sent}／{len(outcome.notifyable_artists)} 位藝人",
+            )
+        if results:
+            await channel_guard.try_send(
+                self._admin_channel(),
+                content="🔁 **批次重送結果**\n" + "\n".join(results[:30]),
+            )
 
     async def _check_daily_nags(self):
         """每日催辦（M3-11）：已逾期／需修改催藝人，待審核催審核人員，一天一次、不帶按鈕。
