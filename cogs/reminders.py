@@ -551,13 +551,14 @@ class RemindersCog(commands.Cog):
                 continue  # 已升級過（狀態持久化在 Notion，重啟也不會重複轟炸）
             stages = repositories.compute_due_reminder_stages(t, now)
             deadline, _ = repositories.task_action_deadline(t)
-            # 逾期不進持久化紀錄：它靠 Notion 狀態「已逾期」去重（升級後 continue 跳過），
-            # 寫進紀錄反而會讓控方改回進行中後永遠不再升級。只有截止前提醒寫檔。
-            memory_sent = self._sent.get(f"task:{t.page_id}", set())
+            # 逾期只靠 Notion 狀態「已逾期」去重（升級後上面 continue 跳過），不寫檔也不記憶體去重：
+            # 控方改回進行中但沒延期，下一輪就再通知一次並改回已逾期，行為不再取決於
+            # bot 有沒有重啟過（M2-13）。只有「寫狀態失敗」時才用記憶體擋，免得每 30 分鐘轟炸。
+            failed_overdue = self._sent.get(f"overdue-failed:{t.page_id}", set())
 
             def already_sent(stage: str) -> bool:
                 if stage == repositories.OVERDUE_STAGE:
-                    return stage in memory_sent
+                    return deadline is not None and deadline.date().isoformat() in failed_overdue
                 return notification_log.reminder_sent(log_state, t.page_id, stage, deadline)
 
             unsent = [s for s in stages if not already_sent(s)]
@@ -587,9 +588,7 @@ class RemindersCog(commands.Cog):
 
         for t, stages, deadline in due:
             for stage in stages:  # 一次標記全部，補跑不重複發
-                if stage == repositories.OVERDUE_STAGE:
-                    self._once(f"task:{t.page_id}", stage)
-                else:
+                if stage != repositories.OVERDUE_STAGE:
                     notification_log.mark_reminder_sent(log_state, t.page_id, stage, deadline, now)
             notification_log.persist()
             is_overdue = repositories.OVERDUE_STAGE in stages
@@ -637,6 +636,8 @@ class RemindersCog(commands.Cog):
                     await repositories.update_task_status(t.page_id, "已逾期")
                 except Exception:
                     logger.exception("標記任務已逾期失敗")
+                    if deadline is not None:
+                        self._once(f"overdue-failed:{t.page_id}", deadline.date().isoformat())
                 names = "、".join(a.name for a in artists) or "（未關聯藝人）"
                 if admin_channel:
                     await admin_channel.send(

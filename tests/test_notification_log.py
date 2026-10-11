@@ -256,6 +256,36 @@ class TestReminderDedupSurvivesRestart:
         h.run_once()
         assert len(h.dms) > first
 
+    def test_M2_13_改回進行中沒延期_同一個process內也會再升級(self, monkeypatch):
+        """先前靠記憶體去重，同一個 process 內改回進行中就再也不通知，重啟後才會——不一致。"""
+        state = notification_log.shared()
+        state["reminders_baseline_done"] = True
+        overdue = reminder_task(end=datetime(2026, 10, 1, tzinfo=TZ))
+        h = Harness(monkeypatch, [overdue])
+        cog = SimpleNamespace(bot=h.bot, _sent={})
+        cog._once = lambda rid, stage: reminders_cog.RemindersCog._once(cog, rid, stage)
+        asyncio.run(reminders_cog.RemindersCog._check_task_reminders(cog))
+        assert h.status_updates == [("t1", "已逾期")]
+        # 控方在 Notion 改回進行中（同一個 cog，記憶體還在）
+        asyncio.run(reminders_cog.RemindersCog._check_task_reminders(cog))
+        assert h.status_updates == [("t1", "已逾期"), ("t1", "已逾期")]
+        assert len(h.dms) == 2
+
+    def test_M2_13_寫入已逾期失敗時不會每輪重複通知(self, monkeypatch):
+        state = notification_log.shared()
+        state["reminders_baseline_done"] = True
+        h = Harness(monkeypatch, [reminder_task(end=datetime(2026, 10, 1, tzinfo=TZ))])
+
+        async def failing(page_id, status):
+            raise RuntimeError("Notion 429")
+
+        monkeypatch.setattr(repositories, "update_task_status", failing)
+        cog = SimpleNamespace(bot=h.bot, _sent={})
+        cog._once = lambda rid, stage: reminders_cog.RemindersCog._once(cog, rid, stage)
+        asyncio.run(reminders_cog.RemindersCog._check_task_reminders(cog))
+        asyncio.run(reminders_cog.RemindersCog._check_task_reminders(cog))
+        assert len(h.dms) == 1
+
     def test_基準那一輪逾期任務照常升級(self, monkeypatch):
         overdue = reminder_task(end=datetime(2026, 10, 1, tzinfo=TZ))
         h = Harness(monkeypatch, [overdue])
