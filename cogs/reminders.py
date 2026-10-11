@@ -9,6 +9,7 @@ import config
 from cogs import channel_guard, ui_text
 from services import (
     audit,
+    daily_nag,
     notification_log,
     repositories,
     scheduling_sla,
@@ -42,7 +43,6 @@ class RemindersCog(commands.Cog):
         self._task_dispatch_state = task_notifications.load_state()
         self._assignment_notification_state = task_notifications.load_assignment_state()
         self._dispatch_warning_sent: set[str] = set()
-        self._review_reminder_sent_at: dict[str, datetime] = {}
         # 啟動時先建立掃描基準，避免啟動 Bot 的同一輪重複派送初始通知。
         self._last_unacknowledged_scan_at = datetime.now(config.get_tenant().tz)
         self.check_loop.start()
@@ -66,7 +66,7 @@ class RemindersCog(commands.Cog):
             await self._check_task_dispatch_notifications()
             await self._check_task_assignment_notifications()
             await self._check_unacknowledged_task_notifications()
-            await self._check_review_reminders()
+            await self._check_daily_nags()
             await self._check_revision_deadlines()
             await self._check_task_reminders()
             await self._check_publish_confirm_digest()
@@ -384,58 +384,82 @@ class RemindersCog(commands.Cog):
             except Exception:
                 logger.exception("任務未確認提醒失敗：%s", artist.name)
 
-    async def _check_review_reminders(self):
-        """待審核期間定期提醒控方與指定審核人員。"""
-        submissions = await repositories.get_submissions_by_review_status(["待審核"])
-        if not submissions:
-            return
-        now = datetime.now(config.TZ)
-        reminder_interval = timedelta(hours=config.REVIEW_REMINDER_INTERVAL_HOURS)
-        tasks = {task.page_id: task for task in await repositories.get_active_tasks()}
-        admin_channel = (
+    def _admin_channel(self):
+        return (
             self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
             or self.bot.get_channel(config.TASK_CHANNEL_ID)
             or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
         )
-        for submission in submissions:
-            if not review_reminder_due(
-                submission.created_at,
-                now,
-                config.get_tenant().review_reminder_after_hours,
-            ):
-                continue
-            last_sent = self._review_reminder_sent_at.get(submission.page_id)
-            if last_sent and now - last_sent < reminder_interval:
-                continue
-            related = [tasks[pid] for pid in submission.task_page_ids if pid in tasks]
-            reviewer_ids = sorted({pid for task in related for pid in task.reviewer_page_ids})
-            reviewers = await repositories.get_people_by_ids(reviewer_ids)
-            message = (
-                f"⏰ **提交待審核催辦**：{submission.name}\n"
-                f"提交已超過 {config.get_tenant().review_reminder_after_hours:g} 小時仍未完成審核，"
-                "請完成審核並回填結果。"
+
+    async def _check_daily_nags(self):
+        """每日催辦（M3-11）：已逾期／需修改催藝人，待審核催審核人員，一天一次、不帶按鈕。
+
+        取代先前三套各自的節奏（逾期只發一次、需修改每階段一次、待審核每 12 小時），
+        卡住的任務改成每天固定時間各催一次。最後執行日寫在 .state/，重啟後同一天不重跑。
+        """
+        tenant = config.get_tenant()
+        now = datetime.now(tenant.tz)
+        state = notification_log.shared()
+        if not daily_nag.daily_nag_due(now, state.get("daily_nag_last_date"), tenant.daily_nag_hour):
+            return
+        # 先記下今天已跑，再發送：中途失敗也不會在同一天每 30 分鐘重試轟炸一次。
+        state["daily_nag_last_date"] = now.date().isoformat()
+        notification_log.persist()
+
+        tasks = await repositories.get_active_tasks()
+        artist_map = await repositories.get_artist_map()
+        artist_sent = 0
+        for nag in daily_nag.group_artist_nags(tasks, artist_map):
+            try:
+                user = await self.bot.fetch_user(int(nag.artist.discord_user_id))
+                await user.send(daily_nag.artist_nag_message(nag))
+                artist_sent += 1
+            except Exception:
+                logger.exception("每日催辦（藝人）失敗：%s", nag.artist.name)
+
+        after_hours = tenant.review_reminder_after_hours
+        submissions = await repositories.get_submissions_by_review_status(["待審核"])
+        tasks_by_id = {task.page_id: task for task in tasks}
+        pending = daily_nag.pending_review_tasks(
+            submissions, tasks_by_id, now, after_hours, review_reminder_due
+        )
+        reviewer_ids = sorted({pid for tid in pending for pid in tasks_by_id[tid].reviewer_page_ids})
+        reviewers = {p.page_id: p for p in await repositories.get_people_by_ids(reviewer_ids)}
+        per_reviewer: dict[str, list] = {}
+        unassigned: list = []
+        for task_id, subs in pending.items():
+            task = tasks_by_id[task_id]
+            entries = [(task, sub) for sub in subs]
+            reachable = [
+                pid for pid in task.reviewer_page_ids
+                if pid in reviewers and reviewers[pid].discord_user_id
+            ]
+            if not reachable:
+                unassigned += entries
+            for pid in reachable:
+                per_reviewer.setdefault(pid, []).extend(entries)
+        reviewer_sent = 0
+        for pid, entries in per_reviewer.items():
+            try:
+                user = await self.bot.fetch_user(int(reviewers[pid].discord_user_id))
+                await user.send(daily_nag.review_nag_message(entries, after_hours, "⏰ **每日待審核提醒**"))
+                reviewer_sent += 1
+            except Exception:
+                logger.exception("每日催辦（審核人員）失敗：%s", reviewers[pid].name)
+                unassigned += entries  # 私訊不到就退回控方頻道，不讓提交沒人知道
+        if unassigned:
+            await channel_guard.try_send(
+                self._admin_channel(),
+                content=daily_nag.review_nag_message(
+                    unassigned, after_hours, "⏰ **待審核提醒（未指定或聯絡不到審核人員）**"
+                ),
             )
-            sent_reviewers = 0
-            for reviewer in reviewers:
-                if not reviewer.discord_user_id:
-                    continue
-                try:
-                    user = await self.bot.fetch_user(int(reviewer.discord_user_id))
-                    await user.send(message)
-                    sent_reviewers += 1
-                except Exception:
-                    logger.exception("審核人員提醒失敗：%s", reviewer.name)
-            if admin_channel:
-                await admin_channel.send(
-                    f"⏰ **待審核提醒**｜{submission.name}\n"
-                    f"已通知指定審核人員：{sent_reviewers} 位｜請控方確認審核進度。"
-                )
-            self._review_reminder_sent_at[submission.page_id] = now
+        if artist_sent or reviewer_sent or unassigned:
             await audit.log_event(
-                event_name=f"待審核持續提醒｜{submission.name}",
+                event_name="每日催辦",
                 action_type="提醒", operator="System", source="System",
-                target_db="Submissions & Tasks", target_url=submission.url,
-                after=f"指定審核人員通知 {sent_reviewers} 位｜控方頻道已通知",
+                target_db="Tasks & Submissions",
+                after=f"藝人 {artist_sent} 位｜審核人員 {reviewer_sent} 位｜控方頻道 {len(unassigned)} 筆",
             )
 
     async def _check_publish_confirm_digest(self):
@@ -483,44 +507,33 @@ class RemindersCog(commands.Cog):
         )
 
     async def _check_revision_deadlines(self):
-        """需修改期限前提醒藝人，逾時通知控方。"""
+        """修改期限逾時通知控方，每筆每個期限只通知一次（寫檔去重，重啟不重發）。
+
+        藝人端的需修改提醒已併進每日催辦（M3-11），這裡只剩控方的逾時升級。
+        """
         tasks = await repositories.get_active_tasks()
-        due = []
         now = datetime.now(config.TZ)
-        for task in tasks:
-            stage = repositories.compute_revision_deadline_stage(task, now)
-            if stage and self._once(f"revision:{task.page_id}", stage):
-                due.append((task, stage))
+        state = notification_log.shared()
+        due = [
+            task for task in tasks
+            if repositories.compute_revision_deadline_stage(task, now) == "修改期限逾時"
+            and not notification_log.reminder_sent(state, task.page_id, "修改期限逾時", task.revision_deadline)
+        ]
         if not due:
             return
-        artist_map = await repositories.get_artist_map()
-        admin_channel = (
-            self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-            or self.bot.get_channel(config.TASK_CHANNEL_ID)
-            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
-        )
-        for task, stage in due:
-            deadline_text = task.revision_deadline.strftime("%m/%d %H:%M") if task.revision_deadline else "未設定"
-            if task.discord_visible:
-                for page_id in task.artist_page_ids:
-                    artist = artist_map.get(page_id)
-                    if not artist or not artist.discord_user_id:
-                        continue
-                    try:
-                        user = await self.bot.fetch_user(int(artist.discord_user_id))
-                        await user.send(
-                            f"⏰ 修改期限提醒：**{task.name}**｜期限：{deadline_text}\n"
-                            "請依老師回饋完成修改並重新提交。"
-                        )
-                    except Exception:
-                        logger.exception("修改期限提醒失敗：%s", artist.name)
-            if admin_channel and stage == "修改期限逾時":
-                await admin_channel.send(f"🚨 **修改期限逾時**｜{task.name}｜期限：{deadline_text}")
+        admin_channel = self._admin_channel()
+        for task in due:
+            notification_log.mark_reminder_sent(state, task.page_id, "修改期限逾時", task.revision_deadline, now)
+            notification_log.persist()
+            deadline_text = task.revision_deadline.strftime("%m/%d %H:%M")
+            await channel_guard.try_send(
+                admin_channel, content=f"🚨 **修改期限逾時**｜{task.name}｜期限：{deadline_text}"
+            )
             await audit.log_event(
                 event_name=f"修改期限提醒｜{task.name}",
                 action_type="提醒", operator="System", source="System",
                 target_db="Tasks", target_url=task.url,
-                after=f"{stage}｜{deadline_text}",
+                after=f"修改期限逾時｜{deadline_text}",
             )
 
     # ---------- P0-4 任務提醒：截止前提醒、逾期標記＋管理層升級 ----------
