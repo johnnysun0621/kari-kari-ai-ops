@@ -10,6 +10,7 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 
+from services import notion_links
 from services.repositories import TaskItem
 
 STATE_PATH = Path(".state/monthly_board.json")
@@ -78,7 +79,8 @@ def board_lines(tasks: list[TaskItem], artist_names: dict[str, str]) -> list[str
     lines = []
     for task in tasks:
         who = "、".join(artist_names[p] for p in task.artist_page_ids if p in artist_names)
-        lines.append(f"• {_when(task)}｜{task.task_type}｜{task.name[:50]}" + (f"｜{who}" if who else ""))
+        name = notion_links.strip_notion_links(task.name).strip()[:50]  # 公告區藝人看得到（M7-04）
+        lines.append(f"• {_when(task)}｜{task.task_type}｜{name}" + (f"｜{who}" if who else ""))
     return lines
 
 

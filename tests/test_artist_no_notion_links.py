@@ -13,7 +13,7 @@ from datetime import datetime
 import config
 from cogs.bulletin import format_bulletin
 from cogs.submissions import review_dm_text, review_feedback_file_dm_text
-from services import course_qa, notion_links, repositories, task_notifications
+from services import course_qa, monthly_board, notion_links, repositories, task_notifications
 
 
 _NOTION_URL = "https://www.notion.so/3b55806f097b81e8b430e9b9ce902f2a"
@@ -103,6 +103,11 @@ def _artist_facing_messages() -> dict[str, str]:
             file_links=["https://drive.google.com/file/xyz"],
         ),
         "公告區布告欄": format_bulletin(_bulletin()),
+        "公告區月度排程": monthly_board.render(
+            task.start.date(),
+            monthly_board.board_lines([_task(name=f"排練 {_NOTION_URL}")], {"artist-1": "Johnny"}),
+            ("通告",), task.start,
+        ),
         "小律月份總覽": course_qa.build_month_overview_answer([_meeting()], "2026-09"),
         "小律降級回答": course_qa.build_course_notes_fallback([_meeting()]),
     }
