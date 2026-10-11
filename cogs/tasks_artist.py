@@ -10,9 +10,57 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, paging, ui_text
 from services.permissions import is_admin
-from services import audit, repositories, task_notifications
+from services import audit, notification_log, repositories, task_notifications
 
 logger = logging.getLogger(__name__)
+
+
+async def send_task_dm(user: discord.abc.User, task_id: str, content: str) -> discord.Message:
+    """送出帶「收到任務」按鈕的任務通知，並記下訊息編號，之後按收到時才清得掉舊的（M3-23）。"""
+    view = discord.ui.View(timeout=None)
+    view.add_item(TaskReceiptButton(task_id))
+    view.add_item(TaskConcernButton(task_id))
+    # 不掛 Notion 連結按鈕：任務頁往上翻就是整個 Tasks，藝人會看到其他人的任務。
+    message = await user.send(content, view=view)
+    state = notification_log.shared()
+    notification_log.record_message(
+        state, task_id, user.id, message.channel.id, message.id,
+        datetime.now(config.get_tenant().tz),
+    )
+    notification_log.persist()
+    return message
+
+
+async def mark_previous_notifications_received(
+    client: discord.Client,
+    task_id: str,
+    user_id: int,
+    received_at: datetime,
+    current_message: discord.Message | None = None,
+) -> int:
+    """把同一任務發給這位藝人的所有歷史通知，改成「已收到」並拿掉按鈕。
+
+    只動這位藝人自己的訊息，不影響其他任務、其他藝人。訊息被藝人刪掉或拿不到時略過，
+    不讓整個收到流程失敗。回傳實際改到幾則。
+    """
+    state = notification_log.shared()
+    targets = {(m["channel_id"], m["message_id"]) for m in notification_log.messages_for(state, task_id, user_id)}
+    if current_message is not None:
+        targets.add((current_message.channel.id, current_message.id))
+    suffix = notification_log.received_suffix(received_at)
+    edited = 0
+    for channel_id, message_id in targets:
+        try:
+            message = await client.get_partial_messageable(channel_id).fetch_message(message_id)
+            already = "\n\n✅ 已收到（" in message.content
+            content = message.content if already else message.content + suffix
+            await message.edit(content=content[:2000], view=None)
+            edited += 1
+        except Exception:
+            logger.warning("舊任務通知無法標記已收到（可能已被刪除）：%s／%s", task_id, message_id)
+    notification_log.forget_messages(state, task_id, user_id)
+    notification_log.persist()
+    return edited
 
 
 class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"task_receipt:(?P<task_id>[\w-]+)"):
@@ -48,6 +96,12 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
             await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
             return
         if not task_notifications.can_acknowledge(task):
+            # 已經收到過：順手把這則與其他舊通知改成已收到，按鈕不再留著。
+            await mark_previous_notifications_received(
+                interaction.client, self.task_id, interaction.user.id,
+                task.discord_acknowledged_at or datetime.now(config.get_tenant().tz),
+                interaction.message,
+            )
             await interaction.followup.send(
                 f"ℹ️ 這項任務目前狀態是「{task.status or '未設定'}」，不需要重複確認。",
                 ephemeral=True,
@@ -73,6 +127,10 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
             logger.exception("任務收到確認寫入失敗：%s", self.task_id)
             await interaction.followup.send("❌ 收到確認寫入失敗，請稍後再試。", ephemeral=True)
             return
+        edited = await mark_previous_notifications_received(
+            interaction.client, self.task_id, interaction.user.id, received_at, interaction.message,
+        )
+        logger.info("收到任務：%s 已把 %s 則舊通知標成已收到", task.name, edited)
         # 原始任務通知已經包含完整內容；確認後只回覆狀態，避免重複洗版。
         content = (
             f"✅ 已收到「{task.name}」\n"
@@ -396,12 +454,8 @@ async def send_task_notification(bot, task: repositories.TaskItem) -> DispatchOu
             continue
         try:
             user = await bot.fetch_user(int(artist.discord_user_id))
-            view = discord.ui.View(timeout=None)
-            view.add_item(TaskReceiptButton(task.page_id))
-            view.add_item(TaskConcernButton(task.page_id))
-            # 不掛 Notion 連結按鈕：任務頁往上翻就是整個 Tasks，藝人會看到其他人的任務。
             # 任務說明已經寫在 notification_message 裡，藝人不需要開 Notion。
-            await user.send(task_notifications.notification_message(task), view=view)
+            await send_task_dm(user, task.page_id, task_notifications.notification_message(task))
             sent += 1
         except Exception:
             logger.exception("任務派發通知失敗：%s／%s", task.name, artist.name)

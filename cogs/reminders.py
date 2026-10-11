@@ -7,7 +7,14 @@ from discord.ext import commands, tasks
 
 import config
 from cogs import channel_guard, ui_text
-from services import audit, repositories, scheduling_sla, task_notifications, time_collection
+from services import (
+    audit,
+    notification_log,
+    repositories,
+    scheduling_sla,
+    task_notifications,
+    time_collection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -302,14 +309,9 @@ class RemindersCog(commands.Cog):
             for artist in notifyable_artists:
                 try:
                     user = await self.bot.fetch_user(int(artist.discord_user_id))
-                    view = discord.ui.View(timeout=None)
-                    from cogs.tasks_artist import TaskConcernButton, TaskReceiptButton
-                    view.add_item(TaskReceiptButton(task.page_id))
-                    view.add_item(TaskConcernButton(task.page_id))
-                    # 不掛 Notion 連結按鈕：任務頁往上翻就是整個 Tasks，藝人會看到其他人的任務。
-                    await user.send(
-                        task_notifications.assignment_notification_message(task),
-                        view=view,
+                    from cogs.tasks_artist import send_task_dm
+                    await send_task_dm(
+                        user, task.page_id, task_notifications.assignment_notification_message(task)
                     )
                     sent += 1
                 except Exception:
@@ -363,13 +365,9 @@ class RemindersCog(commands.Cog):
             try:
                 user = await self.bot.fetch_user(int(artist.discord_user_id))
                 await user.send(task_notifications.acknowledgement_reminder_message(artist_tasks))
-                from cogs.tasks_artist import TaskConcernButton, TaskReceiptButton
+                from cogs.tasks_artist import send_task_dm
                 for task in artist_tasks:
-                    view = discord.ui.View(timeout=None)
-                    view.add_item(TaskReceiptButton(task.page_id))
-                    view.add_item(TaskConcernButton(task.page_id))
-                    # 不掛 Notion 連結按鈕：任務頁往上翻就是整個 Tasks，藝人會看到其他人的任務。
-                    await user.send(task_notifications.notification_message(task), view=view)
+                    await send_task_dm(user, task.page_id, task_notifications.notification_message(task))
                 await audit.log_event(
                     event_name=f"任務未確認提醒｜{artist.name}",
                     action_type="提醒",
@@ -530,15 +528,42 @@ class RemindersCog(commands.Cog):
     async def _check_task_reminders(self):
         now = datetime.now(config.TZ)
         all_tasks = await repositories.get_active_tasks()
-        due: list[tuple[repositories.TaskItem, list[str]]] = []
+        # 已送過的階段寫在 .state/，不放記憶體：先前只存記憶體，每重啟一次 bot，
+        # 窗口內所有 D-5／D-3 就整批重發一輪（2026-10-09、10-10 實際發生，M3-23）。
+        log_state = notification_log.shared()
+        notification_log.prune(log_state, now)
+        due: list[tuple[repositories.TaskItem, list[str], datetime | None]] = []
         for t in all_tasks:
             if t.status == "已逾期":
                 continue  # 已升級過（狀態持久化在 Notion，重啟也不會重複轟炸）
             stages = repositories.compute_due_reminder_stages(t, now)
-            sent = self._sent.get(f"task:{t.page_id}", set())
-            unsent = [s for s in stages if s not in sent]
+            deadline, _ = repositories.task_action_deadline(t)
+            # 逾期不進持久化紀錄：它靠 Notion 狀態「已逾期」去重（升級後 continue 跳過），
+            # 寫進紀錄反而會讓控方改回進行中後永遠不再升級。只有截止前提醒寫檔。
+            memory_sent = self._sent.get(f"task:{t.page_id}", set())
+
+            def already_sent(stage: str) -> bool:
+                if stage == repositories.OVERDUE_STAGE:
+                    return stage in memory_sent
+                return notification_log.reminder_sent(log_state, t.page_id, stage, deadline)
+
+            unsent = [s for s in stages if not already_sent(s)]
             if unsent:
-                due.append((t, unsent))
+                due.append((t, unsent, deadline))
+        if not log_state.get("reminders_baseline_done"):
+            # 第一次啟用持久化去重：窗口內的截止前提醒舊版已經發過（而且每次重啟都重發），
+            # 這一輪只記成已送、不再發，避免上線當下又整批重發一次。逾期照常處理。
+            for t, stages, deadline in due:
+                for stage in stages:
+                    if stage != repositories.OVERDUE_STAGE:
+                        notification_log.mark_reminder_sent(log_state, t.page_id, stage, deadline, now)
+            log_state["reminders_baseline_done"] = True
+            notification_log.persist()
+            due = [
+                (t, [repositories.OVERDUE_STAGE], deadline)
+                for t, stages, deadline in due
+                if repositories.OVERDUE_STAGE in stages
+            ]
         if not due:
             return
 
@@ -547,9 +572,13 @@ class RemindersCog(commands.Cog):
             or self.bot.get_channel(config.TASK_CHANNEL_ID) \
             or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
 
-        for t, stages in due:
-            for stage in stages:
-                self._once(f"task:{t.page_id}", stage)  # 一次標記全部，補跑不重複發
+        for t, stages, deadline in due:
+            for stage in stages:  # 一次標記全部，補跑不重複發
+                if stage == repositories.OVERDUE_STAGE:
+                    self._once(f"task:{t.page_id}", stage)
+                else:
+                    notification_log.mark_reminder_sent(log_state, t.page_id, stage, deadline, now)
+            notification_log.persist()
             is_overdue = repositories.OVERDUE_STAGE in stages
             deadline_text = ui_text.deadline_text(t, now)
             artists = [artist_map[pid] for pid in t.artist_page_ids if pid in artist_map]
