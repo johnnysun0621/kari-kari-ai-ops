@@ -278,7 +278,8 @@ Drive 歸檔路徑純邏輯。
 
 - 從藝人專區 URL 解析 folder ID。
 - 依任務類型決定資料夾。
-- 回傳 `藝人專區 / 任務類型夾 / YYYY-MM` 路徑。
+- 回傳 `藝人專區 / 專案名稱 / 任務夾` 路徑（2026-10-13 改版，規則 M4-07）；專案名稱由呼叫端用 `repositories.task_project_name()` 取得，沒掛專案 → `未分專案`。`DEFAULT_TYPE_FOLDERS` 已移除。
+- 任務已回寫 `Google Drive Folder` 時，提交與老師回饋都直接用那個夾，不受專案改名影響。
 - 任務有指定 `Google Drive Folder` 時優先使用任務資料夾。
 
 ### `services/drive_api.py`
