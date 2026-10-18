@@ -82,6 +82,15 @@ def test_還沒交只列可提交的():
 
 
 @pytest.fixture
+def meeting_on(monkeypatch):
+    """會議紀錄查詢開著的情境；不受本機 .env 的 MEETING_QA_ENABLED 影響。"""
+    import dataclasses
+
+    tenant = dataclasses.replace(config.get_tenant(), meeting_qa_enabled=True)
+    monkeypatch.setattr(config, "get_tenant", lambda: tenant)
+
+
+@pytest.fixture
 def cog(monkeypatch):
     artist = repositories.Artist(page_id="a1", name="Johnny", discord_user_id="1")
     calls = {"meetings": 0}
@@ -136,7 +145,7 @@ def test_沒有符合的任務會說清楚(cog):
     assert "明天（10/19）沒有任務" in answer
 
 
-def test_會議問題仍走會議紀錄(cog):
+def test_會議問題仍走會議紀錄(cog, meeting_on):
     answer = ask(cog, "上次會議討論了什麼")
 
     assert cog.calls["meetings"] == 1
@@ -209,7 +218,7 @@ def test_直接講任務名稱看詳細(detail_cog):
     assert "📌 **交 cover 素材" in detail and "**任務內容**" in detail
 
 
-def test_想看內容但對不到任務就交回會議紀錄(detail_cog):
+def test_想看內容但對不到任務就交回會議紀錄(detail_cog, meeting_on):
     ask(detail_cog, "那份企劃的內容")
 
     assert detail_cog.calls["meetings"] == 1

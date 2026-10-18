@@ -1,4 +1,4 @@
-"""會議秘書小律：藝人在 Discord 用自然語言查會議／課程紀錄（M6-06）與自己的任務（M6-03）。"""
+"""小律：藝人在 Discord 用自然語言查會議／課程紀錄（M6-06）與自己的任務（M6-03）。"""
 import asyncio
 import logging
 import json
@@ -19,7 +19,7 @@ _THREAD_STATE_PATH = Path(".state/course_qa_threads.json")
 _MEMORY_STATE_PATH = Path(".state/course_qa_memory.json")
 _DISCORD_MESSAGE_LIMIT = 1900
 TASK_ONLY_HELP = (
-    "🤖 **會議秘書小律**\n\n"
+    "🤖 **小律**\n\n"
     "我可以幫你查自己的任務，例如：\n"
     "・「這週有什麼任務」「下週要交什麼」「11 月有什麼行程」\n"
     "・「我還有哪些沒交」\n"
@@ -57,7 +57,7 @@ def _split_discord_message(content: str, limit: int = _DISCORD_MESSAGE_LIMIT) ->
 class AIAnswerFeedbackModal(discord.ui.Modal, title="回報小律的回答"):
     feedback = discord.ui.TextInput(
         label="問題說明",
-        placeholder="例如：來源連結錯誤、回答漏掉某堂課，或內容不正確",
+        placeholder="例如：任務列錯、日期不對、漏了某筆任務，或內容不正確",
         style=discord.TextStyle.paragraph,
         max_length=1800,
         required=True,
@@ -283,7 +283,7 @@ class CourseQACog(commands.Cog):
             "attachment_names": list(intent.attachment_names),
         }
         self._save_memory_state()
-        return f"🤖 **會議秘書小律**\n\n{answer}"
+        return f"🤖 **小律**\n\n{answer}"
 
     async def _answer_task_query(self, user: discord.abc.User, question: str) -> str | None:
         """M6-03：用自然語言查自己的任務。只查詢、不經 LLM，範圍與 /我的任務 相同。
@@ -310,7 +310,7 @@ class CourseQACog(commands.Cog):
             if len(detail_targets) == 1:
                 return await self._task_detail_answer(detail_targets[0], now)
             names = "\n".join(f"・{strip_notion_links(task.name)}" for task in detail_targets[:10])
-            return f"🤖 **會議秘書小律**\n\n符合的任務有 {len(detail_targets)} 筆，你要看哪一筆？\n{names}"
+            return f"🤖 **小律**\n\n符合的任務有 {len(detail_targets)} 筆，你要看哪一筆？\n{names}"
         if not task_query.is_task_query(question):
             return None
         date_range = task_query.parse_range(question, now)
@@ -320,7 +320,7 @@ class CourseQACog(commands.Cog):
         kind = "還沒交的任務" if pending_only else "任務"
         footer = "想看某一筆的內容，可以問「第 2 個的詳細內容」或直接講任務名稱。要交件或按「收到任務」，請用 `/我的任務`。"
         if not selected:
-            return f"🤖 **會議秘書小律**\n\n{scope}沒有{kind}。\n{footer}"
+            return f"🤖 **小律**\n\n{scope}沒有{kind}。\n{footer}"
         if specific and len(selected) <= task_query.MAX_CONTEXT_TASKS:
             return await self._task_llm_answer(artist, question, selected, now)
         lines = [
@@ -338,7 +338,7 @@ class CourseQACog(commands.Cog):
         if more > 0:
             lines.append(f"（另有 {more} 筆，完整清單請用 `/我的任務`）")
         return (
-            f"🤖 **會議秘書小律**\n\n📑 **{artist.name}｜{scope}{'' if pending_only else '的'}{kind}**（{len(selected)} 筆）\n"
+            f"🤖 **小律**\n\n📑 **{artist.name}｜{scope}{'' if pending_only else '的'}{kind}**（{len(selected)} 筆）\n"
             + "\n".join(lines)
             + f"\n\n{footer}"
         )
@@ -404,7 +404,7 @@ class CourseQACog(commands.Cog):
             return exc.user_message
         names = "\n".join(f"・{strip_notion_links(task.name)}" for task in tasks)
         return (
-            f"🤖 **會議秘書小律**\n\n{answer}\n\n**參考任務**\n{names}\n\n"
+            f"🤖 **小律**\n\n{answer}\n\n**參考任務**\n{names}\n\n"
             "要交件或按「收到任務」，請用 `/我的任務`。"
         )
 
@@ -427,7 +427,7 @@ class CourseQACog(commands.Cog):
         if repositories.is_task_submittable(task):
             info.append("・可以交件：用 `/我的任務` → 提交任務")
         return (
-            f"🤖 **會議秘書小律**\n\n📌 **{strip_notion_links(task.name)}**\n"
+            f"🤖 **小律**\n\n📌 **{strip_notion_links(task.name)}**\n"
             + "\n".join(info)
             + "\n\n**任務內容**\n"
             + (body or "（控方還沒寫任務內容）")
@@ -465,11 +465,11 @@ class CourseQACog(commands.Cog):
             return None
         try:
             thread = await parent.create_thread(
-                name=f"會議秘書小律｜{message.author.display_name}"[:100],
+                name=f"小律｜{message.author.display_name}"[:100],
                 type=discord.ChannelType.private_thread,
                 auto_archive_duration=1440,
                 invitable=False,
-                reason="會議秘書小律私人對話",
+                reason="小律私人對話（查任務）",
             )
             await thread.add_user(message.author)
         except (discord.Forbidden, discord.HTTPException):
@@ -514,10 +514,10 @@ class CourseQACog(commands.Cog):
                 if thread is None:
                     try:
                         await message.author.send(
-                            "❌ 無法建立私人的會議秘書小律對話，請確認 Bot 有「建立私人 Thread」與「管理訊息」權限。"
+                            "❌ 無法建立私人的小律對話，請確認 Bot 有「建立私人 Thread」與「管理訊息」權限。"
                         )
                     except (discord.Forbidden, discord.HTTPException):
-                        logger.exception("會議秘書小律建立私人對話失敗，且無法私訊使用者")
+                        logger.exception("小律建立私人對話失敗，且無法私訊使用者")
                     return
 
             if thread.id not in self._catalog_sent_threads and config.get_tenant().meeting_qa_enabled:
@@ -539,11 +539,11 @@ class CourseQACog(commands.Cog):
             for chunk in chunks[1:]:
                 await thread.send(chunk)
         except Exception:
-            logger.exception("會議秘書小律訊息處理失敗")
+            logger.exception("小律訊息處理失敗")
             try:
-                await message.channel.send("⚠️ 會議秘書小律處理失敗，請稍後再試；Bot 仍在運作。")
+                await message.channel.send("⚠️ 小律處理失敗，請稍後再試；Bot 仍在運作。")
             except (discord.Forbidden, discord.HTTPException):
-                logger.exception("會議秘書小律錯誤通知也發送失敗")
+                logger.exception("小律錯誤通知也發送失敗")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(CourseQACog(bot))

@@ -37,7 +37,7 @@ def channel_specs() -> tuple[ChannelSpec, ...]:
         ChannelSpec("公告區", "ANNOUNCE_CHANNEL_ID", "公開類型 Task、時間收集與 Notion 布告欄", read_only=True),
         ChannelSpec("時間管理", "SCHEDULE_CHANNEL_ID", "藝人月度可配合時間回報與管理"),
         ChannelSpec("任務查詢入口", "TASK_CHANNEL_ID", "藝人查詢任務與提交作業"),
-        ChannelSpec("課程助教", "AI_CHANNEL_ID", "藝人私人課程 AI 問答"),
+        ChannelSpec("課程助教", "AI_CHANNEL_ID", "藝人問小律查自己的任務（私人討論串）"),
         ChannelSpec("營運內部通知", "ADMIN_NOTIFY_CHANNEL_ID", "Bot 自動推送任務、審核、排課與 SLA 通知", admin_only=True),
         ChannelSpec("營運操作", "ADMIN_COMMAND_CHANNEL_ID", "控方 slash command 操作入口", admin_only=True),
     )

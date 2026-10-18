@@ -64,7 +64,7 @@ def is_task_channel(channel_id: int | None) -> bool:
 
 
 def is_ai_channel(channel_id: int | None) -> bool:
-    """課程 AI 助教：有設定 AI_CHANNEL_ID 時只允許在該頻道使用。"""
+    """小律（查任務）：有設定 AI_CHANNEL_ID 時只允許在該頻道使用。"""
     return _is_allowed_channel(config.AI_CHANNEL_ID, channel_id)
 
 
@@ -82,7 +82,7 @@ def task_channel_message() -> str:
 
 
 def ai_channel_message() -> str:
-    return _channel_message(config.AI_CHANNEL_ID, "課程問答")
+    return _channel_message(config.AI_CHANNEL_ID, "問小律查任務")
 
 
 def admin_channel_message() -> str:
