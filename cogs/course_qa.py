@@ -1,16 +1,18 @@
-"""Discord 課程 AI 助教。"""
+"""會議秘書小律：藝人在 Discord 用自然語言查會議／課程紀錄（M6-06）與自己的任務（M6-03）。"""
 import asyncio
 import logging
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 import discord
 from discord.ext import commands
 
 import config
-from cogs import channel_guard
-from services import course_intent, course_qa, repositories
+from cogs import channel_guard, ui_text
+from services import course_intent, course_qa, repositories, task_query
+from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
 _THREAD_STATE_PATH = Path(".state/course_qa_threads.json")
@@ -77,7 +79,7 @@ class AIAnswerFeedbackModal(discord.ui.Modal, title="回報小律的回答"):
                 answer_message_url=self.answer_message_url,
             )
         except Exception:
-            logger.exception("課程助教問題回報寫入 Notion 失敗")
+            logger.exception("小律問題回報寫入 Notion 失敗")
             await interaction.followup.send("❌ 回報寫入失敗，請稍後再試。", ephemeral=True)
             return
         await interaction.followup.send(
@@ -127,9 +129,9 @@ class CourseQACog(commands.Cog):
                 records = await repositories.get_course_meetings_for_artist(artist.page_id)
                 if artist.discord_user_id:
                     self._records_cache[int(artist.discord_user_id)] = records
-            logger.info("課程助教目錄預熱完成：%d 位藝人", len(self._records_cache))
+            logger.info("小律目錄預熱完成：%d 位藝人", len(self._records_cache))
         except Exception:
-            logger.exception("課程助教目錄預熱失敗，改用提問時讀取")
+            logger.exception("小律目錄預熱失敗，改用提問時讀取")
 
     def cog_unload(self):
         if self._warm_task:
@@ -182,7 +184,7 @@ class CourseQACog(commands.Cog):
         if artist is None:
             return None, None, "❌ 找不到你的藝人資料，請聯絡控方。"
         if not can_artist_use_ai(artist):
-            return artist, None, "❌ 目前的合約狀態無法使用課程助教，請聯絡控方。"
+            return artist, None, "❌ 目前的合約狀態無法使用小律，請聯絡控方。"
         cached_records = self._records_cache.get(user.id)
         try:
             # Notion 是課程資料的來源；每次提問先同步，避免啟動預熱後看不到新紀錄。
@@ -195,7 +197,10 @@ class CourseQACog(commands.Cog):
             logger.warning("改用上次成功快取的課程紀錄：%s", artist.name)
             records = cached_records
         if not records:
-            return artist, [], "目前沒有可供你查詢的會議紀錄。請確認控方已勾選 Notion 的「藝人可見」。"
+            return artist, [], (
+                "目前沒有可供你查詢的會議紀錄。請確認控方已勾選 Notion 的「藝人可見」。\n"
+                "想查自己的任務可以直接問，例如「這週有什麼任務」「還有哪些沒交」。"
+            )
         return artist, records, None
 
     async def _answer_for_user(self, user: discord.abc.User, question: str) -> str:
@@ -205,6 +210,8 @@ class CourseQACog(commands.Cog):
             return await self._answer_for_user_unlocked(user, question)
 
     async def _answer_for_user_unlocked(self, user: discord.abc.User, question: str) -> str:
+        if task_query.is_task_query(question):
+            return await self._answer_task_query(user, question)
         artist, records, error = await self._load_records_for_user(user)
         if error:
             return error
@@ -217,7 +224,7 @@ class CourseQACog(commands.Cog):
                 usage_key=artist.page_id,
             )
         except Exception:
-            logger.exception("課程助教意圖判斷失敗，改用保守的本地檢索")
+            logger.exception("小律意圖判斷失敗，改用保守的本地檢索")
             intent = course_intent._fallback_intent(question, records)
         selected = course_intent.select_records(records, intent, memory)
         if not selected:
@@ -245,11 +252,11 @@ class CourseQACog(commands.Cog):
                     usage_key=artist.page_id,
                 )
             except course_qa.CourseQAError as exc:
-                logger.warning("課程助教未能回答：%s", exc)
+                logger.warning("小律未能回答：%s", exc)
                 return exc.user_message
             except Exception:
-                logger.exception("課程助教回答階段發生未預期錯誤")
-                return "⚠️ 課程助教這次未能完成回答，請稍後重試。"
+                logger.exception("小律回答階段發生未預期錯誤")
+                return "⚠️ 小律這次未能完成回答，請稍後重試。"
         self._memory_by_user[str(user.id)] = {
             "mode": intent.mode,
             "month": intent.month,
@@ -258,6 +265,41 @@ class CourseQACog(commands.Cog):
         }
         self._save_memory_state()
         return f"🤖 **會議秘書小律**\n\n{answer}"
+
+    async def _answer_task_query(self, user: discord.abc.User, question: str) -> str:
+        """M6-03：用自然語言查自己的任務。只查詢、不經 LLM，範圍與 /我的任務 相同。"""
+        artist = await repositories.find_artist_by_discord_id(user.id)
+        if artist is None:
+            return "❌ 找不到你的藝人資料，請聯絡控方。"
+        if not can_artist_use_ai(artist):
+            return "❌ 目前的合約狀態無法使用小律，請聯絡控方。"
+        try:
+            tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
+        except Exception:
+            logger.exception("小律讀取任務失敗：%s", artist.name)
+            return "❌ 讀取任務失敗，請稍後再試，或改用 `/我的任務`。"
+        now = datetime.now(config.get_tenant().tz)
+        date_range = task_query.parse_range(question, now)
+        pending_only = task_query.wants_pending_only(question)
+        selected = task_query.select_tasks(tasks, date_range, pending_only=pending_only)
+        scope = f"{date_range.label}" if date_range else "目前"
+        kind = "還沒交的任務" if pending_only else "任務"
+        footer = "要交件或按「收到任務」，請用 `/我的任務`。"
+        if not selected:
+            return f"🤖 **會議秘書小律**\n\n{scope}沒有{kind}。\n{footer}"
+        lines = [
+            f"・**{strip_notion_links(task.name)}**｜{task.task_type or '任務'}｜"
+            f"{ui_text.deadline_text(task, now)}｜{task.status or '未填狀態'}"
+            for task in selected[:task_query.MAX_LINES]
+        ]
+        more = len(selected) - len(lines)
+        if more > 0:
+            lines.append(f"（另有 {more} 筆，完整清單請用 `/我的任務`）")
+        return (
+            f"🤖 **會議秘書小律**\n\n📑 **{artist.name}｜{scope}{'' if pending_only else '的'}{kind}**（{len(selected)} 筆）\n"
+            + "\n".join(lines)
+            + f"\n\n{footer}"
+        )
 
     async def _attachment_catalog_for_user(self, user: discord.abc.User) -> str | None:
         artist, records, error = await self._load_records_for_user(user)
@@ -299,7 +341,7 @@ class CourseQACog(commands.Cog):
             )
             await thread.add_user(message.author)
         except (discord.Forbidden, discord.HTTPException):
-            logger.exception("建立課程助教私人 Thread 失敗")
+            logger.exception("建立小律私人 Thread 失敗")
             return None
         self._thread_by_user[str(message.author.id)] = thread.id
         self._save_thread_state()
@@ -307,7 +349,7 @@ class CourseQACog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """課程助教頻道的自然語言入口；每位藝人使用自己的私人 Thread。"""
+        """小律頻道的自然語言入口；每位藝人使用自己的私人 Thread。"""
         if message.author.bot or not self._is_ai_context(message.channel):
             return
         try:
@@ -334,7 +376,7 @@ class CourseQACog(commands.Cog):
                 try:
                     await message.delete()
                 except (discord.Forbidden, discord.HTTPException):
-                    logger.warning("課程助教無法刪除公開問題，請補上管理訊息權限")
+                    logger.warning("小律無法刪除公開問題，請補上管理訊息權限")
 
                 thread = await self._get_or_create_thread(message)
                 if thread is None:
