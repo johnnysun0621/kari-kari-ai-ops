@@ -4,7 +4,8 @@ Notion 的 select filter 只要帶到不存在的選項，整個查詢就回 400
 選項，對應功能就整個停擺，而且畫面上只會看到「讀取失敗」。2026-10-18 記錄檔上線第一天就抓到
 小律因為「公司例會」「管理層會議」已被刪除而每次查詢失敗。
 
-這裡列的是「程式寫死、會拿去比對或篩選」的選項。新增這類比對時把它加進 CHECKS。
+這裡列的是「程式寫死、會拿去比對或篩選」的選項。新增這類比對時把它加進 checks()。
+`options` 為空的項目只檢查欄位存在（例如 checkbox 篩選：欄位被刪掉一樣整個查詢 400）。
 """
 from dataclasses import dataclass
 
@@ -46,6 +47,12 @@ def checks() -> list[OptionCheck]:
             "小律排除清單裡的類型在 Notion 不存在。若是被改名，改名後的類型目前不會被擋，"
             "勾了「藝人可見」的那類會議紀錄藝人查得到；請確認後更新 QA_HIDDEN_MEETING_TYPES",
         ),
+        OptionCheck(
+            # 2026-10-18 Johnny 拍板保留（推翻 09/22「可移除」的行動項目）：它管的是小律能不能
+            # 把會議內容講給藝人聽，不是藝人能不能進 Notion。欄位被刪，小律的查詢會整個失敗。
+            config.DS_COURSE_MEETINGS, "藝人可見", (),
+            "小律查不到任何會議紀錄（查詢會整個失敗）；這個欄位決定哪些會議內容可以講給藝人聽，請勿刪除",
+        ),
     ]
 
 
@@ -69,11 +76,13 @@ def warning_lines(check: OptionCheck, missing: list[str] | None) -> list[str]:
 
 async def find_problems() -> list[str]:
     lines: list[str] = []
+    schemas: dict[str, dict] = {}
     for check in checks():
-        if not check.data_source or not check.options:
+        if not check.data_source:
             continue
-        schema = await notion_api.retrieve_data_source(check.data_source)
-        lines.extend(warning_lines(check, missing_options(check, schema)))
+        if check.data_source not in schemas:
+            schemas[check.data_source] = await notion_api.retrieve_data_source(check.data_source)
+        lines.extend(warning_lines(check, missing_options(check, schemas[check.data_source])))
     return lines
 
 

@@ -46,4 +46,14 @@ def test_全部對得上就沒有警告(monkeypatch):
 def test_涵蓋每一個拿選項去篩_Notion_的地方():
     """新增 select filter 時要把選項加進 schema_check.checks()，這裡釘住目前的範圍。"""
     covered = {check.property_name for check in schema_check.checks()}
-    assert {"任務狀態", "審核狀態", "身份類型", "結果", "會議類型"} <= covered
+    assert {"任務狀態", "審核狀態", "身份類型", "結果", "會議類型", "藝人可見"} <= covered
+
+
+def test_只檢查存在的欄位_被刪掉時警告():
+    check = schema_check.OptionCheck("ds", "藝人可見", (), "小律查不到")
+    present = {"properties": {"藝人可見": {"type": "checkbox", "checkbox": {}}}}
+
+    assert schema_check.missing_options(check, present) == []
+    assert schema_check.warning_lines(check, schema_check.missing_options(check, {"properties": {}})) == [
+        "・`藝人可見` 欄位不存在 → 小律查不到"
+    ]
