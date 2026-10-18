@@ -460,19 +460,18 @@ async def get_course_meetings_for_artist(artist_page_id: str) -> list[CourseMeet
     新增會議類型（例如以後新增的合作類型）預設就會開放，只靠「藝人可見」逐筆把關，
     不需要客戶為了新類型另外維護設定。清單裡固定寫死的幾種類型（課程、課程會議、
     公司例會、管理層會議）是產品層級的安全預設，不是客戶日常會調整的東西。
+
+    排除在這裡做、不放進 Notion filter：select filter 只要帶到 Notion 不存在的選項，
+    整個查詢就回 400。2026-10-18 正式環境已沒有「公司例會」「管理層會議」，
+    小律因此每次都查詢失敗（記錄檔上線第一天就看到）。
     """
-    hidden_types = config.get_tenant().qa_hidden_meeting_types
+    hidden_types = set(config.get_tenant().qa_hidden_meeting_types)
     pages = await notion_api.query_data_source(
         config.DS_COURSE_MEETINGS,
-        filter_={"and": [
-            {"property": "藝人可見", "checkbox": {"equals": True}},
-            *[
-                {"property": "會議類型", "select": {"does_not_equal": meeting_type}}
-                for meeting_type in hidden_types
-            ],
-        ]},
+        filter_={"and": [{"property": "藝人可見", "checkbox": {"equals": True}}]},
         sorts=[{"property": "Date", "direction": "descending"}],
     )
+    pages = [page for page in pages if _read_select(page, "會議類型") not in hidden_types]
     project_map = await get_project_map()
     task_pages = await notion_api.query_data_source(
         config.DS_TASKS,

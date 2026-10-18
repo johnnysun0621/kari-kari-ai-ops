@@ -1827,35 +1827,53 @@ class TestCourseMeetingHiddenTypes:
     """會議秘書小律：排除清單內的會議類型永遠不讀取（見 QA_HIDDEN_MEETING_TYPES）；
     其餘類型（含未來新增的任何類型）預設開放，只靠「藝人可見」逐筆把關。"""
 
-    def test_filter_excludes_configured_hidden_types_only(self, monkeypatch):
+    def test_hidden_types_are_dropped_by_bot_not_by_notion_filter(self, monkeypatch):
+        """排除在 bot 端做：Notion select filter 帶到不存在的選項會整個查詢 400。
+
+        2026-10-18 正式環境已沒有「公司例會」「管理層會議」，舊寫法讓小律每次都查詢失敗。
+        """
         captured: dict = {}
+
+        def meeting(page_id, meeting_type):
+            return {
+                "id": page_id,
+                "properties": {
+                    "會議類型": {"type": "select", "select": {"name": meeting_type} if meeting_type else None},
+                    "參與藝人": {"type": "relation", "relation": [{"id": "artist-1"}]},
+                },
+            }
 
         async def fake_query(data_source_id, filter_=None, sorts=None):
             if data_source_id == config.DS_COURSE_MEETINGS:
                 captured["filter"] = filter_
+                return [
+                    meeting("m-course", "課程"),
+                    meeting("m-company", "公司例會"),
+                    meeting("m-ar", "A&R 會議"),
+                    meeting("m-none", None),
+                ]
             return []
 
+        async def fake_content(block_id, **kwargs):
+            return ""
+
+        async def fake_project_map():
+            return {}
+
         monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
+        monkeypatch.setattr(repositories, "_page_content", fake_content)
+        monkeypatch.setattr(repositories, "get_project_map", fake_project_map)
         fake_tenant = dataclasses.replace(
             config.get_tenant(),
             qa_hidden_meeting_types=("課程", "課程會議", "公司例會", "管理層會議"),
         )
         monkeypatch.setattr(repositories.config, "get_tenant", lambda: fake_tenant)
 
-        asyncio.run(repositories.get_course_meetings_for_artist("artist-1"))
+        records = asyncio.run(repositories.get_course_meetings_for_artist("artist-1"))
 
-        conditions = captured["filter"]["and"]
-        assert {"property": "藝人可見", "checkbox": {"equals": True}} in conditions
-        excluded = {
-            c["select"]["does_not_equal"]
-            for c in conditions
-            if "select" in c and "does_not_equal" in c["select"]
-        }
-        assert excluded == {"課程", "課程會議", "公司例會", "管理層會議"}
-        # 沒有被寫死排除的類型（例如藝人單人會議、企劃會議，或客戶未來新增的任何類型）
-        # 不會出現在條件裡——代表它們預設放行，只靠「藝人可見」把關。
-        assert "藝人單人會議" not in excluded
-        assert "企劃會議" not in excluded
+        assert captured["filter"] == {"and": [{"property": "藝人可見", "checkbox": {"equals": True}}]}
+        # 排除清單內的類型一律不給；其他類型（含未來新增、或沒填類型）預設放行，只靠「藝人可見」把關。
+        assert [r.page_id for r in records] == ["m-ar", "m-none"]
 
     def test_empty_hidden_list_still_queries_with_visibility_check_only(self, monkeypatch):
         calls = {"n": 0}

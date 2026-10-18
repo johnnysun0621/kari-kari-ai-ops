@@ -10,7 +10,8 @@ from discord.ext import commands
 import config
 from cogs.scheduling_artist import PoolAvailabilityButton
 from cogs.tasks_artist import ReminderAckButton, TaskConcernButton, TaskReceiptButton
-from services import audit, notion_api, repositories
+from cogs import channel_guard
+from services import audit, notion_api, repositories, schema_check
 from web import server as teacher_web
 
 # 排程以 pythonw 執行，沒有主控台；不寫檔的話 logger.exception 全部消失。
@@ -53,6 +54,7 @@ class KariKariBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
         self.teacher_web_runner = None
+        self._schema_checked = False
         self.discord_oauth_states: dict[str, object] = {}
 
     async def setup_hook(self):
@@ -97,6 +99,22 @@ class KariKariBot(commands.Bot):
             logger.exception(
                 "Notion 連線失敗！請確認 NOTION_TOKEN 正確，且 5 張 P0 資料庫都已 share 給 integration。"
             )
+        if self._schema_checked:  # on_ready 斷線重連時會再觸發；同一次啟動只檢查、只通知一次
+            return
+        self._schema_checked = True
+        try:
+            problems = await schema_check.find_problems()
+        except Exception:
+            logger.exception("Notion 選項檢查失敗")
+        else:
+            if problems:
+                logger.warning("Notion 選項和程式對不上：%s", "；".join(problems))
+                await channel_guard.try_send(
+                    self.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID),
+                    content=schema_check.alert_message(problems),
+                )
+            else:
+                logger.info("Notion 選項檢查正常")
 
     async def close(self):
         # 逐步關閉、互不擋路：其中一步失敗也要繼續往下關，避免卡在半關閉狀態。
