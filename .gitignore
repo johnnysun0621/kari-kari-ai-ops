@@ -9,6 +9,7 @@ __pycache__/
 venv/
 .pytest_cache/
 *.log
+logs/
 .DS_Store
 .state/
 credentials/

@@ -988,6 +988,7 @@ class TeacherSelectView(discord.ui.View):
         self.projects = list(projects)
         self.task_types = task_types
         self.operator = operator
+        self.available_artists = available_artists
         self.candidate_windows = candidate_windows or windows
         self.select = discord.ui.Select(
             placeholder="選擇老師／確認對象…",

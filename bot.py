@@ -1,5 +1,8 @@
 """KariKari AI Ops Bot 進入點：P0-1 排課 MVP。"""
 import logging
+import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 import discord
 from discord.ext import commands
@@ -10,11 +13,23 @@ from cogs.tasks_artist import ReminderAckButton, TaskConcernButton, TaskReceiptB
 from services import audit, notion_api, repositories
 from web import server as teacher_web
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+# 排程以 pythonw 執行，沒有主控台；不寫檔的話 logger.exception 全部消失。
+# 2026-10-18：/我的任務 壞了一週沒人發現，就是因為錯誤只被吃成「讀取任務失敗」、log 無處可看。
+# 只在 main() 設定，測試 import bot 時不會把測試的 log 寫進正式檔。
+LOG_PATH = Path(__file__).resolve().parent / "logs" / "bot.log"
 logger = logging.getLogger("karikari")
+
+
+def setup_logging(log_path: Path = LOG_PATH) -> None:
+    log_path.parent.mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[
+            RotatingFileHandler(log_path, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
+            *([logging.StreamHandler()] if sys.stderr else []),  # pythonw 下 sys.stderr 是 None
+        ],
+    )
 
 EXTENSIONS = [
     "cogs.scheduling_admin",
@@ -98,6 +113,7 @@ class KariKariBot(commands.Bot):
 
 
 def main():
+    setup_logging()
     if not config.DISCORD_TOKEN:
         raise SystemExit("缺少 DISCORD_TOKEN，請先在 .env 填入 Discord bot token。")
     if not config.NOTION_TOKEN:

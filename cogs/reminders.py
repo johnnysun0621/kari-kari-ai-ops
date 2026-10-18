@@ -149,7 +149,7 @@ class RemindersCog(commands.Cog):
                     )
                 sent += 1
             except Exception:
-                pass
+                logger.exception("時段收集提醒 DM 失敗：%s", artist.name)
         return sent
 
     async def _check_monthly_pool_deadlines(self):
@@ -746,7 +746,7 @@ class RemindersCog(commands.Cog):
                                 )
                             sent_count += 1
                         except Exception:
-                            pass
+                            logger.exception("任務提醒 DM 失敗：%s／%s", t.name, a.name)
                     if staff:
                         # M6-05：同仁也收同一則提醒（沒有確認鈕，也不算進「已發送給 N 人」）。
                         await notify_staff(

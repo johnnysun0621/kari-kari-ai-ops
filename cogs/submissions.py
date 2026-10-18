@@ -903,6 +903,7 @@ class SubmitTaskView(discord.ui.View):
         attachment: discord.Attachment | None = None,
     ):
         super().__init__(timeout=600)
+        self.cog = cog
         if tasks:
             self.add_item(SubmitTaskSelect(cog, tasks, now, attachment))
 
@@ -965,6 +966,9 @@ class ReviewFeedbackLargeFileChoiceView(discord.ui.View):
 
     @discord.ui.button(label="貼 Drive 連結補回饋", style=discord.ButtonStyle.primary)
     async def submit_drive_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.owner_id is not None and interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ 這個回饋入口只給原本審核的人使用。", ephemeral=True)
+            return
         await interaction.response.send_modal(
             ReviewFeedbackDriveLinkModal(
                 self.cog,
@@ -1471,7 +1475,9 @@ class SubmissionsCog(commands.Cog):
         await interaction.followup.send(
             f"📎 請直接在這個頻道上傳 **{submission.name}** 的批改檔。\n"
             f"你可以連續上傳多個批改檔，全部上傳後按「完成回饋」。\n"
-            f"每個檔案請在 **{MAX_UPLOAD_MB}MB 以下**；入口 **{file_upload_wait_label()}**後失效。\n\n"
+            f"每個檔案請在 **{MAX_UPLOAD_MB}MB 以下**；入口 **{file_upload_wait_label()}**後失效。\n"
+            "這則訊息只有你看得到，切去 Drive 上傳回來可能已消失；回到這個頻道隨便打一句話（例如「好了」），"
+            "我會再給你按鈕。\n\n"
             + review_feedback_drive_instruction(
                 submission_name=submission.name,
                 targets=targets,
@@ -1603,9 +1609,14 @@ class SubmissionsCog(commands.Cog):
             await message.channel.send("❌ 這次批改檔上傳入口已過期，請重新執行 `/審核提交`。")
             return
         if not message.attachments:
+            # 原本那則 ephemeral 訊息在老師切去 Drive 上傳後常已消失，按鈕跟著不見；
+            # 已審過的提交也不會再出現在 /審核提交，所以在這裡把按鈕重新給一次。
             await message.channel.send(
-                "我目前沒有讀到附件。請直接上傳一個批改檔附件；如果你剛剛已經上傳但我仍讀不到，"
-                "代表 Discord Bot 的 Message Content Intent 尚未開啟，請通知控方處理。"
+                f"📎 **{pending.submission.name}** 的批改檔入口還開著（目前已收到 {len(pending.attachments)} 個附件）。\n"
+                "・檔案已放到 Drive → 按「貼 Drive 連結補回饋」\n"
+                "・要直接傳附件 → 在這個頻道上傳，傳完按「完成回饋」\n"
+                "（如果你剛剛有上傳附件但我說 0 個，代表 Discord Bot 的 Message Content Intent 尚未開啟，請通知控方處理。）",
+                view=self._review_feedback_controls(pending, message.author.id),
             )
             return
         if not drive_api.is_configured():
@@ -1622,7 +1633,21 @@ class SubmissionsCog(commands.Cog):
             pending.attachments.append(attachment)
         await message.channel.send(
             f"✅ 已收到 {len(message.attachments)} 個批改檔，目前共 {len(pending.attachments)} 個。"
-            "可以繼續上傳；全部完成後按原本訊息的「完成回饋」。"
+            "可以繼續上傳；全部完成後按下方「完成回饋」。",
+            view=self._review_feedback_controls(pending, message.author.id),
+        )
+
+    def _review_feedback_controls(
+        self, pending: PendingReviewFeedbackFile, owner_id: int,
+    ) -> "ReviewFeedbackLargeFileChoiceView":
+        return ReviewFeedbackLargeFileChoiceView(
+            self,
+            pending.submission,
+            result=pending.result,
+            feedback=pending.feedback,
+            reviewer=pending.reviewer,
+            targets=pending.targets,
+            owner_id=owner_id,
         )
 
     async def _notify_review_result(
