@@ -51,6 +51,40 @@ def test_my_tasks_view_disables_paging_buttons_for_single_page():
     assert view.next_page.disabled is True
 
 
+def test_my_tasks_payload_builds_view_for_artist_with_tasks(monkeypatch):
+    """/我的任務 實際組畫面那條路徑。
+
+    2026-10-03 起 _my_tasks_payload 傳 page_labels 給 MyTasksView，但 View 不收這個參數，
+    有任務的藝人一律顯示「讀取任務失敗」；上面幾個測試直接建 View，沒走到這裡所以沒抓到。
+    """
+    import asyncio
+
+    from cogs.tasks_artist import TasksCog
+
+    tasks = [make_task(page_id=f"task-{index}", name=f"任務 {index:03d}") for index in range(80)]
+    artist = repositories.Artist(page_id="artist-1", name="Johnny", discord_user_id="1")
+
+    async def find_artist(_discord_user_id):
+        return artist
+
+    async def artist_tasks(_artist_page_id):
+        return tasks
+
+    monkeypatch.setattr(repositories, "find_artist_by_discord_id", find_artist)
+    monkeypatch.setattr(repositories, "get_discord_tasks_for_artist", artist_tasks)
+    cog = TasksCog.__new__(TasksCog)
+
+    async def run():
+        return await cog._my_tasks_payload(1)
+
+    content, view = asyncio.run(run())
+
+    assert isinstance(view, MyTasksView)
+    assert view.page_count > 1
+    assert len(view.page_labels) == view.page_count
+    assert "Johnny 的任務" in content
+
+
 def test_task_list_pages_keep_every_task_when_the_list_is_long():
     """任務多到一頁放不下時要分頁，不能讓後面的任務直接消失。"""
     now = datetime(2026, 8, 1, 10, 0, tzinfo=config.TZ)

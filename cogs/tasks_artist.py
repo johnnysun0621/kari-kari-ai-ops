@@ -435,8 +435,9 @@ class MyTasksView(paging.PagedTextView):
         *,
         pages: list[str] | None = None,
         operator_id: int = 0,
+        page_labels: list[str] | None = None,
     ):
-        super().__init__(pages or [""], operator_id, timeout=600)
+        super().__init__(pages or [""], operator_id, timeout=600, page_labels=page_labels)
         self.cog = cog
         if submittable_count > 0:
             button = discord.ui.Button(
