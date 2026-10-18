@@ -1,9 +1,11 @@
 """P0-3 作業提交：由 /我的任務 進入 Drive 提交與審核流程。"""
+import json
 import logging
 import re
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import discord
 from discord import app_commands
@@ -56,6 +58,91 @@ async def notify_submission_reviewers(
             await user.send(message)
         except Exception:
             logger.exception("審核人員通知失敗：%s", reviewer.name)
+
+
+# 已建好但還沒交出去的 Drive 版本資料夾：{discord_user_id: {task_page_id: {...}}}。
+# 上傳入口是 ephemeral 訊息，藝人離開 Discord 去上傳、回來就不見了，只能重新進入；
+# 重新進入同一筆任務要回到同一個 ver 資料夾，否則已上傳的檔案會被晾在舊夾、新夾驗證不到。
+# 存檔而不是只放記憶體，bot 重啟後一樣找得回來。
+DRIVE_UPLOAD_STATE_PATH = Path(".state/pending_drive_uploads.json")
+
+
+def load_drive_upload_state(path: Path | None = None) -> dict:
+    try:
+        raw = json.loads((path or DRIVE_UPLOAD_STATE_PATH).read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+
+def save_drive_upload_state(state: dict, path: Path | None = None) -> None:
+    path = path or DRIVE_UPLOAD_STATE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def reusable_drive_upload(
+    state: dict, user_id: int, task_page_id: str, now: datetime,
+) -> dict | None:
+    """同一人、同一任務、入口未過期 → 回傳上次的資料夾（created_at 沿用，才驗證得到先前上傳的檔）。"""
+    tasks_by_id = state.get(str(user_id))
+    entry = tasks_by_id.get(task_page_id) if isinstance(tasks_by_id, dict) else None
+    if not isinstance(entry, dict) or not entry.get("folder_url") or not entry.get("folder_base_id"):
+        return None
+    try:
+        created_at = datetime.fromisoformat(entry["created_at"])
+        expires_at = datetime.fromisoformat(entry["expires_at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if now > expires_at:
+        return None
+    return {
+        "created_at": created_at,
+        "folder_base_id": entry["folder_base_id"],
+        "folder_path": list(entry.get("folder_path") or []),
+        "folder_url": entry["folder_url"],
+    }
+
+
+def remember_drive_upload(
+    state: dict, user_id: int, task_page_id: str, pending: "PendingFileSubmission", now: datetime,
+) -> dict:
+    """記下這次的資料夾，順手清掉已過期的紀錄。"""
+    cleaned: dict = {}
+    for uid, tasks_by_id in state.items():
+        if not isinstance(tasks_by_id, dict):
+            continue
+        kept = {
+            tid: entry for tid, entry in tasks_by_id.items()
+            if isinstance(entry, dict) and _entry_not_expired(entry, now)
+        }
+        if kept:
+            cleaned[uid] = kept
+    cleaned.setdefault(str(user_id), {})[task_page_id] = {
+        "created_at": pending.created_at.isoformat(),
+        "expires_at": pending.expires_at.isoformat(),
+        "folder_base_id": pending.folder_base_id,
+        "folder_path": pending.folder_path,
+        "folder_url": pending.folder_url,
+    }
+    return cleaned
+
+
+def forget_drive_upload(state: dict, user_id: int, task_page_id: str) -> dict:
+    """提交成功後移除；下次再交同一任務才會開新的 ver。"""
+    tasks_by_id = state.get(str(user_id))
+    if isinstance(tasks_by_id, dict):
+        tasks_by_id.pop(task_page_id, None)
+        if not tasks_by_id:
+            state.pop(str(user_id), None)
+    return state
+
+
+def _entry_not_expired(entry: dict, now: datetime) -> bool:
+    try:
+        return now <= datetime.fromisoformat(entry["expires_at"])
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 @dataclass
@@ -1183,11 +1270,21 @@ class SubmissionsCog(commands.Cog):
             return
         now = datetime.now(config.get_tenant().tz)
         expires_at = now + timedelta(minutes=_file_upload_wait_minutes())
+        created_at = now
         folder_url = ""
         folder_base_id = ""
         folder_path: list[str] = []
-        target, _ = await _resolve_submission_target(task, artist, now)
-        if target is not None and drive_api.is_configured():
+        state = load_drive_upload_state()
+        reuse = reusable_drive_upload(state, interaction.user.id, task.page_id, now)
+        if reuse is not None:
+            created_at = reuse["created_at"]
+            folder_base_id = reuse["folder_base_id"]
+            folder_path = reuse["folder_path"]
+            folder_url = reuse["folder_url"]
+            target = (folder_base_id, folder_path)
+        else:
+            target, _ = await _resolve_submission_target(task, artist, now)
+        if reuse is None and target is not None and drive_api.is_configured():
             base_folder_id, path_segments = target
             folder_base_id = base_folder_id
             try:
@@ -1200,25 +1297,32 @@ class SubmissionsCog(commands.Cog):
                 folder_url = folder.get("webViewLink", "")
             except Exception:
                 logger.exception("產生大檔 Drive 目標資料夾失敗")
-        self.pending_file_submissions[interaction.user.id] = PendingFileSubmission(
+        pending = PendingFileSubmission(
             task=task,
             artist=artist,
             channel_id=interaction.channel_id,
-            created_at=now,
+            created_at=created_at,
             expires_at=expires_at,
             folder_base_id=folder_base_id,
             folder_path=folder_path,
             folder_url=folder_url,
         )
+        self.pending_file_submissions[interaction.user.id] = pending
+        if folder_url and folder_base_id:
+            try:
+                save_drive_upload_state(
+                    remember_drive_upload(state, interaction.user.id, task.page_id, pending, now)
+                )
+            except OSError:
+                logger.exception("記錄 Drive 上傳資料夾失敗")
 
-        upload_intro = (
-            f"📁 **{task.name}**\n請將檔案上傳至下方指定資料夾。\n\n"
-            if drive_only
-            else f"📁 **{task.name}**\n請將檔案上傳至下方指定資料夾。\n\n"
-        )
+        reuse_note = "↩️ 沿用你上次開的資料夾，先前上傳的檔案都還在。\n" if reuse is not None else ""
+        upload_intro = f"📁 **{task.name}**\n{reuse_note}請將檔案上傳至下方指定資料夾。\n\n"
         upload_controls = (
             "上傳完成後：\n"
-            "・我已上傳到 Drive：檔案放入公司指定資料夾後按。\n\n"
+            "・我已上傳到 Drive：檔案放入公司指定資料夾後按。\n"
+            "・這則訊息只有你看得到，離開頻道後會消失。沒關係：回到 `/我的任務` → 提交任務 → "
+            "選同一筆任務，會回到同一個資料夾。\n\n"
         )
         await interaction.followup.send(
             upload_intro
@@ -1308,6 +1412,12 @@ class SubmissionsCog(commands.Cog):
             await interaction.followup.send("❌ Drive 已讀到檔案，但 Notion 寫入失敗，請聯絡控方。", ephemeral=True)
             return
         self.pending_file_submissions.pop(interaction.user.id, None)
+        try:
+            save_drive_upload_state(
+                forget_drive_upload(load_drive_upload_state(), interaction.user.id, pending.task.page_id)
+            )
+        except OSError:
+            logger.exception("清除 Drive 上傳資料夾紀錄失敗")
         await audit.log_event(
             event_name=f"提交任務（Drive 資料夾）｜{pending.artist.name}｜{pending.task.name}",
             action_type="上傳",
