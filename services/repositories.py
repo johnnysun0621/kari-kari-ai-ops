@@ -184,6 +184,74 @@ def _read_unique_id(page: dict, name: str) -> int | None:
     return uid.get("number") if uid else None
 
 
+# M7-07：任務說明改由 Notion 任務內頁的「任務說明」段落提供。
+# 舊 rich-text 欄位只作為既有資料的過渡回退，避免尚未搬移的任務通知變成空白。
+TASK_DESCRIPTION_HEADING = "任務說明"
+_task_description_cache: dict[tuple[str, str], str] = {}
+
+
+def _heading_level(block: dict) -> int | None:
+    block_type = block.get("type", "")
+    if block_type.startswith("heading_") and block_type[-1:] in {"1", "2", "3"}:
+        return int(block_type[-1])
+    return None
+
+
+def task_page_description(blocks: list[dict]) -> str:
+    """Extract the body of the first ``任務說明`` heading from page blocks.
+
+    The heading itself is a marker, not user-facing content.  A subsequent
+    heading at the same or higher level starts the next section.  Lower-level
+    headings remain part of the description, which lets operators structure a
+    long brief without changing what Discord receives.
+    """
+    description_level: int | None = None
+    lines: list[str] = []
+    for block in blocks:
+        level = _heading_level(block)
+        text = _block_plain_text(block)
+        if description_level is None:
+            if level is not None and text == TASK_DESCRIPTION_HEADING:
+                description_level = level
+            continue
+        if level is not None and level <= description_level:
+            break
+        if text:
+            lines.append(text)
+    return "\n".join(lines).strip()
+
+
+async def _task_description_from_page(page: dict) -> str:
+    """Return the page-body description, falling back to the legacy property."""
+    legacy = _read_rich_text(page, "任務說明")
+    page_id = page.get("id", "")
+    edited_at = page.get("last_edited_time") or ""
+    cache_key = (page_id, edited_at)
+    if page_id and edited_at and cache_key in _task_description_cache:
+        return _task_description_cache[cache_key] or legacy
+    try:
+        blocks = await notion_api.retrieve_block_children(page_id)
+    except NotionAPIError as exc:
+        logger.warning(
+            "Unable to read task description from page body: page=%s status=%s",
+            page_id, exc.status_code,
+        )
+        return legacy
+    description = task_page_description(blocks)
+    if page_id and edited_at:
+        _task_description_cache[cache_key] = description
+    return description or legacy
+
+
+async def _to_task_with_page_description(page: dict) -> "TaskItem":
+    task = _to_task(page)
+    return replace(task, description=await _task_description_from_page(page))
+
+
+async def _to_tasks_with_page_descriptions(pages: list[dict]) -> list["TaskItem"]:
+    return await asyncio.gather(*(_to_task_with_page_description(page) for page in pages))
+
+
 # ---------- Notion Bulletin ----------
 
 @dataclass(frozen=True)
@@ -1259,7 +1327,7 @@ async def get_task(task_page_id: str) -> TaskItem | None:
     if not task_page_id:
         return None
     page = await notion_api.retrieve_page(task_page_id)
-    return _to_task(page) if page else None
+    return await _to_task_with_page_description(page) if page else None
 
 
 async def find_task_by_latest_submission_url(submission_url: str) -> TaskItem | None:
@@ -1290,7 +1358,7 @@ async def get_discord_tasks_for_artist(artist_page_id: str) -> list[TaskItem]:
     pages = await _query_tasks_requiring_discord_display(
         [{"property": TASK_ARTIST_PROPERTY, "relation": {"contains": artist_page_id}}]
     )
-    return [_to_task(p) for p in pages]
+    return await _to_tasks_with_page_descriptions(pages)
 
 
 async def get_active_tasks() -> list[TaskItem]:
@@ -1300,7 +1368,7 @@ async def get_active_tasks() -> list[TaskItem]:
     ]
     conditions.append({"property": "任務狀態", "select": {"is_empty": True}})
     pages = await notion_api.query_data_source(config.DS_TASKS, filter_={"or": conditions})
-    return [_to_task(p) for p in pages]
+    return await _to_tasks_with_page_descriptions(pages)
 
 
 async def get_all_tasks() -> list[TaskItem]:
@@ -1326,7 +1394,9 @@ async def get_tasks_by_status(statuses: list[str]) -> list[TaskItem]:
     """依任務狀態撈任務；供不在 ACTIVE 集合內的狀態（例如已完成）使用。"""
     conditions = [{"property": "任務狀態", "select": {"equals": s}} for s in statuses]
     pages = await notion_api.query_data_source(config.DS_TASKS, filter_={"or": conditions})
-    return [_to_task(page) for page in pages if not page.get("archived")]
+    return await _to_tasks_with_page_descriptions(
+        [page for page in pages if not page.get("archived")]
+    )
 
 
 def tasks_awaiting_publish_confirmation(
@@ -1529,18 +1599,31 @@ async def append_task_drive_folder_link(
     artist_name: str,
     folder_url: str,
 ) -> None:
-    """將多人任務的藝人 Drive 資料夾連結寫入任務說明。"""
+    """Append a multi-artist Drive index to the task page, idempotently."""
     if not artist_name or not folder_url:
         return
-    task = await get_task(page_id)
-    if task is None:
-        raise ValueError(f"Task not found: {page_id}")
-    description = append_drive_folder_link_to_description(
-        task.description, artist_name, folder_url
-    )
-    if description == task.description:
+    entry = f"・{artist_name}：{folder_url}"
+    try:
+        blocks = await notion_api.retrieve_block_children(page_id)
+    except NotionAPIError:
+        raise
+    if any(_block_plain_text(block) == entry for block in blocks):
         return
-    await notion_api.update_page(page_id, {"任務說明": _rich_text(description)})
+    children: list[dict] = []
+    if not any(_block_plain_text(block) == "Drive 資料夾索引" for block in blocks):
+        children.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": "Drive 資料夾索引"}}]},
+        })
+    children.append(
+        {
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": entry}}]},
+        }
+    )
+    await notion_api.append_block_children(page_id, children)
 
 
 async def mark_task_discord_notified(
@@ -1590,7 +1673,9 @@ async def get_tasks_flagged_for_resend() -> list[TaskItem] | None:
         if TASK_RESEND_PROPERTY in str(exc):
             return None
         raise
-    return [_to_task(page) for page in pages if not page.get("archived")]
+    return await _to_tasks_with_page_descriptions(
+        [page for page in pages if not page.get("archived")]
+    )
 
 
 async def clear_task_resend_flag(page_id: str) -> None:
@@ -1697,12 +1782,25 @@ async def record_task_response(
 
 
 async def append_task_feedback(page_id: str, entry: str) -> TaskItem:
-    """將藝人回饋追加到既有的 Task 任務說明，不新增 Notion 欄位。"""
+    """Append artist feedback to the task page without changing its description."""
     task = await get_task(page_id)
     if task is None:
         raise ValueError(f"Task not found: {page_id}")
-    description = f"{task.description.strip()}\n\n{entry.strip()}".strip()
-    await notion_api.update_page(page_id, {"任務說明": _rich_text(description)})
+    text = entry.strip()
+    if not text:
+        return task
+    await notion_api.append_block_children(page_id, [
+        {
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": "藝人回覆"}}]},
+        },
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": text[:2000]}}]},
+        },
+    ])
     return await get_task(page_id) or task
 
 
@@ -1727,7 +1825,6 @@ def _build_formal_arrangement_task_props(
         "任務狀態": _select("尚未開始"),
         "任務類型": _select(task_type),
         TASK_ARTIST_PROPERTY: _relation(artist_page_ids),
-        "任務說明": _rich_text(description),
         "是否開放提交": _checkbox(False),
         "Discord 顯示": _checkbox(discord_visible),
     }
@@ -1742,6 +1839,24 @@ def _build_formal_arrangement_task_props(
     if end:
         props["截止日"] = _date(end)
     return props
+
+
+def _task_description_children(description: str) -> list[dict]:
+    """Build the standard Notion page-body section for newly created tasks."""
+    children = [{
+        "object": "block",
+        "type": "heading_2",
+        "heading_2": {"rich_text": [{"type": "text", "text": {"content": TASK_DESCRIPTION_HEADING}}]},
+    }]
+    for line in description.splitlines():
+        text = line.strip()
+        if text:
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": text[:2000]}}]},
+            })
+    return children
 
 
 async def create_formal_arrangement_task(
@@ -1769,8 +1884,10 @@ async def create_formal_arrangement_task(
         project_page_ids=project_page_ids,
         discord_visible=discord_visible,
     )
-    page = await notion_api.create_page(config.DS_TASKS, props)
-    return _to_task(page)
+    page = await notion_api.create_page(
+        config.DS_TASKS, props, children=_task_description_children(description)
+    )
+    return await _to_task_with_page_description(page)
 
 
 def task_description_field(description: str, *field_names: str) -> str:

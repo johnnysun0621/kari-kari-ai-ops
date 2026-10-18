@@ -146,6 +146,11 @@ async def retrieve_block_children(block_id: str) -> list[dict]:
         cursor = data.get("next_cursor")
 
 
+async def append_block_children(block_id: str, children: list[dict]) -> dict:
+    """Append blocks to a Notion page/block without replacing its existing body."""
+    return await _request("PATCH", f"/blocks/{block_id}/children", {"children": children})
+
+
 async def create_page(
     data_source_id: str,
     properties: dict,

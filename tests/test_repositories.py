@@ -1920,3 +1920,118 @@ class TestDynamicSelectOptions:
         monkeypatch.setattr(repositories.notion_api, "retrieve_data_source", fake_retrieve)
 
         assert asyncio.run(repositories.get_course_type_options()) == []
+
+
+class TestTaskPageDescription:
+    @staticmethod
+    def _block(block_type: str, text: str) -> dict:
+        return {
+            "type": block_type,
+            block_type: {"rich_text": [{"plain_text": text}]},
+        }
+
+    def test_reads_only_first_task_description_section(self):
+        blocks = [
+            self._block("paragraph", "頁首備註"),
+            self._block("heading_2", "任務說明"),
+            self._block("paragraph", "請在週五前交 Demo。"),
+            self._block("heading_3", "交件格式"),
+            self._block("paragraph", "WAV 與工程檔。"),
+            self._block("heading_2", "內部備註"),
+            self._block("paragraph", "這段不得送到 Discord。"),
+        ]
+
+        assert repositories.task_page_description(blocks) == (
+            "請在週五前交 Demo。\n交件格式\nWAV 與工程檔。"
+        )
+
+    def test_missing_or_empty_section_falls_back_to_legacy_property(self, monkeypatch):
+        page = {
+            "id": "task-legacy",
+            "properties": {"任務說明": {"rich_text": [{"plain_text": "舊欄位內容"}]}},
+        }
+
+        async def empty_blocks(_page_id):
+            return [self._block("heading_2", "任務說明")]
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_block_children", empty_blocks)
+
+        assert asyncio.run(repositories._task_description_from_page(page)) == "舊欄位內容"
+
+    def test_page_body_wins_over_legacy_property_and_is_cached(self, monkeypatch):
+        repositories._task_description_cache.clear()
+        page = {
+            "id": "task-new",
+            "last_edited_time": "2026-10-11T12:00:00.000Z",
+            "properties": {"任務說明": {"rich_text": [{"plain_text": "舊欄位內容"}]}},
+        }
+        calls = []
+
+        async def page_blocks(page_id):
+            calls.append(page_id)
+            return [
+                self._block("heading_2", "任務說明"),
+                self._block("paragraph", "內頁正式內容"),
+            ]
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_block_children", page_blocks)
+
+        assert asyncio.run(repositories._task_description_from_page(page)) == "內頁正式內容"
+        assert asyncio.run(repositories._task_description_from_page(page)) == "內頁正式內容"
+        assert calls == ["task-new"]
+
+    def test_new_arrangement_task_uses_standard_page_section(self):
+        children = repositories._task_description_children("第一行\n\n第二行")
+
+        assert children[0]["heading_2"]["rich_text"][0]["text"]["content"] == "任務說明"
+        assert [child["paragraph"]["rich_text"][0]["text"]["content"] for child in children[1:]] == [
+            "第一行", "第二行"
+        ]
+
+    def test_artist_feedback_is_appended_as_a_separate_page_section(self, monkeypatch):
+        item = repositories.TaskItem("task-1", "任務", "進行中", None, description="正式說明")
+        calls = []
+
+        async def fake_get_task(_page_id):
+            return item
+
+        async def fake_append(page_id, children):
+            calls.append((page_id, children))
+
+        monkeypatch.setattr(repositories, "get_task", fake_get_task)
+        monkeypatch.setattr(repositories.notion_api, "append_block_children", fake_append)
+
+        result = asyncio.run(repositories.append_task_feedback("task-1", "我當天無法配合"))
+
+        assert result is item
+        assert calls[0][0] == "task-1"
+        assert calls[0][1][0]["heading_2"]["rich_text"][0]["text"]["content"] == "藝人回覆"
+        assert calls[0][1][1]["paragraph"]["rich_text"][0]["text"]["content"] == "我當天無法配合"
+
+    def test_drive_index_is_appended_to_page_and_deduplicated(self, monkeypatch):
+        appended = []
+        blocks = [{
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"plain_text": "任務說明"}]},
+        }]
+
+        async def fake_blocks(_page_id):
+            return blocks
+
+        async def fake_append(page_id, children):
+            appended.append((page_id, children))
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_block_children", fake_blocks)
+        monkeypatch.setattr(repositories.notion_api, "append_block_children", fake_append)
+
+        asyncio.run(repositories.append_task_drive_folder_link("task-1", "藝人 A", "https://drive.test/a"))
+        assert appended[0][0] == "task-1"
+        assert appended[0][1][0]["heading_2"]["rich_text"][0]["text"]["content"] == "Drive 資料夾索引"
+        assert appended[0][1][1]["bulleted_list_item"]["rich_text"][0]["text"]["content"] == "・藝人 A：https://drive.test/a"
+
+        blocks.append({
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {"rich_text": [{"plain_text": "・藝人 A：https://drive.test/a"}]},
+        })
+        asyncio.run(repositories.append_task_drive_folder_link("task-1", "藝人 A", "https://drive.test/a"))
+        assert len(appended) == 1
