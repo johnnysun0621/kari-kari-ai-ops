@@ -153,6 +153,9 @@ class TenantConfig:
     # 其餘類型（含客戶之後在 Notion 新增的任何新類型）預設開放，只靠「藝人可見」逐筆把關，
     # 不需要客戶為了新增會議類型另外維護這份清單。
     qa_hidden_meeting_types: tuple[str, ...] = ("課程", "課程會議", "公司例會", "管理層會議")
+    # 小律的會議紀錄查詢（M6-06）。關掉時小律只查任務；程式保留，改回 true 就恢復。
+    # 2026-10-18 Johnny：先封存，小律變成單純查任務（正式環境也還沒有可給藝人的會議紀錄）。
+    meeting_qa_enabled: bool = True
 
     # === 本機 web 服務（只服務 Discord OAuth 回呼，不需要對外網域）===
     web_port: int = 8787
@@ -255,6 +258,8 @@ def _load_karikari_from_env() -> TenantConfig:
             ).split(",")
             if value.strip()
         ),
+        meeting_qa_enabled=os.getenv("MEETING_QA_ENABLED", "true").strip().lower()
+        not in {"0", "false", "no", "off"},
         web_port=_env_int("WEB_PORT", 8787),
     )
 

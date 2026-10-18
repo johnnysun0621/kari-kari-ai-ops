@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 _THREAD_STATE_PATH = Path(".state/course_qa_threads.json")
 _MEMORY_STATE_PATH = Path(".state/course_qa_memory.json")
 _DISCORD_MESSAGE_LIMIT = 1900
+TASK_ONLY_HELP = (
+    "🤖 **會議秘書小律**\n\n"
+    "我可以幫你查自己的任務，例如：\n"
+    "・「這週有什麼任務」「下週要交什麼」「11 月有什麼行程」\n"
+    "・「我還有哪些沒交」\n"
+    "・「第 2 個的詳細內容」，或直接講任務名稱\n"
+    "・「week4 聽力要做幾題」「要用什麼格式交」\n\n"
+    "要交件或按「收到任務」，請用 `/我的任務`。"
+)
 
 
 def can_artist_use_ai(artist: repositories.Artist) -> bool:
@@ -124,6 +133,8 @@ class CourseQACog(commands.Cog):
 
     async def _warm_course_cache(self) -> None:
         await self.bot.wait_until_ready()
+        if not config.get_tenant().meeting_qa_enabled:
+            return
         try:
             for artist in await repositories.get_active_artists():
                 records = await repositories.get_course_meetings_for_artist(artist.page_id)
@@ -210,6 +221,9 @@ class CourseQACog(commands.Cog):
             return await self._answer_for_user_unlocked(user, question)
 
     async def _answer_for_user_unlocked(self, user: discord.abc.User, question: str) -> str:
+        if not config.get_tenant().meeting_qa_enabled:
+            # 會議紀錄查詢封存中：所有問題都走任務，對不到就說明可以怎麼問。
+            return await self._answer_task_query(user, question) or TASK_ONLY_HELP
         if task_query.is_task_query(question) or (
             (task_query.wants_detail(question) or task_query.is_specific_question(question))
             and not task_query.is_meeting_question(question)
@@ -506,7 +520,7 @@ class CourseQACog(commands.Cog):
                         logger.exception("會議秘書小律建立私人對話失敗，且無法私訊使用者")
                     return
 
-            if thread.id not in self._catalog_sent_threads:
+            if thread.id not in self._catalog_sent_threads and config.get_tenant().meeting_qa_enabled:
                 self._catalog_sent_threads.add(thread.id)
                 catalog = await self._attachment_catalog_for_user(message.author)
                 if catalog:

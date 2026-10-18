@@ -77,8 +77,12 @@ def warning_lines(check: OptionCheck, missing: list[str] | None) -> list[str]:
 async def find_problems() -> list[str]:
     lines: list[str] = []
     schemas: dict[str, dict] = {}
+    meeting_qa_enabled = config.get_tenant().meeting_qa_enabled
     for check in checks():
         if not check.data_source:
+            continue
+        # 會議紀錄查詢封存時，會議紀錄的欄位怎麼改都不影響小律，不必警告。
+        if not meeting_qa_enabled and check.data_source == config.DS_COURSE_MEETINGS:
             continue
         if check.data_source not in schemas:
             schemas[check.data_source] = await notion_api.retrieve_data_source(check.data_source)

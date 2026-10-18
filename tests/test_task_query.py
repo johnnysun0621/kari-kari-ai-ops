@@ -290,3 +290,48 @@ def test_模型失敗時退回任務詳細(llm_cog, monkeypatch):
     answer = ask(llm_cog, "交 cover 素材要用什麼格式交")
 
     assert "📌 **交 cover 素材" in answer
+
+
+# ---------- 會議紀錄查詢封存（MEETING_QA_ENABLED=false，2026-10-18） ----------
+
+@pytest.fixture
+def task_only(cog, monkeypatch):
+    import dataclasses
+
+    tenant = dataclasses.replace(config.get_tenant(), meeting_qa_enabled=False)
+    monkeypatch.setattr(config, "get_tenant", lambda: tenant)
+    cog.cog._save_memory_state = lambda: None
+    return cog
+
+
+def test_封存時問會議只給查任務的說明_不讀會議紀錄(task_only):
+    answer = ask(task_only, "上次會議討論了什麼")
+
+    assert answer == course_qa_cog.TASK_ONLY_HELP
+    assert task_only.calls["meetings"] == 0
+
+
+def test_封存時任務照常查(task_only):
+    answer = ask(task_only, "下週有什麼任務")
+
+    assert "交 cover 素材" in answer and task_only.calls["meetings"] == 0
+
+
+def test_封存時啟動檢查略過會議紀錄欄位(monkeypatch):
+    import dataclasses
+
+    from services import notion_api, schema_check
+
+    tenant = dataclasses.replace(config.get_tenant(), meeting_qa_enabled=False)
+    monkeypatch.setattr(config, "get_tenant", lambda: tenant)
+    asked = []
+
+    async def fake_retrieve(ds):
+        asked.append(ds)
+        return {"properties": {}}
+
+    monkeypatch.setattr(notion_api, "retrieve_data_source", fake_retrieve)
+    problems = asyncio.run(schema_check.find_problems())
+
+    assert config.DS_COURSE_MEETINGS not in asked
+    assert not any("藝人可見" in line or "會議類型" in line for line in problems)
