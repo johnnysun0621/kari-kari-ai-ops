@@ -215,16 +215,17 @@ class BulletinCog(commands.Cog):
         boards = monthly_board.load_state()
         key = monthly_board.month_key(now.date())
         record = boards.get(key, {})
-        if record.get("fingerprint") == fingerprint and record.get("message_id"):
-            return "skipped"
         content = monthly_board.render(now.date(), lines, tenant.public_task_types, now)
         message = None
         if record.get("message_id"):
             try:
                 message = await channel.fetch_message(int(record["message_id"]))
-                await message.edit(content=content)
             except discord.NotFound:
                 message = None  # 被刪掉了就重發一則
+        if message is not None and record.get("fingerprint") == fingerprint:
+            return "skipped"
+        if message is not None:
+            await message.edit(content=content)
         status = "updated" if message else "created"
         if message is None:
             message = await channel.send(content)

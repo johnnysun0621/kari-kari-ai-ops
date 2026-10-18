@@ -120,6 +120,7 @@ class TestSync:
     def test_訊息被刪掉就重發(self, board):
         board.run()
         board.channel.messages.clear()
-        board.tasks.append(task("3"))
         assert board.run() == "created"
+        assert board.channel.sent == 2
+        assert board.run() == "skipped"
         assert board.channel.sent == 2
