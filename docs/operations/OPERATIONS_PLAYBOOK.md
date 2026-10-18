@@ -39,6 +39,7 @@ Discord 頻道與 slash command 對應總表請看 [DISCORD_CHANNELS.md](DISCORD
 - `任務查詢入口` 只保留藝人的 `/我的任務`，提交功能由該入口內的按鈕進入。
 - 時間池比對、任務總覽、重送與審核等控方工作放在 `營運操作`。
 - 藝人完成回填、提交、拒絕任務與審核逾期等自動通知固定放在 `營運內部通知`。
+- 每天 10:00 的 Drive 健康檢查失敗時也發在 `營運內部通知`（🔴 開頭，附修法）；看到就當天處理，否則藝人交不了件。
 - `.env` 的 `TASK_CHANNEL_ID` 有設定時，只有 `/我的任務` 使用任務查詢入口。
 - `.env` 的 `SCHEDULE_CHANNEL_ID` 有設定時，藝人時間管理只能在時間管理使用。
 - `.env` 的 `ADMIN_COMMAND_CHANNEL_ID` 有設定時，管理端工作指令只能在營運操作使用；留空時沿用 `ADMIN_NOTIFY_CHANNEL_ID`。

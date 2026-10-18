@@ -12,6 +12,7 @@
 | 藝人專區 | 7 位已簽約藝人各一個專區，直接以藝人名稱命名，連結已寫入 Notion Artists「Google Drive 資料夾」；舊連結備份在 `.state/artist_drive_folders_backup_20261018.json` |
 | 分享 | 每個專區只分享給該藝人本人的 Gmail（編輯者）；**總資料夾不要分享**。Bot 不會自動設權限，要人工分享 |
 | 舊總資料夾 | `1f3PApJAUQIZpesPUzXod1PkwbU_bGEZ0`（.env 內註解保留），舊檔不搬 |
+| 每日健康檢查 | 每天 10:00 讀一次總資料夾（`cogs/reminders.py` `_check_drive_health`、`services/drive_health.py`）。讓授權保持在使用中（避開 6 個月閒置失效），失敗當天在 `營運內部通知` 告警並附修法，恢復時再通知一次。每次檢查都從 `token.json` 重建連線，所以重新授權後即使沒重啟，隔天也會換上新授權 |
 
 事故紀錄：2026-08-22 起 token 失效（`invalid_grant`，專案當時在「測試中」，refresh token 7 天就過期），
 Drive 交件全部失敗；2026-10-18 把 OAuth app 發布為正式並重新授權後恢復。
@@ -222,7 +223,7 @@ Notion Artists 的「Google Drive 資料夾」欄位**，歸檔就接通了。
 
 | 症狀 | 原因／解法 |
 |---|---|
-| 授權後過幾天 token 失效（`invalid_grant`） | Cloud 專案還在「測試中」→ refresh token 7 天就過期。把 app 發布為正式（見路線 A／B 開頭），再跑 `scripts/authorize_drive.py` 重新授權，**然後重啟 bot**（執行中的 bot 記憶體裡還是舊 token）。已是正式狀態仍失效 → 查是否超過 6 個月沒用、或授權在 Google 帳戶被撤銷 |
+| 授權後過幾天 token 失效（`invalid_grant`） | Cloud 專案還在「測試中」→ refresh token 7 天就過期。把 app 發布為正式（見路線 A／B 開頭），再跑 `scripts/authorize_drive.py` 重新授權，**然後重啟 bot**（執行中的 bot 記憶體裡還是舊 token；不重啟的話，隔天 10:00 的健康檢查會自動換上新授權）。已是正式狀態仍失效 → 查是否超過 6 個月沒用、或授權在 Google 帳戶被撤銷 |
 | 服務帳號上傳失敗 `storageQuotaExceeded` | 服務帳號沒有儲存空間，總資料夾不在共用雲端硬碟。個人 Gmail 改用 OAuth |
 | check_drive 說看不到總資料夾 | OAuth：登入的帳號不是資料夾擁有者／沒被分享編輯權限，或 scope 還是舊的 `drive.file` → 刪 token.json 重跑授權。服務帳號：資料夾沒有分享給金鑰檔裡的 `client_email` |
 | 「這個應用程式未經驗證」 | OAuth 路線才會看到，正常。自己的 app 點「進階」→「前往」即可 |
