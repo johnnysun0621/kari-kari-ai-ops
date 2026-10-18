@@ -6,12 +6,12 @@
 
 | 項目 | 狀態 |
 |---|---|
-| 認證方式 | **OAuth 使用者授權**（路線 A／B），授權帳號 `karikariproject@gmail.com`，token 在 `credentials/token.json` |
-| OAuth app | Google Cloud 專案 `kali-bot-506310`，發布狀態 **實際運作中**（External、未送驗證、使用者上限 100） |
-| 總資料夾 | 「藝人提交檔案專用（小律維護，勿動）」，擁有者 karikariproject，一般存取「限制」；ID 在 `.env` 的 `GOOGLE_DRIVE_ROOT_FOLDER_ID` |
+| 認證方式 | **OAuth 使用者授權**（路線 A／B），授權帳號是**擁有總資料夾的公司 Google 帳號**（帳號名稱不寫在公開 repo，見跑 bot 那台電腦的 `.env` 備註），token 在 `credentials/token.json` |
+| OAuth app | Google Cloud 專案（ID 見 Google Cloud Console），發布狀態 **實際運作中**（External、未送驗證、使用者上限 100） |
+| 總資料夾 | 「藝人提交檔案專用（小律維護，勿動）」，擁有者是公司 Google 帳號，一般存取「限制」；ID 在 `.env` 的 `GOOGLE_DRIVE_ROOT_FOLDER_ID` |
 | 藝人專區 | 7 位已簽約藝人各一個專區，直接以藝人名稱命名，連結已寫入 Notion Artists「Google Drive 資料夾」；舊連結備份在 `.state/artist_drive_folders_backup_20261018.json` |
 | 分享 | 每個專區只分享給該藝人本人的 Gmail（編輯者）；**總資料夾不要分享**。Bot 不會自動設權限，要人工分享 |
-| 舊總資料夾 | `1f3PApJAUQIZpesPUzXod1PkwbU_bGEZ0`（.env 內註解保留），舊檔不搬 |
+| 舊總資料夾 | ID 保留在 `.env` 的註解，舊檔不搬 |
 | 每日健康檢查 | 每天 10:00 讀一次總資料夾（`cogs/reminders.py` `_check_drive_health`、`services/drive_health.py`）。讓授權保持在使用中（避開 6 個月閒置失效），失敗當天在 `營運內部通知` 告警並附修法，恢復時再通知一次。每次檢查都從 `token.json` 重建連線，所以重新授權後即使沒重啟，隔天也會換上新授權 |
 
 事故紀錄：2026-08-22 起 token 失效（`invalid_grant`，專案當時在「測試中」，refresh token 7 天就過期），

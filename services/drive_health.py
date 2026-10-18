@@ -33,7 +33,7 @@ def classify_error(exc: BaseException) -> str:
 FIX_STEPS = {
     "授權失效": (
         "1. 在跑 bot 的電腦執行 `.venv\\Scripts\\python.exe scripts\\authorize_drive.py`，"
-        "用 karikariproject@gmail.com 登入並同意\n"
+        "用擁有總資料夾的公司 Google 帳號登入並同意\n"
         "2. 執行 restart_bot.bat 立即生效（沒重啟的話，明天的檢查也會自動換上新授權）"
     ),
     "找不到總資料夾": (
@@ -41,8 +41,8 @@ FIX_STEPS = {
         "若要換新資料夾，改 .env 的 GOOGLE_DRIVE_ROOT_FOLDER_ID 後重啟 bot"
     ),
     "沒有總資料夾的權限": (
-        "授權帳號（karikariproject）看不到總資料夾，可能是資料夾擁有者變了或共用被移除；"
-        "請把總資料夾的編輯權限還給 karikariproject"
+        "授權的公司 Google 帳號看不到總資料夾，可能是資料夾擁有者變了或共用被移除；"
+        "請把總資料夾的編輯權限還給那個帳號"
     ),
     "Drive 連線失敗": "可能是 Google 暫時性問題；明天會再檢查一次。連續兩天都失敗請查 logs/bot.log",
 }
