@@ -17,6 +17,23 @@ from services.notion_links import strip_notion_links
 logger = logging.getLogger(__name__)
 _THREAD_STATE_PATH = Path(".state/course_qa_threads.json")
 _MEMORY_STATE_PATH = Path(".state/course_qa_memory.json")
+_PANEL_STATE_PATH = Path(".state/xiaolu_panel.json")
+START_BUTTON_ID = "xiaolu:start"
+# 頻道置頂的入口說明。2026-10-18：藝人在頻道公開發問時，bot 刪除前那一兩秒（與通知預覽）
+# 大家都看得到，所以入口改成按鈕，問題從頭到尾只出現在本人的私人討論串。
+PANEL_TEXT = (
+    "🤖 **小律｜查自己的任務**\n\n"
+    "按下方「💬 開始問小律」，小律會開一個**只有你看得到**的討論串（已經有的話會帶你回去）。\n"
+    "之後在討論串裡直接打字問就好，例如「這週有什麼任務」「我還有哪些沒交」「week4 聽力要做幾題」。\n\n"
+    "⚠️ **請不要直接在這個頻道打字**：這裡大家都看得到。要交件或按「收到任務」，請用 `/我的任務`。"
+)
+THREAD_WELCOME = (
+    "👋 這裡只有你看得到。直接打字問小律就好，例如：\n"
+    "・「這週有什麼任務」「下週要交什麼」\n"
+    "・「我還有哪些沒交」\n"
+    "・「第 2 個的詳細內容」\n"
+    "・「week4 聽力要做幾題」"
+)
 _DISCORD_MESSAGE_LIMIT = 1900
 TASK_ONLY_HELP = (
     "🤖 **小律**\n\n"
@@ -116,6 +133,18 @@ class AIAnswerFeedbackView(discord.ui.View):
         ))
 
 
+class StartXiaolu(discord.ui.View):
+    """頻道置頂的入口按鈕；timeout=None ＋固定 custom_id，bot 重啟後舊訊息上的按鈕仍可按。"""
+
+    def __init__(self, cog: "CourseQACog"):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="開始問小律", emoji="💬", style=discord.ButtonStyle.primary, custom_id=START_BUTTON_ID)
+    async def start(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await self.cog.open_private_thread(interaction)
+
+
 class CourseQACog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -128,8 +157,66 @@ class CourseQACog(commands.Cog):
         self._warm_task: asyncio.Task | None = None
 
     async def cog_load(self):
-        """啟動時預熱課程目錄；只讀 Notion，不呼叫 LLM。"""
+        """啟動時預熱課程目錄；只讀 Notion，不呼叫 LLM。註冊入口按鈕並確保頻道有置頂說明。"""
         self._warm_task = asyncio.create_task(self._warm_course_cache())
+        self.bot.add_view(StartXiaolu(self))
+        self._panel_task = asyncio.create_task(self._ensure_panel())
+
+    async def _ensure_panel(self) -> None:
+        """頻道裡只放一則置頂入口；已存在就更新內容，被刪掉才重發。"""
+        await self.bot.wait_until_ready()
+        channel = self.bot.get_channel(config.AI_CHANNEL_ID)
+        if not isinstance(channel, discord.TextChannel):
+            return
+        try:
+            state = json.loads(_PANEL_STATE_PATH.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+            state = {}
+        view = StartXiaolu(self)
+        try:
+            if state.get("channel_id") == channel.id and state.get("message_id"):
+                try:
+                    message = await channel.fetch_message(int(state["message_id"]))
+                    if message.content != PANEL_TEXT:
+                        await message.edit(content=PANEL_TEXT, view=view)
+                    if not message.pinned:
+                        await message.pin(reason="小律入口")
+                    return
+                except discord.NotFound:
+                    pass
+            message = await channel.send(PANEL_TEXT, view=view)
+            await message.pin(reason="小律入口")
+        except (discord.Forbidden, discord.HTTPException):
+            logger.exception("小律入口置頂訊息建立失敗（需要傳送訊息與管理訊息權限）")
+            return
+        _PANEL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _PANEL_STATE_PATH.write_text(
+            json.dumps({"channel_id": channel.id, "message_id": message.id}), encoding="utf-8",
+        )
+
+    async def open_private_thread(self, interaction: discord.Interaction) -> None:
+        """按「開始問小律」：開（或帶回）本人的私人討論串。問題從頭到尾不經過公開頻道。"""
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if artist is None:
+            await interaction.followup.send("❌ 找不到你的藝人資料，請聯絡控方確認 Discord User ID。", ephemeral=True)
+            return
+        if not can_artist_use_ai(artist):
+            await interaction.followup.send("❌ 目前的合約狀態無法使用小律，請聯絡控方。", ephemeral=True)
+            return
+        parent = interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None
+        if parent is None:
+            await interaction.followup.send("❌ 請在小律頻道按這個按鈕。", ephemeral=True)
+            return
+        thread, created = await self._get_or_create_thread_for(interaction.user, parent)
+        if thread is None:
+            await interaction.followup.send(
+                "❌ 無法建立私人討論串，請通知控方確認 Bot 有「建立私人討論串」權限。", ephemeral=True,
+            )
+            return
+        if created:
+            await thread.send(f"{interaction.user.mention} {THREAD_WELCOME}")
+        await interaction.followup.send(f"✅ 你的私人討論串在這裡：{thread.mention}", ephemeral=True)
 
     async def _warm_course_cache(self) -> None:
         await self.bot.wait_until_ready()
@@ -147,6 +234,8 @@ class CourseQACog(commands.Cog):
     def cog_unload(self):
         if self._warm_task:
             self._warm_task.cancel()
+        if getattr(self, "_panel_task", None):
+            self._panel_task.cancel()
 
     @staticmethod
     def _load_thread_state() -> dict[str, int]:
@@ -453,30 +542,48 @@ class CourseQACog(commands.Cog):
             + "\n\n請直接說明你要查哪個會議記錄或檔案，再自由提問。"
         )
 
-    async def _get_or_create_thread(self, message: discord.Message) -> discord.Thread | None:
-        thread_id = self._thread_by_user.get(str(message.author.id))
+    async def _get_or_create_thread_for(
+        self, user: discord.abc.User, parent: discord.TextChannel,
+    ) -> tuple[discord.Thread | None, bool]:
+        """回傳 (討論串, 是否新建)。舊的討論串被封存時重新打開，不另開一個。"""
+        thread_id = self._thread_by_user.get(str(user.id))
         if thread_id:
             thread = self.bot.get_channel(thread_id)
-            if isinstance(thread, discord.Thread) and not thread.archived:
-                return thread
-
-        parent = message.channel
-        if not isinstance(parent, discord.TextChannel):
-            return None
+            if thread is None:
+                try:
+                    thread = await self.bot.fetch_channel(thread_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    thread = None
+            if isinstance(thread, discord.Thread):
+                try:
+                    if thread.archived:
+                        await thread.edit(archived=False)
+                    if thread.name.startswith("會議秘書小律"):  # 2026-10-18 改名前開的舊討論串
+                        await thread.edit(name=thread.name.replace("會議秘書小律", "小律", 1))
+                    await thread.add_user(user)
+                    return thread, False
+                except (discord.Forbidden, discord.HTTPException):
+                    logger.warning("小律無法重新打開討論串 %s，改開新的", thread_id)
         try:
             thread = await parent.create_thread(
-                name=f"小律｜{message.author.display_name}"[:100],
+                name=f"小律｜{getattr(user, 'display_name', user.name)}"[:100],
                 type=discord.ChannelType.private_thread,
                 auto_archive_duration=1440,
                 invitable=False,
                 reason="小律私人對話（查任務）",
             )
-            await thread.add_user(message.author)
+            await thread.add_user(user)
         except (discord.Forbidden, discord.HTTPException):
             logger.exception("建立小律私人 Thread 失敗")
-            return None
-        self._thread_by_user[str(message.author.id)] = thread.id
+            return None, False
+        self._thread_by_user[str(user.id)] = thread.id
         self._save_thread_state()
+        return thread, True
+
+    async def _get_or_create_thread(self, message: discord.Message) -> discord.Thread | None:
+        if not isinstance(message.channel, discord.TextChannel):
+            return None
+        thread, _ = await self._get_or_create_thread_for(message.author, message.channel)
         return thread
 
     @commands.Cog.listener()
@@ -520,6 +627,11 @@ class CourseQACog(commands.Cog):
                         logger.exception("小律建立私人對話失敗，且無法私訊使用者")
                     return
 
+            if not isinstance(message.channel, discord.Thread):
+                await thread.send(
+                    f"{message.author.mention} 你剛剛在公開頻道打的字已經收掉了。"
+                    "下次請按頻道置頂的「💬 開始問小律」，或直接在這個討論串裡問，問題就不會被別人看到。"
+                )
             if thread.id not in self._catalog_sent_threads and config.get_tenant().meeting_qa_enabled:
                 self._catalog_sent_threads.add(thread.id)
                 catalog = await self._attachment_catalog_for_user(message.author)
