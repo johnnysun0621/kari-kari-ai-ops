@@ -266,13 +266,11 @@ Bot 寫入：
 
 - 交件只有一種方式：上傳到 Bot 建立的公司 Drive 資料夾（`Tasks.提交方式` 已停用）。
 - 藝人檔案由 Bot 建立公司 Google Drive 指定資料夾並驗證；不接收 Discord 作業附件，也不提供私人 Drive 連結 fallback。
-  結構（2026-07-10 拍板，取代 Kickoff 的課程→日期→藝人）：
-  **藝人專區 → 任務類型夾 → YYYY-MM**（每類型一夾，隱私隔離：專區只分享給該藝人）。
+  隱私隔離：每個藝人專區只分享給該藝人本人（結構見下方「檔案路徑」）。
 - `Artists.Google Drive 資料夾` 存專區連結，Bot 自動 find-or-create 子資料夾。
 - 單一藝人任務首次提交時，Bot 會將任務資料夾連結自動回寫至 `Google Drive Folder`；有值則優先歸該資料夾。多人任務因每位藝人各有專區，連結會以藝人名稱標示後寫入 Task 內頁的「Drive 資料夾索引」；本次提交的資料夾連結保留在 Submission 的 `Drive URL`。
 - Drive 顯示檔名自動加前綴：藝人提交檔案為 `{藝人名稱}_{任務名稱}_{原檔名}`，老師批改檔為 `老師回饋_{提交名稱}_{原檔名}`。
-- 檔案路徑維持藝人專區最上層，底下依序為 `任務類型／YYYY-MM／YYYY.MM.DD_任務名稱／任務名稱_YYYY.MM.DD_ver.N`；老師回饋則放在同一任務底下的 `老師回饋／老師回饋_YYYY.MM.DD_ver.N`。
-- **2026-10-13 改版（程式已完成，重啟 bot 後生效）**：改成 `藝人專區／專案名稱／YYYY.MM.DD_任務名稱／任務名稱_YYYY.MM.DD_ver.N`，專案名稱讀 Tasks `關聯專案` → Projects `專案名稱`，沒掛專案用 `未分專案`；`檔案類型` 改為任務類型 → 專案類型 → 其他。詳見 [SUBMISSION_FLOW.md](../operations/SUBMISSION_FLOW.md)「新結構」與規則頁 M4-07、M4-16。
+- 檔案路徑（2026-10-18 上線，取代舊的 `任務類型／YYYY-MM` 結構）： `藝人專區／專案名稱／YYYY.MM.DD_任務名稱／任務名稱_YYYY.MM.DD_ver.N`，專案名稱讀 Tasks `關聯專案` → Projects `專案名稱`，沒掛專案用 `未分專案`；`檔案類型` 改為任務類型 → 專案類型 → 其他。詳見 [SUBMISSION_FLOW.md](../operations/SUBMISSION_FLOW.md)「資料夾結構」與規則頁 M4-07、M4-16。
 - 任務沒有截止日時，資料夾名稱的建立日期讀取 Notion page 的 `created_time`。
 - 同一次 Discord 提交可包含多個檔案；Notion 建立一筆提交紀錄，`Drive URL` 指向本次資料夾，`原始檔名` 與 `Drive File ID` 保存檔案清單。
 - 回寫 `Drive URL`＋`Drive File ID`＋`原始檔名`＋`檔案大小 MB`；其中 `原始檔名` 保留使用者上傳時的檔名。

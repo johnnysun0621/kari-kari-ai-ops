@@ -2,20 +2,38 @@
 
 讓 bot 能把藝人提交的檔案自動歸檔到公司 Google Drive。
 
-**兩種認證方式，服務帳號優先於 OAuth（`services/drive_api.py` 的
-`_credential_path()`）：** 兩者都設定時服務帳號贏，從 OAuth 切換過去不必先
-刪舊 `token.json`。
+## KariKari 現況（2026-10-18）
 
-| | 服務帳號（推薦） | OAuth 使用者授權（舊方式，仍相容） |
+| 項目 | 狀態 |
+|---|---|
+| 認證方式 | **OAuth 使用者授權**（路線 A／B），授權帳號 `karikariproject@gmail.com`，token 在 `credentials/token.json` |
+| OAuth app | Google Cloud 專案 `kali-bot-506310`，發布狀態 **實際運作中**（External、未送驗證、使用者上限 100） |
+| 總資料夾 | 「藝人提交檔案專用（小律維護，勿動）」，擁有者 karikariproject，一般存取「限制」；ID 在 `.env` 的 `GOOGLE_DRIVE_ROOT_FOLDER_ID` |
+| 藝人專區 | 7 位已簽約藝人各一個專區，直接以藝人名稱命名，連結已寫入 Notion Artists「Google Drive 資料夾」；舊連結備份在 `.state/artist_drive_folders_backup_20261018.json` |
+| 分享 | 每個專區只分享給該藝人本人的 Gmail（編輯者）；**總資料夾不要分享**。Bot 不會自動設權限，要人工分享 |
+| 舊總資料夾 | `1f3PApJAUQIZpesPUzXod1PkwbU_bGEZ0`（.env 內註解保留），舊檔不搬 |
+
+事故紀錄：2026-08-22 起 token 失效（`invalid_grant`，專案當時在「測試中」，refresh token 7 天就過期），
+Drive 交件全部失敗；2026-10-18 把 OAuth app 發布為正式並重新授權後恢復。
+
+## 選哪一種認證
+
+`services/drive_api.py` 的 `_credential_path()`：兩者都設定時服務帳號優先。
+
+| | OAuth 使用者授權（KariKari 現用） | 服務帳號 |
 |---|---|---|
-| 會不會過期 | **不會**——沒有同意畫面、沒有 refresh token | **會**：Google Cloud 專案在「測試中」狀態時，refresh token 7 天不活動就失效（這個專案已經踩過這個坑） |
-| 容量算在誰頭上 | 服務帳號自己的 15GB 免費額度（個人 Gmail 帳號沒有 Shared Drive 可用，寫進共用資料夾的檔案所有權仍歸服務帳號） | 授權帳號本人的 Google 帳號容量（15GB 免費或付費 Google One 方案） |
-| 設定時間 | 約 10 分鐘，一次性，之後不用再管 | 約 5 分鐘，但之後可能要重跑 |
-| 適用情境 | **新設定一律用這個** | 僅既有環境尚未遷移時的相容路徑 |
+| 會不會過期 | app **發布為正式**後不會 7 天過期；但約 6 個月完全沒使用、使用者撤銷授權、或改密碼（含 Gmail scope 時）仍會失效 | 不會 |
+| 容量算在誰頭上 | 授權帳號本人的 Drive 容量 | **服務帳號沒有自己的儲存空間**：在個人 Gmail 的「我的雲端硬碟」裡上傳會失敗（`storageQuotaExceeded`），只能寫進 **Google Workspace 共用雲端硬碟**（付費） |
+| 適用情境 | 個人 Gmail 帳號（KariKari 屬於這種） | 客戶有 Google Workspace、可以開共用雲端硬碟 |
+| 費用 | 免費 | Workspace 按人收費 |
+
+> 先前這份文件寫「服務帳號有自己的 15GB」是錯的（服務帳號已沒有可用的儲存空間），已更正。
+
+程式對兩種情況都相容：Drive API 呼叫都帶 `supportsAllDrives=True`，總資料夾放在共用雲端硬碟也能用。
 
 ---
 
-## 路線 S｜服務帳號（推薦，新設定一律走這條）
+## 路線 S｜服務帳號（只適用 Google Workspace 共用雲端硬碟）
 
 ### 一、建服務帳號
 
@@ -51,21 +69,23 @@ GOOGLE_SERVICE_ACCOUNT_KEY_PATH=credentials/service_account.json
 
 成功會列出總資料夾名稱＋底下所有藝人專區的連結，跟 OAuth 路線驗證方式相同。
 
-### 容量監控
+### 前提：總資料夾必須在共用雲端硬碟
 
-個人 Gmail 帳號沒有 Shared Drive，服務帳號建立的檔案容量算在**服務帳號自己
-的 15GB 免費額度**，不是總資料夾擁有者的個人容量。目前沒有自動監控這個數字；
-若未來提交量大，之後要加一支定期檢查用量的腳本，或評估升級 Google Workspace
-改用 Shared Drive（會移除這個 15GB 上限，但 Workspace 是按人收費的訂閱制）。
+服務帳號沒有儲存空間。總資料夾要建在 Workspace 的**共用雲端硬碟**裡，並把服務帳號
+加為該共用雲端硬碟的成員（「內容管理員」以上）。放在個人「我的雲端硬碟」會建得了
+資料夾、但上傳檔案失敗。
 
 ---
 
-## 路線 A／B｜OAuth 使用者授權（舊方式，僅既有環境相容）
+## 路線 A／B｜OAuth 使用者授權（個人 Gmail 用這條）
 
-新設定不要走這兩條，直接用上面的路線 S。以下保留給還沒遷移、仍在用
-`credentials/token.json` 的環境參考。
+**一定要把 OAuth app 發布為正式**（「Google Auth Platform」→「目標對象」→「發布應用程式」），
+否則 refresh token 7 天就過期。發布前「品牌塑造」要填齊：應用程式名稱、支援 email、
+首頁網址、隱私權政策網址，以及「授權網域」。KariKari 用公開的 Notion 頁面當首頁與隱私權政策，
+授權網域填完整子網域 `season-kryptops-56c.notion.site`（`notion.site` 是公開後綴，不能只填它）。
+發布後授權畫面仍會顯示「Google 尚未驗證這個應用程式」，自用不需送審，點「進階」→「前往」即可。
 
-### KariKari 歷史狀態（2026-07-10，OAuth 時期）
+### KariKari 歷史狀態（2026-07-10，已被上方「現況」取代）
 
 | 項目 | 狀態 |
 |---|---|
@@ -75,8 +95,8 @@ GOOGLE_SERVICE_ACCOUNT_KEY_PATH=credentials/service_account.json
 | Notion 回填 | ✅ 兩位藝人的 Artists「Google Drive 資料夾」欄位已填入專區連結 |
 | 檔案上傳功能 | ✅ 已上線（`/我的任務` → `提交任務` 選任務後，使用 Bot 建立的公司 Drive 指定資料夾） |
 
-之後**新增藝人**時的步驟：總資料夾底下建「<藝人>專區」→ 跑 `scripts/check_drive.py`
-拿到連結 → 填入該藝人 Notion Artists 的「Google Drive 資料夾」欄位。完成。
+之後**新增藝人**：Artists「Google Drive 資料夾」留空也可以，第一次交件時 Bot 會在總資料夾底下
+用藝人名稱 find-or-create 專區並回寫連結；之後到 Drive 把該專區分享給藝人本人。
 
 ### 整體圖像
 
@@ -85,7 +105,7 @@ Google Cloud 專案（一次性）
   └─ OAuth 用戶端 → client_secret.json   ← 「這個 app 是誰」
         └─ 授權流程 → token.json          ← 「app 可以用誰的 Drive」
               └─ bot 用 token 操作 Drive：
-                 總資料夾/藝人專區/類型夾/月份夾
+                 總資料夾/藝人專區/專案夾/任務夾/ver.N
 ```
 
 兩個檔案都放專案的 `credentials/`（已在 `.gitignore`，永不入庫）。
@@ -157,36 +177,26 @@ Notion Artists 的「Google Drive 資料夾」欄位**，歸檔就接通了。
 
 ---
 
-## 歸檔結構（bot 自動維護）
+## 歸檔結構（bot 自動維護，2026-10-18 上線）
+
+規則全文見規則頁 M4-07、M4-16。
 
 ```
 總資料夾/
-  振華專區/            ← 手動建立、連結填入 Artists.Google Drive 資料夾
-    課程作業/2026-07/   ← bot 自動 find-or-create（任務類型夾／月份夾）
-    創作交付/2026-07/
-  Chenhua專區/
+└─ <藝人專區>/                                 ← Artists.Google Drive 資料夾
+   ├─ <專案名稱>/                              ← 任務的「關聯專案」名稱
+   │  └─ <YYYY.MM.DD_任務名稱>/                 ← 日期取截止日，沒有用 Notion 建立日
+   │     ├─ <任務名稱_YYYY.MM.DD_ver.N>/        ← 每次提交一個版本夾
+   │     └─ 老師回饋/老師回饋_YYYY.MM.DD_ver.N/
+   └─ 未分專案/                                ← 沒掛專案的任務
 ```
 
-- 隱私：每個專區只分享給該藝人（＋控方），藝人看不到彼此
-- 特例：任務的 `Google Drive Folder` 欄位有值 → 該任務的提交直接歸那裡
-- 對應表（任務類型→資料夾名）在 `services/drive_archive.py`，租戶可覆寫
-
-### 新結構（取代上面的任務類型夾；2026-10-13 程式已完成，重啟 bot 後生效）
-
-規則全文見規則頁 M4-07、M4-16；實作卡「M4-07：Drive 歸檔改照 Notion 專案分層」，前置是 Drive 授權修好。
-
-```
-<藝人專區>/
-├─ <專案名稱>/                                ← 任務的「關聯專案」名稱；沒掛專案 → 未分專案/
-│  └─ <YYYY.MM.DD_任務名稱>/                   ← 日期取截止日，沒有用 Notion 建立日
-│     ├─ <任務名稱_YYYY.MM.DD_ver.N>/          ← 每次提交一個版本夾
-│     └─ 老師回饋/老師回饋_YYYY.MM.DD_ver.N/
-└─ 未分專案/
-```
-
+- 隱私：每個專區只分享給該藝人，藝人看不到彼此
+- 任務的 `Google Drive Folder` 有值 → 該任務的提交直接歸那裡
 - 專案夾名稱照 Notion 原字串（不安全字元換成 `_`、最多 70 字）；掛多個專案用第一個。
-- 拿掉舊的「任務類型夾」與「YYYY-MM」兩層。
-- 任務有填 `Google Drive Folder` → 直接用；第一次提交後 Bot 回寫，所以同一任務之後一律回到同一個任務夾。
+- 取代 2026-07-10 的「任務類型夾／YYYY-MM」結構；舊檔留在舊總資料夾，不搬。
+- 第一次提交後 Bot 回寫 `Google Drive Folder`，所以同一任務之後一律回到同一個任務夾。
+- 3 小時內重新進入同一筆任務的交件，沿用同一個 `ver.N`（詳見 SUBMISSION_FLOW.md）。
 - **專案建好後盡量不要改名**：改名後，之後第一次提交的任務會在新名稱的夾，已交過的留在舊夾。
 - 既有檔案不搬（2026-10-13 時沒有任何任務已回寫 `Google Drive Folder`）。
 - Submissions 的 `檔案類型`：先看任務類型（課程時間&作業繳交→課程作業、創作交付→Demo、企劃提案→企劃書、錄音→錄音檔），對不到看專案類型（藝人外部商業合作／商務合作→業配素材、課程培訓→課程作業、內容企劃→企劃書、作品製作→Demo），都對不到 → 其他。
@@ -212,10 +222,11 @@ Notion Artists 的「Google Drive 資料夾」欄位**，歸檔就接通了。
 
 | 症狀 | 原因／解法 |
 |---|---|
-| 授權後過幾天 token 失效（`invalid_grant`） | OAuth 使用者授權的已知問題：Cloud 專案在「測試中」→ refresh token 7 天不活動就過期。治標：OAuth 同意畫面 →「發布應用程式」轉正式（自用 app 通常不需送審），再重跑授權。**治本：改走路線 S（服務帳號），徹底不會有這個問題**——這個 repo 2026-10-09 已經踩過一次才加的服務帳號支援 |
+| 授權後過幾天 token 失效（`invalid_grant`） | Cloud 專案還在「測試中」→ refresh token 7 天就過期。把 app 發布為正式（見路線 A／B 開頭），再跑 `scripts/authorize_drive.py` 重新授權，**然後重啟 bot**（執行中的 bot 記憶體裡還是舊 token）。已是正式狀態仍失效 → 查是否超過 6 個月沒用、或授權在 Google 帳戶被撤銷 |
+| 服務帳號上傳失敗 `storageQuotaExceeded` | 服務帳號沒有儲存空間，總資料夾不在共用雲端硬碟。個人 Gmail 改用 OAuth |
 | check_drive 說看不到總資料夾 | OAuth：登入的帳號不是資料夾擁有者／沒被分享編輯權限，或 scope 還是舊的 `drive.file` → 刪 token.json 重跑授權。服務帳號：資料夾沒有分享給金鑰檔裡的 `client_email` |
 | 「這個應用程式未經驗證」 | OAuth 路線才會看到，正常。自己的 app 點「進階」→「前往」即可 |
-| 換公司（平轉） | 走路線 S 或路線 B 全套；每租戶一組 credentials 與總資料夾，互不共用 |
+| 換公司（平轉） | 個人 Gmail 走路線 B 並發布為正式；有 Workspace 才考慮路線 S。每租戶一組 credentials 與總資料夾，互不共用 |
 
 ## 安全備忘
 
