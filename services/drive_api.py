@@ -74,6 +74,16 @@ def reset_for_tests() -> None:
     _version_folder_locks.clear()
 
 
+def drop_cached_service() -> None:
+    """授權失效時丟掉記憶體裡的連線，重新授權寫入新 token.json 後不必重啟 bot 就會讀到。"""
+    _services.pop(_credential_path(), None)
+
+
+async def check_folder_access(folder_id: str) -> dict:
+    """讀一次資料夾（每日健康檢查用）；授權失效、資料夾不見或沒權限都會 raise。"""
+    return await asyncio.to_thread(lambda: _folder_resource_sync(_get_service(), folder_id))
+
+
 def _escape_query_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 

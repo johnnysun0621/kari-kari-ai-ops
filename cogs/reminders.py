@@ -10,6 +10,8 @@ from cogs import channel_guard, ui_text
 from services import (
     audit,
     daily_nag,
+    drive_api,
+    drive_health,
     notification_log,
     repositories,
     scheduling_sla,
@@ -68,6 +70,7 @@ class RemindersCog(commands.Cog):
             await self._check_task_assignment_notifications()
             await self._check_unacknowledged_task_notifications()
             await self._check_batch_resend()
+            await self._check_drive_health()
             await self._check_daily_nags()
             await self._check_teacher_post_class()
             await self._check_revision_deadlines()
@@ -509,6 +512,40 @@ class RemindersCog(commands.Cog):
                     after=f"第 {records[item.page_id]['count']} 次｜私訊 {sent} 位老師"
                     + ("" if sent else "｜已轉控方頻道") + f"｜同堂 {len(group)} 筆合併一則",
                 )
+
+    async def _check_drive_health(self):
+        """每日 Drive 健康檢查：讀一次總資料夾，失敗當天通知控方一次，恢復時也說一聲。"""
+        tenant = config.get_tenant()
+        if not tenant.drive_root_folder_id or not drive_api.is_configured():
+            return
+        now = datetime.now(tenant.tz)
+        state = notification_log.shared()
+        if not drive_health.check_due(now, state.get(drive_health.LAST_DATE_KEY), tenant.daily_nag_hour):
+            return
+        state[drive_health.LAST_DATE_KEY] = now.date().isoformat()
+        notification_log.persist()
+
+        # 每天從 token.json 重建一次連線：重新授權後不重啟 bot，最晚隔天也會換上新授權。
+        drive_api.drop_cached_service()
+        try:
+            await drive_api.check_folder_access(tenant.drive_root_folder_id)
+        except Exception as exc:
+            logger.exception("Drive 健康檢查失敗")
+            drive_api.drop_cached_service()
+            state[drive_health.FAILING_KEY] = True
+            notification_log.persist()
+            await channel_guard.try_send(
+                self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID),
+                content=drive_health.failure_message(drive_health.classify_error(exc), str(exc)),
+            )
+            return
+        if state.pop(drive_health.FAILING_KEY, False):
+            notification_log.persist()
+            await channel_guard.try_send(
+                self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID),
+                content=drive_health.RECOVERED_MESSAGE,
+            )
+        logger.info("Drive 健康檢查正常")
 
     async def _check_daily_nags(self):
         """每日催辦（M3-11）：已逾期／需修改催藝人，待審核催審核人員，一天一次、不帶按鈕。
