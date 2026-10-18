@@ -356,7 +356,7 @@ Drive 資料夾回寫驗收：
 
 ### 會議秘書小律驗收
 
-1. 確認 `Artists` 有 Discord User ID，且會議紀錄關聯該藝人、`會議類型` 不在 `QA_HIDDEN_MEETING_TYPES` 排除清單內（預設排除 `課程`／`課程會議`／`公司例會`／`管理層會議`）、`藝人可見` 已勾選。
+1. 確認 `Artists` 有 Discord User ID，且會議紀錄關聯該藝人、`會議類型` 不在 `QA_HIDDEN_MEETING_TYPES` 排除清單內（KariKari 排除 `課程`／`課程會議`）、`藝人可見` 已勾選。
 2. 在 `AI_CHANNEL_ID` 直接輸入問題，確認 Bot 建立本人私人 Thread；其他藝人不能在該 Thread 讀取資料。
 3. 若會議頁有 PDF／DOCX／PPTX／XLSX，確認第一則回覆先顯示會議附件索引，且仍會處理當次問題；未指定附件時不引用附件正文。
 4. 指定會議頁或檔名後提問，確認回答只引用指定附件與允許的會議正文，並附 Notion 來源。
