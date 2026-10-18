@@ -21,19 +21,32 @@ _PANEL_STATE_PATH = Path(".state/xiaolu_panel.json")
 START_BUTTON_ID = "xiaolu:start"
 # 頻道置頂的入口說明。2026-10-18：藝人在頻道公開發問時，bot 刪除前那一兩秒（與通知預覽）
 # 大家都看得到，所以入口改成按鈕，問題從頭到尾只出現在本人的私人討論串。
-PANEL_TEXT = (
-    "🤖 **小律｜查自己的任務**\n\n"
-    "按下方「💬 開始問小律」，小律會開一個**只有你看得到**的討論串（已經有的話會帶你回去）。\n"
-    "之後在討論串裡直接打字問就好，例如「這週有什麼任務」「我還有哪些沒交」「week4 聽力要做幾題」。\n\n"
-    "⚠️ **請不要直接在這個頻道打字**：這裡大家都看得到。要交件或按「收到任務」，請用 `/我的任務`。"
-)
-THREAD_WELCOME = (
-    "👋 這裡只有你看得到。直接打字問小律就好，例如：\n"
-    "・「這週有什麼任務」「下週要交什麼」\n"
-    "・「我還有哪些沒交」\n"
-    "・「第 2 個的詳細內容」\n"
-    "・「week4 聽力要做幾題」"
-)
+def _submit_channel() -> str:
+    """交件的地方：有設定任務查詢入口就給可點的頻道連結。"""
+    return f"<#{config.TASK_CHANNEL_ID}>" if config.TASK_CHANNEL_ID else "`任務查詢入口`"
+
+
+def panel_text() -> str:
+    return (
+        "🤖 **小律｜查任務的地方**\n\n"
+        "這裡可以問**你自己任務的細節**：\n"
+        "・這週／下週有什麼任務、還有哪些沒交\n"
+        "・某個任務要做什麼、要交什麼形式、什麼時候截止\n\n"
+        "👉 按下方「💬 開始問小律」，會開一個**只有你看得到**的討論串，在裡面直接打字問就好。\n\n"
+        "📤 **要交作業、按「收到任務」，不是在這裡**\n"
+        f"請到 {_submit_channel()} 打 `/我的任務`。小律只能幫你查，不能幫你交。\n\n"
+        "⚠️ 請不要直接在這個頻道打字，這裡大家都看得到。"
+    )
+
+
+def thread_welcome() -> str:
+    return (
+        "👋 這裡只有你看得到，直接打字問就好，例如：\n"
+        "・「這週有什麼任務」「我還有哪些沒交」\n"
+        "・「第 2 個的詳細內容」\n"
+        "・「week4 聽力要做幾題」\n\n"
+        f"📤 要交作業請到 {_submit_channel()} 打 `/我的任務`。"
+    )
 _DISCORD_MESSAGE_LIMIT = 1900
 TASK_ONLY_HELP = (
     "🤖 **小律**\n\n"
@@ -177,14 +190,14 @@ class CourseQACog(commands.Cog):
             if state.get("channel_id") == channel.id and state.get("message_id"):
                 try:
                     message = await channel.fetch_message(int(state["message_id"]))
-                    if message.content != PANEL_TEXT:
-                        await message.edit(content=PANEL_TEXT, view=view)
+                    if message.content != panel_text():
+                        await message.edit(content=panel_text(), view=view)
                     if not message.pinned:
                         await message.pin(reason="小律入口")
                     return
                 except discord.NotFound:
                     pass
-            message = await channel.send(PANEL_TEXT, view=view)
+            message = await channel.send(panel_text(), view=view)
             await message.pin(reason="小律入口")
         except (discord.Forbidden, discord.HTTPException):
             logger.exception("小律入口置頂訊息建立失敗（需要傳送訊息與管理訊息權限）")
@@ -215,7 +228,7 @@ class CourseQACog(commands.Cog):
             )
             return
         if created:
-            await thread.send(f"{interaction.user.mention} {THREAD_WELCOME}")
+            await thread.send(f"{interaction.user.mention} {thread_welcome()}")
         await interaction.followup.send(f"✅ 你的私人討論串在這裡：{thread.mention}", ephemeral=True)
 
     async def _warm_course_cache(self) -> None:

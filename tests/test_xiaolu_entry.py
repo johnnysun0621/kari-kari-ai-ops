@@ -141,9 +141,20 @@ def test_按鈕重啟後仍可用():
     assert button.custom_id == course_qa.START_BUTTON_ID
 
 
-def test_置頂說明提醒不要在頻道打字():
-    assert "不要直接在這個頻道打字" in course_qa.PANEL_TEXT
-    assert "notion" not in course_qa.PANEL_TEXT.lower()
+def test_置頂說明講清楚用途_交件要換頻道(monkeypatch):
+    monkeypatch.setattr(course_qa.config, "TASK_CHANNEL_ID", 123)
+    text = course_qa.panel_text()
+
+    assert "查任務的地方" in text and "不要直接在這個頻道打字" in text
+    assert "不是在這裡" in text and "<#123>" in text and "/我的任務" in text
+    assert "notion" not in text.lower()
+    assert "<#123>" in course_qa.thread_welcome()
+
+
+def test_沒設定任務頻道時寫頻道名稱(monkeypatch):
+    monkeypatch.setattr(course_qa.config, "TASK_CHANNEL_ID", 0)
+
+    assert "`任務查詢入口`" in course_qa.panel_text()
 
 
 class FakeMessage:
@@ -211,7 +222,7 @@ def test_重啟時不重複發_內容有改才更新(panel):
     asyncio.run(panel.make(channel)._ensure_panel())
 
     assert channel.sent == []
-    assert old.edited and old.content == course_qa.PANEL_TEXT and old.pinned
+    assert old.edited and old.content == course_qa.panel_text() and old.pinned
 
 
 def test_入口被刪掉就重發(panel):
