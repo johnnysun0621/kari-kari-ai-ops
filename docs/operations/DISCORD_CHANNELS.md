@@ -17,7 +17,7 @@ KariKari 是第一個測試站；未來平轉到其他公司時，頻道用途�
 | `公告區` | `ANNOUNCE_CHANNEL_ID` | 公開類型 Task、月度收集公告、Notion 布告欄、本月排程（藝人唯讀，但可點互動按鈕）。未設定時公告發到 `時間管理` |
 | `時間管理` | `SCHEDULE_CHANNEL_ID` | 藝人回報、查看與管理月度可配合時間 |
 | `任務查詢入口`（舊名：`任務專用`） | `TASK_CHANNEL_ID` | 藝人查詢自己的任務並提交作業 |
-| `課程助教` | `AI_CHANNEL_ID` | 藝人透過會議秘書小律查自己的任務，以及已標記藝人可見、跟自己有關的會議紀錄（課程、課程會議除外） |
+| `課程助教` | `AI_CHANNEL_ID` | 藝人問小律查自己的任務（會議紀錄查詢 2026-10-18 起封存，`MEETING_QA_ENABLED=false`） |
 | `營運內部通知` | `ADMIN_NOTIFY_CHANNEL_ID` | 控方限定：Bot 自動推送任務、審核、SLA、排課與回填通知 |
 | `營運操作` | `ADMIN_COMMAND_CHANNEL_ID` | 控方限定：slash command 操作入口；未設定時沿用 `營運內部通知` |
 
