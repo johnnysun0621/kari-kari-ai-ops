@@ -25,6 +25,14 @@ _MEETING_RE = re.compile(r"會議|開會|開過會|討論|逐字稿|筆記|重�
 _PENDING_RE = re.compile(r"還沒交|沒交|未交|要交|待交|該交")
 
 MAX_LINES = 20
+MAX_DETAIL_CHARS = 1500
+MIN_NAME_MATCH = 4
+
+# 想看某一筆任務的內容（2026-10-18 QA：藝人問任務詳細內容，小律只會列清單）
+_DETAIL_RE = re.compile(r"詳細|詳情|內容|說明|要求|細節|介紹|在講什麼|是什麼|做什麼|看一下|看看")
+_INDEX_RE = re.compile(r"第\s*([0-9０-９]+|[一二三四五六七八九十]+)\s*(?:個|筆|項|件|條)?")
+_CHINESE_DIGITS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_NORMALIZE_RE = re.compile(r"[\s　（）()【】\[\]｜|,，、。:：/／&＆_＿\-－~～]+")
 
 
 @dataclass(frozen=True)
@@ -127,3 +135,63 @@ def select_tasks(
         return (deadline is None, deadline.timestamp() if deadline else 0, task.name)
 
     return sorted(picked, key=sort_key)
+
+
+def wants_detail(question: str) -> bool:
+    return bool(_DETAIL_RE.search(question))
+
+
+def index_reference(question: str) -> int | None:
+    """「第 2 個」「第三筆」→ 2、3（指上一次列出的清單）。"""
+    match = _INDEX_RE.search(question)
+    if not match:
+        return None
+    raw = match.group(1).translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    if raw.isdigit():
+        return int(raw)
+    if raw in _CHINESE_DIGITS:
+        return _CHINESE_DIGITS[raw]
+    if raw.startswith("十") and raw[1:] in _CHINESE_DIGITS:
+        return 10 + _CHINESE_DIGITS[raw[1:]]
+    return None
+
+
+def _normalize(text: str) -> str:
+    # 數字也拿掉：任務名稱常以日期開頭（「10/25（日）week4…」），問「10/25 要交什麼」不該被當成點名那筆。
+    return re.sub(r"[0-9０-９]+", "", _NORMALIZE_RE.sub("", text)).lower()
+
+
+def _longest_common_run(a: str, b: str) -> int:
+    best = 0
+    previous = [0] * (len(b) + 1)
+    for char_a in a:
+        current = [0] * (len(b) + 1)
+        for j, char_b in enumerate(b, start=1):
+            if char_a == char_b:
+                current[j] = previous[j - 1] + 1
+                best = max(best, current[j])
+        previous = current
+    return best
+
+
+def match_tasks_by_name(question: str, tasks: list[repositories.TaskItem]) -> list[repositories.TaskItem]:
+    """問題裡提到的任務：名稱連續重疊最長的那幾筆（至少 4 個字，避免「任務」「作業」這種泛詞誤中）。"""
+    normalized_question = _normalize(question)
+    scored = []
+    for task in tasks:
+        if task.status in repositories.INACTIVE_TASK_STATUSES:
+            continue
+        name = _normalize(task.name)
+        if not name:
+            continue
+        score = len(name) if name in normalized_question else _longest_common_run(name, normalized_question)
+        if score >= min(MIN_NAME_MATCH, len(name)):
+            scored.append((score, task))
+    if not scored:
+        return []
+    best = max(score for score, _ in scored)
+    return [task for score, task in scored if score == best]
+
+
+def is_meeting_question(question: str) -> bool:
+    return bool(_MEETING_RE.search(question))

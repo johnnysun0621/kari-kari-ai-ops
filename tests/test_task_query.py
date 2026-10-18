@@ -113,6 +113,7 @@ def cog(monkeypatch):
     instance._answer_locks = {}
     instance._records_cache = {}
     instance._memory_by_user = {}
+    instance._save_memory_state = lambda: None  # 不可寫到正式 .state
     return SimpleNamespace(cog=instance, calls=calls)
 
 
@@ -140,3 +141,75 @@ def test_會議問題仍走會議紀錄(cog):
 
     assert cog.calls["meetings"] == 1
     assert "這週有什麼任務" in answer  # 沒有會議紀錄時提示可以改問任務
+
+
+# ---------- 任務詳細內容（2026-10-18 QA：藝人要看任務內容，小律只會列清單） ----------
+
+def _block(kind, text):
+    return {"type": kind, kind: {"rich_text": [{"plain_text": text}]}}
+
+
+def test_內頁全文略過_bot_寫的段落與任務說明標題():
+    blocks = [
+        _block("paragraph", "控方直接寫在內頁的說明"),
+        _block("heading_2", "任務說明"),
+        _block("paragraph", "第二段"),
+        _block("heading_2", "藝人回覆"),
+        _block("paragraph", "藝人回報的內容不該出現"),
+        _block("heading_2", "附註"),
+        _block("paragraph", "附註內容"),
+    ]
+
+    assert repositories.task_page_body_text(blocks) == "控方直接寫在內頁的說明\n第二段\n附註\n附註內容"
+
+
+def test_用名稱點名任務():
+    tasks = [make_task("Johnny 測試(課程時間&作業繳交)"), make_task("測試GOGO")]
+
+    assert [t.name for t in task_query.match_tasks_by_name("Johnny 測試的詳細內容", tasks)] == [
+        "Johnny 測試(課程時間&作業繳交)"
+    ]
+
+
+def test_日期數字不算點名():
+    tasks = [make_task("10/25（日）week4 聽力、歌唱")]
+
+    assert task_query.match_tasks_by_name("10/25 要交什麼", tasks) == []
+
+
+def test_第N個():
+    assert task_query.index_reference("第2個的詳細內容") == 2
+    assert task_query.index_reference("第三筆") == 3
+    assert task_query.index_reference("這週有什麼任務") is None
+
+
+@pytest.fixture
+def detail_cog(cog, monkeypatch):
+    async def page_body(page_id):
+        return f"{page_id} 的內頁內容 https://www.notion.so/secret"
+
+    monkeypatch.setattr(repositories, "get_task_page_body", page_body)
+    cog.cog._save_memory_state = lambda: None
+    return cog
+
+
+def test_先列清單再問第N個的詳細(detail_cog):
+    listing = ask(detail_cog, "我有哪些任務")
+    assert listing.splitlines()[3].startswith("1. ")
+
+    detail = ask(detail_cog, "第2個的詳細內容")
+
+    assert "📌 **錄音**" in detail and "錄音 的內頁內容" in detail
+    assert not notion_links.contains_notion_link(detail)
+
+
+def test_直接講任務名稱看詳細(detail_cog):
+    detail = ask(detail_cog, "交 cover 素材的要求是什麼")
+
+    assert "📌 **交 cover 素材" in detail and "**任務內容**" in detail
+
+
+def test_想看內容但對不到任務就交回會議紀錄(detail_cog):
+    ask(detail_cog, "那份企劃的內容")
+
+    assert detail_cog.calls["meetings"] == 1

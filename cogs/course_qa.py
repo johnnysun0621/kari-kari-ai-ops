@@ -26,7 +26,7 @@ def can_artist_use_ai(artist: repositories.Artist) -> bool:
 
 def _sanitize_memory(value: dict) -> dict:
     """只保留檢索狀態，不持久化使用者問題文字。"""
-    allowed = {"mode", "month", "record_ids", "attachment_names"}
+    allowed = {"mode", "month", "record_ids", "attachment_names", "task_ids"}
     return {key: item for key, item in value.items() if key in allowed}
 
 
@@ -210,8 +210,12 @@ class CourseQACog(commands.Cog):
             return await self._answer_for_user_unlocked(user, question)
 
     async def _answer_for_user_unlocked(self, user: discord.abc.User, question: str) -> str:
-        if task_query.is_task_query(question):
-            return await self._answer_task_query(user, question)
+        if task_query.is_task_query(question) or (
+            task_query.wants_detail(question) and not task_query.is_meeting_question(question)
+        ):
+            answer = await self._answer_task_query(user, question)
+            if answer is not None:
+                return answer
         artist, records, error = await self._load_records_for_user(user)
         if error:
             return error
@@ -266,8 +270,12 @@ class CourseQACog(commands.Cog):
         self._save_memory_state()
         return f"🤖 **會議秘書小律**\n\n{answer}"
 
-    async def _answer_task_query(self, user: discord.abc.User, question: str) -> str:
-        """M6-03：用自然語言查自己的任務。只查詢、不經 LLM，範圍與 /我的任務 相同。"""
+    async def _answer_task_query(self, user: discord.abc.User, question: str) -> str | None:
+        """M6-03：用自然語言查自己的任務。只查詢、不經 LLM，範圍與 /我的任務 相同。
+
+        問到某一筆（名稱或「第 N 個」）且想看內容時回任務詳細；
+        只是想看內容、卻對不到任何任務時回 None，交回會議紀錄流程。
+        """
         artist = await repositories.find_artist_by_discord_id(user.id)
         if artist is None:
             return "❌ 找不到你的藝人資料，請聯絡控方。"
@@ -279,12 +287,20 @@ class CourseQACog(commands.Cog):
             logger.exception("小律讀取任務失敗：%s", artist.name)
             return "❌ 讀取任務失敗，請稍後再試，或改用 `/我的任務`。"
         now = datetime.now(config.get_tenant().tz)
+        detail_targets = self._detail_targets(user, question, tasks)
+        if detail_targets:
+            if len(detail_targets) == 1:
+                return await self._task_detail_answer(detail_targets[0], now)
+            names = "\n".join(f"・{strip_notion_links(task.name)}" for task in detail_targets[:10])
+            return f"🤖 **會議秘書小律**\n\n符合的任務有 {len(detail_targets)} 筆，你要看哪一筆？\n{names}"
+        if not task_query.is_task_query(question):
+            return None
         date_range = task_query.parse_range(question, now)
         pending_only = task_query.wants_pending_only(question)
         selected = task_query.select_tasks(tasks, date_range, pending_only=pending_only)
         scope = f"{date_range.label}" if date_range else "目前"
         kind = "還沒交的任務" if pending_only else "任務"
-        footer = "要交件或按「收到任務」，請用 `/我的任務`。"
+        footer = "想看某一筆的內容，可以問「第 2 個的詳細內容」或直接講任務名稱。要交件或按「收到任務」，請用 `/我的任務`。"
         if not selected:
             return f"🤖 **會議秘書小律**\n\n{scope}沒有{kind}。\n{footer}"
         lines = [
@@ -292,6 +308,12 @@ class CourseQACog(commands.Cog):
             f"{ui_text.deadline_text(task, now)}｜{task.status or '未填狀態'}"
             for task in selected[:task_query.MAX_LINES]
         ]
+        self._memory_by_user[str(user.id)] = {
+            **self._memory_by_user.get(str(user.id), {}),
+            "task_ids": [task.page_id for task in selected[:task_query.MAX_LINES]],
+        }
+        self._save_memory_state()
+        lines = [f"{index}. {line.removeprefix('・')}" for index, line in enumerate(lines, start=1)]
         more = len(selected) - len(lines)
         if more > 0:
             lines.append(f"（另有 {more} 筆，完整清單請用 `/我的任務`）")
@@ -299,6 +321,50 @@ class CourseQACog(commands.Cog):
             f"🤖 **會議秘書小律**\n\n📑 **{artist.name}｜{scope}{'' if pending_only else '的'}{kind}**（{len(selected)} 筆）\n"
             + "\n".join(lines)
             + f"\n\n{footer}"
+        )
+
+    def _detail_targets(
+        self, user: discord.abc.User, question: str, tasks: list[repositories.TaskItem],
+    ) -> list[repositories.TaskItem]:
+        """要看內容的那筆：先看「第 N 個」（上次列出的清單），再比對任務名稱。"""
+        index = task_query.index_reference(question)
+        if index is not None:
+            remembered = self._memory_by_user.get(str(user.id), {}).get("task_ids") or []
+            by_id = {task.page_id: task for task in tasks}
+            if 1 <= index <= len(remembered) and remembered[index - 1] in by_id:
+                return [by_id[remembered[index - 1]]]
+        # 「這週有什麼任務」這種問法名稱不會中；問題裡點名某筆任務時就給那筆的詳細。
+        return task_query.match_tasks_by_name(question, tasks)
+
+    async def _task_detail_answer(self, task: repositories.TaskItem, now: datetime) -> str:
+        """任務詳細：基本資訊＋任務內頁內容（有「任務說明」段落就用它，沒有就讀整頁）。"""
+        body = task.description
+        if not body:
+            try:
+                body = await repositories.get_task_page_body(task.page_id)
+            except Exception:
+                logger.exception("小律讀取任務內頁失敗：%s", task.page_id)
+                body = ""
+        body = strip_notion_links(body).strip()
+        if len(body) > task_query.MAX_DETAIL_CHARS:
+            body = body[:task_query.MAX_DETAIL_CHARS].rstrip() + "…（內容較長，只顯示前段；完整內容請問控方）"
+        info = [
+            f"・類型：{task.task_type or '任務'}",
+            f"・狀態：{task.status or '未填狀態'}",
+            f"・期限：{ui_text.deadline_text(task, now)}",
+        ]
+        if task.start:
+            start_text = f"{task.start.month}/{task.start.day}"
+            if task.start_has_time:
+                start_text += task.start.strftime(" %H:%M")
+            info.insert(2, f"・開始：{start_text}")
+        if repositories.is_task_submittable(task):
+            info.append("・可以交件：用 `/我的任務` → 提交任務")
+        return (
+            f"🤖 **會議秘書小律**\n\n📌 **{strip_notion_links(task.name)}**\n"
+            + "\n".join(info)
+            + "\n\n**任務內容**\n"
+            + (body or "（控方還沒寫任務內容）")
         )
 
     async def _attachment_catalog_for_user(self, user: discord.abc.User) -> str | None:

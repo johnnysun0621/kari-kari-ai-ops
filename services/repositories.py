@@ -243,6 +243,40 @@ async def _task_description_from_page(page: dict) -> str:
     return description or legacy
 
 
+# Bot 自己寫進任務內頁的段落；給藝人看任務內容時略過，避免把系統索引或藝人回報當成任務說明。
+BOT_WRITTEN_TASK_SECTIONS = ("藝人回覆", "Drive 資料夾索引")
+
+
+def task_page_body_text(blocks: list[dict]) -> str:
+    """任務內頁的全文（小律「任務詳細內容」用）。
+
+    控方常直接把說明寫在內頁、沒有加「任務說明」標題（2026-10-18 QA 實例），
+    所以這裡讀整頁，只跳過 bot 自己寫的段落與「任務說明」標題本身。
+    """
+    lines: list[str] = []
+    skip_level: int | None = None
+    for block in blocks:
+        level = _heading_level(block)
+        text = _block_plain_text(block)
+        if skip_level is not None:
+            if level is not None and level <= skip_level:
+                skip_level = None
+            else:
+                continue
+        if level is not None and text in BOT_WRITTEN_TASK_SECTIONS:
+            skip_level = level
+            continue
+        if level is not None and text == TASK_DESCRIPTION_HEADING:
+            continue
+        if text:
+            lines.append(text)
+    return "\n".join(lines).strip()
+
+
+async def get_task_page_body(page_id: str) -> str:
+    return task_page_body_text(await notion_api.retrieve_block_children(page_id))
+
+
 async def _to_task_with_page_description(page: dict) -> "TaskItem":
     task = _to_task(page)
     return replace(task, description=await _task_description_from_page(page))
