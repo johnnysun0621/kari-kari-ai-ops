@@ -211,7 +211,8 @@ class CourseQACog(commands.Cog):
 
     async def _answer_for_user_unlocked(self, user: discord.abc.User, question: str) -> str:
         if task_query.is_task_query(question) or (
-            task_query.wants_detail(question) and not task_query.is_meeting_question(question)
+            (task_query.wants_detail(question) or task_query.is_specific_question(question))
+            and not task_query.is_meeting_question(question)
         ):
             answer = await self._answer_task_query(user, question)
             if answer is not None:
@@ -288,6 +289,9 @@ class CourseQACog(commands.Cog):
             return "❌ 讀取任務失敗，請稍後再試，或改用 `/我的任務`。"
         now = datetime.now(config.get_tenant().tz)
         detail_targets = self._detail_targets(user, question, tasks)
+        specific = task_query.is_specific_question(question) and bool(config.get_tenant().llm_api_key)
+        if detail_targets and specific:
+            return await self._task_llm_answer(artist, question, detail_targets, now)
         if detail_targets:
             if len(detail_targets) == 1:
                 return await self._task_detail_answer(detail_targets[0], now)
@@ -303,6 +307,8 @@ class CourseQACog(commands.Cog):
         footer = "想看某一筆的內容，可以問「第 2 個的詳細內容」或直接講任務名稱。要交件或按「收到任務」，請用 `/我的任務`。"
         if not selected:
             return f"🤖 **會議秘書小律**\n\n{scope}沒有{kind}。\n{footer}"
+        if specific and len(selected) <= task_query.MAX_CONTEXT_TASKS:
+            return await self._task_llm_answer(artist, question, selected, now)
         lines = [
             f"・**{strip_notion_links(task.name)}**｜{task.task_type or '任務'}｜"
             f"{ui_text.deadline_text(task, now)}｜{task.status or '未填狀態'}"
@@ -336,16 +342,62 @@ class CourseQACog(commands.Cog):
         # 「這週有什麼任務」這種問法名稱不會中；問題裡點名某筆任務時就給那筆的詳細。
         return task_query.match_tasks_by_name(question, tasks)
 
+    async def _task_body(self, task: repositories.TaskItem) -> str:
+        if task.description:
+            return task.description
+        try:
+            return await repositories.get_task_page_body(task.page_id)
+        except Exception:
+            logger.exception("小律讀取任務內頁失敗：%s", task.page_id)
+            return ""
+
+    async def _task_llm_answer(
+        self,
+        artist: repositories.Artist,
+        question: str,
+        tasks: list[repositories.TaskItem],
+        now: datetime,
+    ) -> str:
+        """具體問題（幾題、什麼格式、要準備什麼）交給模型，只給這位藝人的這幾筆任務。"""
+        tasks = tasks[:task_query.MAX_CONTEXT_TASKS]
+        try:
+            project_map = await repositories.get_project_map()
+            person_ids = sorted({pid for task in tasks for pid in [*task.teacher_page_ids, *task.reviewer_page_ids]})
+            people = {person.page_id: person.name for person in await repositories.get_people_items_by_ids(person_ids)}
+        except Exception:
+            logger.exception("小律讀取任務的專案／人員失敗，改用較少的欄位回答")
+            project_map, people = {}, {}
+        contexts = []
+        for task in tasks:
+            project = project_map.get(task.project_page_ids[0]) if task.project_page_ids else None
+            contexts.append(task_query.build_task_context(
+                task,
+                now=now,
+                deadline_text=ui_text.deadline_text(task, now),
+                project_name=project.name if project else None,
+                teacher_names=[people[pid] for pid in task.teacher_page_ids if pid in people],
+                reviewer_names=[people[pid] for pid in task.reviewer_page_ids if pid in people],
+                body=await self._task_body(task),
+            ))
+        try:
+            answer = await course_qa.answer_task_question(
+                artist.name, question, "\n\n---\n\n".join(contexts), usage_key=artist.page_id,
+            )
+        except course_qa.CourseQAError as exc:
+            logger.warning("小律任務問答未能回答：%s", exc)
+            if len(tasks) == 1:
+                return await self._task_detail_answer(tasks[0], now)
+            return exc.user_message
+        names = "\n".join(f"・{strip_notion_links(task.name)}" for task in tasks)
+        return (
+            f"🤖 **會議秘書小律**\n\n{answer}\n\n**參考任務**\n{names}\n\n"
+            "要交件或按「收到任務」，請用 `/我的任務`。"
+        )
+
     async def _task_detail_answer(self, task: repositories.TaskItem, now: datetime) -> str:
         """任務詳細：基本資訊＋任務內頁內容（有「任務說明」段落就用它，沒有就讀整頁）。"""
-        body = task.description
-        if not body:
-            try:
-                body = await repositories.get_task_page_body(task.page_id)
-            except Exception:
-                logger.exception("小律讀取任務內頁失敗：%s", task.page_id)
-                body = ""
-        body = strip_notion_links(body).strip()
+        body = await self._task_body(task)
+        body = task_query.clean_description(strip_notion_links(body))
         if len(body) > task_query.MAX_DETAIL_CHARS:
             body = body[:task_query.MAX_DETAIL_CHARS].rstrip() + "…（內容較長，只顯示前段；完整內容請問控方）"
         info = [

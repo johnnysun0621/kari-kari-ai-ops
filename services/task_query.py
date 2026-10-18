@@ -4,7 +4,9 @@
 規則（2026-10-18 定）：
 - 只查自己的任務，範圍與 /我的任務 一致（Discord 顯示有勾、未結案）
 - 只查詢不操作：交件、確認收到仍走 /我的任務
-- 不經過 LLM：判斷與篩選都在這裡用規則做，任務資料不送進模型，也不會被模型改寫或帶出網址
+- 清單與「某筆的完整內容」不經 LLM：判斷與篩選都在這裡用規則做
+- 具體問題（幾題、什麼格式、要準備什麼）才交給模型，而且只送這位藝人被點名／區間內的任務，
+  欄位見 build_task_context()，規則見 TASK_ASSISTANT_SKILL.md（2026-10-18 依正式任務頁實撈結構撰寫）
 
 這裡全是純函式；讀 Notion 與組 Discord 訊息在 cogs/course_qa.py。
 """
@@ -195,3 +197,84 @@ def match_tasks_by_name(question: str, tasks: list[repositories.TaskItem]) -> li
 
 def is_meeting_question(question: str) -> bool:
     return bool(_MEETING_RE.search(question))
+
+
+# ---------- 任務問答（LLM）用的資料整理 ----------
+
+# 時間池自動產生的任務草稿會在「任務說明」留下控方內部字樣（2026-10-18 實撈：10 筆），
+# 給藝人看之前拿掉；藝人回報追加在說明裡的舊格式紀錄也一併拿掉。
+_INTERNAL_PREFIXES = (
+    "安排來源：", "安排類型：", "任務類型：", "此為控方草稿", "此 Task 同時管理",
+    "候選時段（由營運最後確認）", "需要時長：",
+)
+_CANDIDATE_SLOT_RE = re.compile(r"^\s*20\d{2}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s*[~～-]\s*\d{1,2}:\d{2}\s*$")
+_SPECIFIC_RE = re.compile(
+    r"幾|多少|怎麼|如何|格式|哪裡|在哪|為什麼|要不要|可不可以|可以.{0,6}嗎|需要|準備|誰|何時|什麼時候|哪天|哪一天|用什麼|交什麼形式"
+)
+MAX_CONTEXT_TASKS = 8
+
+
+def clean_description(text: str) -> str:
+    lines: list[str] = []
+    skipping_feedback = False
+    in_candidates = False
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("【Discord 任務回饋"):
+            skipping_feedback = True
+            continue
+        if skipping_feedback:
+            if not stripped:
+                skipping_feedback = False
+            continue
+        if stripped.startswith("候選時段（由營運最後確認）"):
+            in_candidates = True
+            continue
+        if in_candidates and _CANDIDATE_SLOT_RE.match(stripped):
+            continue
+        in_candidates = False
+        if stripped.startswith(_INTERNAL_PREFIXES):
+            continue
+        lines.append(line.rstrip())
+    return "\n".join(lines).strip()
+
+
+def is_specific_question(question: str) -> bool:
+    """問的是任務裡的某個細節（幾題、什麼格式、要準備什麼），不是單純要清單或全文。"""
+    return bool(_SPECIFIC_RE.search(question))
+
+
+def build_task_context(
+    task: repositories.TaskItem,
+    *,
+    now: datetime,
+    deadline_text: str,
+    project_name: str | None = None,
+    teacher_names: list[str] = (),
+    reviewer_names: list[str] = (),
+    body: str = "",
+) -> str:
+    """一筆任務給模型看的文字。欄位對應 TASK_ASSISTANT_SKILL.md 的說明；不放任何網址或 page id。"""
+    from services.notion_links import strip_notion_links
+
+    lines = [f"任務名稱：{strip_notion_links(task.name)}"]
+    if task.task_type:
+        lines.append(f"任務類型：{task.task_type}")
+    if project_name:
+        lines.append(f"所屬專案：{project_name}")
+    lines.append(f"狀態：{task.status or '未填'}")
+    if task.start:
+        start = f"{task.start:%Y-%m-%d}" + (f" {task.start:%H:%M}" if task.start_has_time else "")
+        lines.append(f"開始：{start}")
+    lines.append(f"期限：{deadline_text}（今天是 {now:%Y-%m-%d}）")
+    if repositories.is_task_submittable(task):
+        lines.append("可以交件：是（用 /我的任務 → 提交任務，上傳到公司 Drive）")
+    if task.course_category:
+        lines.append(f"課程類別：{task.course_category}")
+    if teacher_names:
+        lines.append(f"負責老師：{'、'.join(teacher_names)}")
+    if reviewer_names:
+        lines.append(f"審核人員：{'、'.join(reviewer_names)}")
+    content = clean_description(strip_notion_links(body))
+    lines.append(f"任務內容：\n{content}" if content else "任務內容：（控方沒有寫）")
+    return "\n".join(lines)

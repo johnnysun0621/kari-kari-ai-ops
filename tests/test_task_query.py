@@ -213,3 +213,80 @@ def test_想看內容但對不到任務就交回會議紀錄(detail_cog):
     ask(detail_cog, "那份企劃的內容")
 
     assert detail_cog.calls["meetings"] == 1
+
+
+# ---------- 任務問答（LLM）：資料整理與路由 ----------
+
+def test_時間池草稿的控方內部字樣不給藝人():
+    draft = (
+        "安排來源：/從時間池建立任務\n課程類別：吉他課\n負責老師：Tony\n需要時長：2 小時\n"
+        "候選時段（由營運最後確認）：\n2026-09-16 15:00~17:00\n\n"
+        "此 Task 同時管理課程場次與課後作業；正式時間請由營運直接填寫開始日。"
+    )
+    assert task_query.clean_description(draft) == "課程類別：吉他課\n負責老師：Tony"
+    assert task_query.clean_description("此為控方草稿；補齊內容後勾選 Discord 顯示=true") == ""
+
+
+def test_舊格式的藝人回報不當成任務內容():
+    text = "交 demo\n\n【Discord 任務回饋｜2026-09-15 10:28】\n藝人：Johnny\n回饋：測試\n\n補充：要 wav"
+    assert task_query.clean_description(text) == "交 demo\n\n補充：要 wav"
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("聽力要做幾題", True), ("要用什麼格式交", True), ("發布前要準備什麼", True),
+    ("這週有什麼任務", False), ("第2個的詳細內容", False), ("我還有哪些沒交", False),
+])
+def test_具體問題才交給模型(question, expected):
+    assert task_query.is_specific_question(question) is expected
+
+
+def test_給模型的任務資料_不含網址與_page_id():
+    task = make_task("交 cover https://www.notion.so/x", end=datetime(2026, 10, 25, tzinfo=TZ), page_id="secret-page-id")
+    context = task_query.build_task_context(
+        task, now=NOW, deadline_text="截止 10/25（剩 7 天）", project_name="方晨2610 (發文）",
+        teacher_names=["Tony"], body="參考 https://app.notion.com/p/abc\n• 聽力：50題／截圖",
+    )
+    assert "secret-page-id" not in context and not notion_links.contains_notion_link(context)
+    assert "所屬專案：方晨2610 (發文）" in context and "負責老師：Tony" in context
+    assert "• 聽力：50題／截圖" in context
+
+
+@pytest.fixture
+def llm_cog(detail_cog, monkeypatch):
+    sent = {}
+
+    async def fake_answer(artist_name, question, task_context, usage_key=None):
+        sent["context"] = task_context
+        return "要做 50 題音程，做完交截圖。"
+
+    async def no_projects():
+        return {}
+
+    async def no_people(ids):
+        return []
+
+    tenant = config.get_tenant()
+    monkeypatch.setattr(config, "get_tenant", lambda: __import__("dataclasses").replace(tenant, llm_api_key="k"))
+    monkeypatch.setattr(course_qa_cog.course_qa, "answer_task_question", fake_answer)
+    monkeypatch.setattr(repositories, "get_project_map", no_projects)
+    monkeypatch.setattr(repositories, "get_people_items_by_ids", no_people)
+    detail_cog.sent = sent
+    return detail_cog
+
+
+def test_點名任務的具體問題交給模型_只帶那一筆(llm_cog):
+    answer = ask(llm_cog, "交 cover 素材要用什麼格式交")
+
+    assert "50 題音程" in answer and "**參考任務**" in answer
+    assert "交 cover 素材" in llm_cog.sent["context"] and "錄音" not in llm_cog.sent["context"]
+
+
+def test_模型失敗時退回任務詳細(llm_cog, monkeypatch):
+    async def boom(*args, **kwargs):
+        raise course_qa_cog.course_qa.CourseQAError("x", "⚠️ 暫時無法回應")
+
+    monkeypatch.setattr(course_qa_cog.course_qa, "answer_task_question", boom)
+
+    answer = ask(llm_cog, "交 cover 素材要用什麼格式交")
+
+    assert "📌 **交 cover 素材" in answer

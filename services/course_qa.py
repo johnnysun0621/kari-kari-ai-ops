@@ -134,6 +134,86 @@ def _retryable_http_error(error: httpx.HTTPStatusError) -> bool:
     return error.response.status_code >= 500
 
 
+async def _post_chat_completion(
+    payload: dict,
+    *,
+    usage_key: str | None,
+    empty_fallback=None,
+) -> str:
+    """送出 chat completion：重試、錯誤轉成藝人看得懂的訊息、記錄用量。會議與任務問答共用。"""
+    tenant = config.get_tenant()
+    data: dict | None = None
+    answer = ""
+    last_error: Exception | None = None
+    async with httpx.AsyncClient(timeout=COURSE_QA_TIMEOUT_SECONDS) as client:
+        for attempt in range(COURSE_QA_MAX_ATTEMPTS):
+            try:
+                response = await client.post(
+                    f"{tenant.llm_base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {tenant.llm_api_key}"},
+                    json=payload,
+                )
+                response.raise_for_status()
+                parsed = response.json()
+                if not isinstance(parsed, dict):
+                    raise ValueError("LLM response is not an object")
+                data = parsed
+                answer = llm_response.extract_text(parsed)
+                if answer:
+                    break
+                choice = (parsed.get("choices") or [{}])[0]
+                usage = parsed.get("usage") or {}
+                completion_details = usage.get("completion_tokens_details") or {}
+                last_error = ValueError(
+                    "LLM response has no answer text; "
+                    f"finish_reason={choice.get('finish_reason') if isinstance(choice, dict) else None}, "
+                    f"completion_tokens={usage.get('completion_tokens')}, "
+                    f"reasoning_tokens={completion_details.get('reasoning_tokens')}"
+                )
+                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
+                    logger.warning("%s；改用 Notion 摘要降級回答", last_error)
+                    if empty_fallback is not None:
+                        answer = empty_fallback()
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if not _retryable_http_error(exc) or attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
+                    body = exc.response.text[:300].replace("\n", " ")
+                    if exc.response.status_code in {401, 403}:
+                        raise CourseQAError(
+                            f"LLM API HTTP {exc.response.status_code}: {body}",
+                            "⚠️ 會議秘書小律 API key 無效或權限不足，請聯絡控方更新 LLM_API_KEY。",
+                        ) from exc
+                    raise CourseQAError(
+                        f"LLM API HTTP {exc.response.status_code}: {body}",
+                        "⚠️ 會議秘書小律 API 暫時無法回應，請稍後再試。",
+                    ) from exc
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_error = exc
+                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
+                    raise CourseQAError(
+                        "LLM API 網路呼叫失敗或逾時",
+                        "⚠️ 會議秘書小律暫時無法連線，請稍後再試。",
+                    ) from exc
+            except httpx.HTTPError as exc:
+                raise CourseQAError(
+                    "LLM API 網路呼叫失敗",
+                    "⚠️ 會議秘書小律暫時連不上 API，請稍後再試。",
+                ) from exc
+            except (TypeError, ValueError) as exc:
+                last_error = exc
+                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
+                    raise CourseQAError(
+                        "LLM API 回傳不是有效 JSON",
+                        "⚠️ 會議秘書小律收到無效回應，請稍後再試。",
+                    ) from exc
+            await asyncio.sleep(0.5 * (attempt + 1))
+    if not answer:
+        raise CourseQAError("LLM API 沒有回傳結果") from last_error
+    if data is not None:
+        llm_usage.record(data.get("usage"), user_key=usage_key)
+    return answer
+
+
 async def answer_course_question(
     artist_name: str,
     question: str,
@@ -199,75 +279,60 @@ async def answer_course_question(
             str(exc),
             "⚠️ 會議秘書小律的 AI 供應商設定不受支援，請聯絡控方。",
         ) from exc
-    data: dict | None = None
-    answer = ""
-    last_error: Exception | None = None
-    async with httpx.AsyncClient(timeout=COURSE_QA_TIMEOUT_SECONDS) as client:
-        for attempt in range(COURSE_QA_MAX_ATTEMPTS):
-            try:
-                response = await client.post(
-                    f"{tenant.llm_base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {tenant.llm_api_key}"},
-                    json=payload,
-                )
-                response.raise_for_status()
-                parsed = response.json()
-                if not isinstance(parsed, dict):
-                    raise ValueError("LLM response is not an object")
-                data = parsed
-                answer = llm_response.extract_text(parsed)
-                if answer:
-                    break
-                choice = (parsed.get("choices") or [{}])[0]
-                usage = parsed.get("usage") or {}
-                completion_details = usage.get("completion_tokens_details") or {}
-                last_error = ValueError(
-                    "LLM response has no answer text; "
-                    f"finish_reason={choice.get('finish_reason') if isinstance(choice, dict) else None}, "
-                    f"completion_tokens={usage.get('completion_tokens')}, "
-                    f"reasoning_tokens={completion_details.get('reasoning_tokens')}"
-                )
-                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
-                    logger.warning("%s；改用 Notion 摘要降級回答", last_error)
-                    answer = build_course_notes_fallback(records)
-            except httpx.HTTPStatusError as exc:
-                last_error = exc
-                if not _retryable_http_error(exc) or attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
-                    body = exc.response.text[:300].replace("\n", " ")
-                    if exc.response.status_code in {401, 403}:
-                        raise CourseQAError(
-                            f"LLM API HTTP {exc.response.status_code}: {body}",
-                            "⚠️ 會議秘書小律 API key 無效或權限不足，請聯絡控方更新 LLM_API_KEY。",
-                        ) from exc
-                    raise CourseQAError(
-                        f"LLM API HTTP {exc.response.status_code}: {body}",
-                        "⚠️ 會議秘書小律 API 暫時無法回應，請稍後再試。",
-                    ) from exc
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                last_error = exc
-                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
-                    raise CourseQAError(
-                        "LLM API 網路呼叫失敗或逾時",
-                        "⚠️ 會議秘書小律暫時無法連線，請稍後再試。",
-                    ) from exc
-            except httpx.HTTPError as exc:
-                raise CourseQAError(
-                    "LLM API 網路呼叫失敗",
-                    "⚠️ 會議秘書小律暫時連不上 API，請稍後再試。",
-                ) from exc
-            except (TypeError, ValueError) as exc:
-                last_error = exc
-                if attempt + 1 >= COURSE_QA_MAX_ATTEMPTS:
-                    raise CourseQAError(
-                        "LLM API 回傳不是有效 JSON",
-                        "⚠️ 會議秘書小律收到無效回應，請稍後再試。",
-                    ) from exc
-            await asyncio.sleep(0.5 * (attempt + 1))
-    if not answer:
-        raise CourseQAError("LLM API 沒有回傳結果") from last_error
-    if data is not None:
-        llm_usage.record(data.get("usage"), user_key=usage_key)
+    answer = await _post_chat_completion(
+        payload, usage_key=usage_key, empty_fallback=lambda: build_course_notes_fallback(records),
+    )
     # 模型仍可能自己生出連結（context 沒有，但它會從頁面名稱腦補），最後再過濾一次。
     answer = strip_notion_links(answer)
     sources = "\n".join(f"・{source_label(record)}" for record in records)
     return f"{answer}\n\n**參考會議紀錄**\n{sources}"[:3900]
+
+
+TASK_SKILL_PATH = Path(__file__).resolve().parent.parent / "TASK_ASSISTANT_SKILL.md"
+
+
+def load_task_assistant_skill() -> str:
+    try:
+        return TASK_SKILL_PATH.read_text(encoding="utf-8")[:8000]
+    except OSError:
+        return "只根據提供的任務資料回答；資料沒寫的請藝人問控方；交件用 /我的任務；不可輸出 Notion 網址。"
+
+
+async def answer_task_question(
+    artist_name: str,
+    question: str,
+    task_context: str,
+    usage_key: str | None = None,
+) -> str:
+    """藝人問自己任務的具體問題（M6-03）。task_context 由 task_query.build_task_context 組好，不含網址。"""
+    tenant = config.get_tenant()
+    if not tenant.llm_api_key:
+        raise CourseQAError("尚未設定 LLM_API_KEY", "⚠️ 會議秘書小律尚未設定 API，請聯絡控方。")
+    quota = llm_usage.limit_status(usage_key)
+    if not quota.allowed:
+        raise CourseQAError("LLM daily token limit reached", quota_message(quota))
+    payload = {
+        "model": tenant.llm_model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "你是會議秘書小律，正在回答藝人關於自己任務的問題，只能根據提供的任務資料回答。"
+                    "絕對不可輸出 Notion 連結或任何 notion 網址。"
+                    f"\n\n固定規則：\n{load_task_assistant_skill()}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"藝人：{artist_name}\n問題：{question}\n\n<tasks>\n{task_context}\n</tasks>",
+            },
+        ],
+    }
+    try:
+        llm_response.configure_chat_completion(
+            payload, base_url=tenant.llm_base_url, model=tenant.llm_model, max_tokens=tenant.llm_max_tokens,
+        )
+    except llm_response.UnsupportedLLMProviderError as exc:
+        raise CourseQAError(str(exc), "⚠️ 會議秘書小律的 AI 供應商設定不受支援，請聯絡控方。") from exc
+    answer = await _post_chat_completion(payload, usage_key=usage_key)
+    return strip_notion_links(answer)[:3600]
