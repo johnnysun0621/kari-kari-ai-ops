@@ -96,6 +96,8 @@ GOOGLE_SERVICE_ACCOUNT_KEY_PATH=credentials/service_account.json
 | Notion 回填 | ✅ 兩位藝人的 Artists「Google Drive 資料夾」欄位已填入專區連結 |
 | 檔案上傳功能 | ✅ 已上線（`/我的任務` → `提交任務` 選任務後，使用 Bot 建立的公司 Drive 指定資料夾） |
 
+> **M4-07 Drive 歸檔 QA 規則**：真人驗收一律使用 Artists 中的測試帳號與其專屬 Drive 專區（目前為 `Chenhua（測試）`），不可用正式藝人或正式案件。所有測試 Project／Task／Submission／資料夾／檔案加 `QA M4-07` 與日期前綴，僅上傳無敏感測試檔；保留 QA 產物作驗收證據，清理由控方明確決定。
+
 之後**新增藝人**：Artists「Google Drive 資料夾」留空也可以，第一次交件時 Bot 會在總資料夾底下
 用藝人名稱 find-or-create 專區並回寫連結；之後到 Drive 把該專區分享給藝人本人。
 
