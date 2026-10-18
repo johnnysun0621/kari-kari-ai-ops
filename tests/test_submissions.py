@@ -111,12 +111,34 @@ class TestSubmissionFileType:
         assert repositories.submission_file_type_for_task("課程時間&作業繳交") == "課程作業"
         assert repositories.submission_file_type_for_task("創作交付") == "Demo"
         assert repositories.submission_file_type_for_task("企劃提案") == "企劃書"
-        assert repositories.submission_file_type_for_task("方晨業配內容") == "業配素材"
         assert repositories.submission_file_type_for_task("錄音") == "錄音檔"
 
     def test_unknown_type_falls_back_to_other(self):
         assert repositories.submission_file_type_for_task("行政") == "其他"
         assert repositories.submission_file_type_for_task(None) == "其他"
+
+    def test_project_type_is_used_when_task_type_has_no_mapping(self):
+        """M4-16：任務類型沒填或對不到時看專案類型。方晨的案子名稱類型靠這條歸到業配素材。"""
+        f = repositories.submission_file_type_for_task
+        assert f(None, ["藝人外部商業合作"]) == "業配素材"
+        assert f("方晨_哈根達斯雪酥", ["藝人外部商業合作"]) == "業配素材"
+        assert f(None, ["課程培訓"]) == "課程作業"
+        assert f(None, ["內容企劃"]) == "企劃書"
+        assert f(None, ["作品製作"]) == "Demo"
+
+    def test_task_type_wins_over_project_type(self):
+        """任務類型比較具體：作品製作專案裡的錄音任務要標錄音檔，不是 Demo。"""
+        assert repositories.submission_file_type_for_task("錄音", ["作品製作"]) == "錄音檔"
+
+    def test_projects_without_mapping_fall_back_to_other(self):
+        f = repositories.submission_file_type_for_task
+        assert f(None, ["月度排程 （發文）"]) == "其他"
+        assert f(None, ["週任務"]) == "其他"
+        assert f(None, []) == "其他"
+
+    def test_renamed_task_type_is_not_mapped_by_name(self):
+        """改名前的「方晨業配內容」已移除；不再靠任務類型名稱追客戶的案子。"""
+        assert "方晨業配內容" not in repositories.SUBMISSION_FILE_TYPE_BY_TASK_TYPE
 
     def test_old_dead_strings_no_longer_map(self):
         """2026-10-04 前程式硬編這些字串，但它們都不是 Notion 的有效選項。

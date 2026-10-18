@@ -6,6 +6,8 @@
 - 程式硬編「課程與作業」，Notion 實際是「課程時間&作業繳交」
   → 課程任務完全不會擋藝人可配合時段，排課會排到藝人已經有課的時間
 - 檔案類型對照表的「業配內容」，Notion 實際是「方晨業配內容」
+- 2026-10-13：「方晨業配內容」又被客戶改名為「方晨_哈根達斯雪酥」，對照表再次靜默失效。
+  之後檔案類型與 Drive 資料夾改以專案類型／專案名稱為主（M4-07、M4-16），不再追著任務類型改
 
 下面的選項清單是 2026-10-04 以 bot 的 integration token 實撈正式環境得到的。
 **Notion 端增減選項時要回來同步這份清單**——這個測試的用途就是強迫這件事發生。
@@ -14,10 +16,11 @@
 import config
 from services import drive_archive, repositories
 
-# ── 2026-10-04 實撈 ─────────────────────────────────────────────
+# ── 2026-10-04 實撈；任務類型 2026-10-13 重撈 ─────────────────────
 TASK_TYPE_OPTIONS = {
-    "課程時間&作業繳交", "創作交付", "企劃提案", "方晨業配內容", "影片素材",
+    "課程時間&作業繳交", "創作交付", "企劃提案", "方晨_哈根達斯雪酥", "影片素材",
     "錄音", "演出", "行政", "會議溝通", "發布上架", "通告", "音樂製作",
+    "方晨像素吉他周邊", "方晨youtube直播",
 }
 TASK_STATUS_OPTIONS = {
     "尚未開始", "進行中", "待提交", "待審核", "需修改",
@@ -73,14 +76,17 @@ class TestTaskTypeValues:
 
         assert not bad, f"檔案類型對照表的 value 不是有效選項 {sorted(bad)}，寫入 Notion 會失敗"
 
-    def test_drive_type_folder_keys_are_real_task_types(self):
-        """死 key 會讓檔案歸檔到「其他」而不是該類型的資料夾。
+    def test_project_file_type_mapping_uses_real_options(self):
+        """M4-16：專案類型對照的 key 要是有效的專案類型、value 要是有效的檔案類型。"""
+        dead = set(repositories.SUBMISSION_FILE_TYPE_BY_PROJECT_TYPE) - PROJECT_TYPE_OPTIONS
+        bad = set(repositories.SUBMISSION_FILE_TYPE_BY_PROJECT_TYPE.values()) - SUBMISSION_FILE_TYPE_OPTIONS
 
-        2026-10-04 修正前有四個死 key，課程作業全部被丟進「其他」。
-        """
-        dead = set(drive_archive.DEFAULT_TYPE_FOLDERS) - TASK_TYPE_OPTIONS
+        assert not dead, f"專案類型對照的 key 有死值 {sorted(dead)}"
+        assert not bad, f"專案類型對照的 value 不是有效檔案類型 {sorted(bad)}，寫入 Notion 會失敗"
 
-        assert not dead, f"Drive 類型資料夾對照的 key 有死值 {sorted(dead)}，那些類型會歸檔到「其他」"
+    def test_drive_folders_no_longer_keyed_by_task_type(self):
+        """M4-07：Drive 分夾改看專案，任務類型對照表已退役，不要再加回來。"""
+        assert not hasattr(drive_archive, "DEFAULT_TYPE_FOLDERS")
 
     def test_public_task_types_are_real_options(self):
         """PUBLIC_TASK_TYPES 從 .env 注入，寫不存在的選項就永遠不會進公告區。"""

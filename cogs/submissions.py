@@ -263,7 +263,15 @@ async def _resolve_submission_target(
     now: datetime,
 ) -> tuple[tuple[str, list[str]] | None, str]:
     """Resolve an artist task archive target, creating the artist zone from the company root when needed."""
-    target = drive_archive.resolve_archive_target(task, artist.drive_folder_url, now)
+    project_name = None
+    if not task.drive_folder_url:
+        try:
+            project_name = await repositories.task_project_name(task)
+        except Exception:
+            # 讀不到專案就不要猜：落到「未分專案」會把檔案放錯地方，寧可請藝人稍後再試。
+            logger.exception("讀取任務專案名稱失敗，暫不建立 Drive 資料夾：%s", task.page_id)
+            return None, ""
+    target = drive_archive.resolve_archive_target(task, artist.drive_folder_url, now, project_name)
     if target is not None:
         base_folder_id, path_segments = target
         if path_segments and not task.drive_folder_url:
@@ -314,7 +322,7 @@ async def _resolve_submission_target(
     zone_url = str(zone.get("webViewLink") or "")
     if not zone_id:
         return None, ""
-    task_path = drive_archive.archive_path_for_submission(task, now)
+    task_path = drive_archive.archive_path_for_submission(task, now, project_name)
     try:
         task_folder = await drive_api.ensure_folder_path(
             base_folder_id=zone_id,
@@ -1388,11 +1396,20 @@ class SubmissionsCog(commands.Cog):
         artist_map = await repositories.get_artist_map()
         targets: list[ReviewFeedbackDriveTarget] = []
         skipped: list[str] = []
+        project_name = None
+        if not task.drive_folder_url:
+            try:
+                project_name = await repositories.task_project_name(task)
+            except Exception:
+                logger.exception("讀取任務專案名稱失敗，暫不建立老師回饋資料夾：%s", task.page_id)
+                return [], ["讀不到任務的關聯專案"]
         for artist_page_id in submission.artist_page_ids:
             artist = artist_map.get(artist_page_id)
             if not artist:
                 continue
-            target = drive_archive.resolve_review_feedback_target(artist.drive_folder_url, now, task)
+            target = drive_archive.resolve_review_feedback_target(
+                artist.drive_folder_url, now, task, project_name
+            )
             if target is None:
                 skipped.append(artist.name)
                 continue

@@ -1902,24 +1902,47 @@ def task_description_field(description: str, *field_names: str) -> str:
 
 # ---------- P0-3 作業提交（Submissions & File Index） ----------
 
-# Submissions.檔案類型 的 select 選項對應任務類型；對不上的一律「其他」
+# Submissions.檔案類型（規則 M4-16，2026-10-13 改版）：先看任務類型，對不到看專案類型，都對不到 → 其他。
+# key 必須是 Notion 的既有選項，value 必須是「檔案類型」的既有選項（tests/test_notion_option_values.py 釘住）。
+# 任務類型排第一，是因為它比較具體（作品製作專案裡的錄音任務要標錄音檔）；但任務類型大多沒填、
+# 而且客戶會把案子名稱當任務類型（方晨_哈根達斯雪酥…），所以穩定的分類靠專案類型。
+# 舊的「方晨業配內容 → 業配素材」已移除：該選項 2026-10 被改名，改由專案類型「藝人外部商業合作」涵蓋。
 SUBMISSION_FILE_TYPE_BY_TASK_TYPE = {
-    # key 必須是 Notion「任務類型」的既有選項，value 必須是「檔案類型」的既有選項。
-    # 2026-10-04 修正三個死 key：「課程與作業」（實際是 課程時間&作業繳交）、
-    # 「課程作業」（那是檔案類型不是任務類型）、「業配內容」（實際是 方晨業配內容）。
-    # 對不上的任務類型一律落到「其他」，這是刻意的，不必把每個類型都列出來。
     COURSE_TASK_TYPE: "課程作業",
     "創作交付": "Demo",
     "企劃提案": "企劃書",
-    "方晨業配內容": "業配素材",
     "錄音": "錄音檔",
 }
+SUBMISSION_FILE_TYPE_BY_PROJECT_TYPE = {
+    "藝人外部商業合作": "業配素材",
+    "商務合作": "業配素材",
+    PROJECT_TYPE_COURSE_TRAINING: "課程作業",
+    "內容企劃": "企劃書",
+    "作品製作": "Demo",
+}
+
+
+def submission_file_type_for_task(
+    task_type: str | None,
+    project_types: list[str] | tuple[str, ...] = (),
+) -> str:
+    if task_type and task_type in SUBMISSION_FILE_TYPE_BY_TASK_TYPE:
+        return SUBMISSION_FILE_TYPE_BY_TASK_TYPE[task_type]
+    for project_type in project_types:
+        if project_type in SUBMISSION_FILE_TYPE_BY_PROJECT_TYPE:
+            return SUBMISSION_FILE_TYPE_BY_PROJECT_TYPE[project_type]
+    return "其他"
+
+
+async def task_project_name(task: TaskItem) -> str | None:
+    """任務的 Drive 專案夾名稱來源（M4-07）：第一個關聯專案的名稱；沒掛專案回 None。"""
+    if not task.project_page_ids:
+        return None
+    project = (await get_project_map()).get(task.project_page_ids[0])
+    return project.name if project and project.name.strip() else None
+
 
 SUBMITTABLE_TASK_STATUSES = {"尚未開始", "進行中", "待提交", "需修改", "已逾期"}
-
-
-def submission_file_type_for_task(task_type: str | None) -> str:
-    return SUBMISSION_FILE_TYPE_BY_TASK_TYPE.get(task_type or "", "其他")
 
 
 def is_task_submittable(task: TaskItem) -> bool:
@@ -1951,7 +1974,7 @@ def _build_submission_props(
         "關聯任務": _relation([task.page_id]),
         "提交來源": _select("Discord"),
         "提交類型": _select(submit_type),
-        "檔案類型": _select(submission_file_type_for_task(task.task_type)),
+        "檔案類型": _select(submission_file_type_for_task(task.task_type, task.project_types)),
         "提交時間": _date(now),
         "是否最新版": _checkbox(True),
         "審核狀態": _select("待審核"),

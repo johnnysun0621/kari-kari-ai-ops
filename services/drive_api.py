@@ -85,13 +85,20 @@ def _find_or_create_folder_sync(service, parent_id: str, name: str) -> str:
         f" and mimeType = '{_FOLDER_MIME}'"
         " and trashed = false"
     )
-    result = service.files().list(q=query, fields="files(id)", pageSize=1).execute()
+    result = service.files().list(
+        q=query,
+        fields="files(id)",
+        pageSize=1,
+        includeItemsFromAllDrives=True,
+        supportsAllDrives=True,
+    ).execute()
     files = result.get("files", [])
     if files:
         return files[0]["id"]
     created = service.files().create(
         body={"name": name, "mimeType": _FOLDER_MIME, "parents": [parent_id]},
         fields="id",
+        supportsAllDrives=True,
     ).execute()
     logger.info("Drive 建立資料夾：%s（parent=%s）", name, parent_id)
     return created["id"]
@@ -107,6 +114,7 @@ def _upload_sync(service, parent_id: str, filename: str, content: bytes, mime_ty
         body={"name": filename, "parents": [parent_id]},
         media_body=media,
         fields="id,webViewLink",
+        supportsAllDrives=True,
     ).execute()
 
 
@@ -114,6 +122,7 @@ def _folder_resource_sync(service, folder_id: str) -> dict:
     return service.files().get(
         fileId=folder_id,
         fields="id,name,webViewLink",
+        supportsAllDrives=True,
     ).execute()
 
 
