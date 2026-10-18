@@ -88,6 +88,13 @@ python bot.py                      # 需 .env（見 README）
 8. **模組化／積木化**（Johnny 明確要求）：共用邏輯放 services/（permissions、repositories…）、
    共用 UI helper 放獨立模組（channel_guard、ui_text 模式）；**cog 之間不 import 彼此的私有函式**；
    helper 重複第二次就抽出來
+9. **測實際路徑，不只測零件**（2026-10-18 教訓）：`/我的任務` 壞了一週（呼叫端傳的參數 View 不收），
+   因為測試只單獨建 View。新增或改動 Discord 流程時，至少有一個測試從指令／按鈕 callback 走到畫面組好。
+   守門：`tests/test_view_attributes.py`（cogs 類別不得讀從未設定的 `self.X`）。
+10. **要離開 Discord 才能完成的步驟，不能只靠 ephemeral 訊息上的按鈕**：使用者切去 Drive 回來，
+   訊息就不見了。要有回頭路（重新進入沿用同一份狀態、或在頻道打字重新給按鈕），狀態要存 `.state/`。
+11. 錯誤看 `logs/bot.log`（`bot.setup_logging()`，只在 `main()` 設定）。`except Exception` 一律
+   `logger.exception(...)`，不准 `pass`。部署後至少實際跑一次 `/我的任務` 與一次完整交件。
 
 ## 刻意設計——看起來像 bug 但不是（別「修」它們）
 
