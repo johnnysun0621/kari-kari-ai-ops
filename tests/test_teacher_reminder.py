@@ -163,3 +163,30 @@ class TestTeacherReminderCog:
         assert len(h.dms) == 1 and "辰葳" in h.dms[0] and "SOMA" in h.dms[0]
         h.run()
         assert len(h.dms) == 1  # 兩筆都記為已提醒
+
+
+class TestTeacherDigest:
+    """M3-25 第三階段：同一位老師這一輪有好幾堂課，合成一則（原本一堂課一則）。"""
+
+    def test_兩堂課只收一則_都列出來(self, monkeypatch):
+        import dataclasses
+
+        guitar = course()
+        singing = dataclasses.replace(course(), page_id="c2", name="歌唱課",
+                                      end=CLASS_END - timedelta(hours=3))
+        h = Harness(monkeypatch, [guitar, singing], [TEACHER], CLASS_END + timedelta(hours=3))
+        h.run()
+
+        assert len(h.dms) == 1
+        assert "吉他課" in h.dms[0] and "歌唱課" in h.dms[0]
+        assert h.admin == []
+
+    def test_不同老師各自一則(self, monkeypatch):
+        import dataclasses
+
+        other = PersonItem(page_id="t2", name="Amy", discord_user_id="8", identity_type="老師")
+        h = Harness(monkeypatch, [course(), dataclasses.replace(course(), page_id="c2", name="歌唱課", teacher_page_ids=["t2"])],
+                    [TEACHER, other], CLASS_END + timedelta(hours=3))
+        h.run()
+
+        assert len(h.dms) == 2

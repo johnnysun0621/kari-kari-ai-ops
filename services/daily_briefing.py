@@ -86,6 +86,31 @@ def build_items(
     return sorted(items, key=sort_key)[:MAX_ITEMS]
 
 
+def build_staff_items(
+    person_page_id: str,
+    tasks: list[repositories.TaskItem],
+    queued_task_ids: set[str],
+) -> list[BriefingItem]:
+    """相關同仁（M6-05）的早報：跟自己有關的已逾期、需修改、快到期；同仁不用按收到，所以沒有那一區。"""
+    items = []
+    for task in tasks:
+        if not task.discord_visible or person_page_id not in task.staff_page_ids:
+            continue
+        section = _section_for(task, queued_task_ids)
+        if section in (None, SECTION_UNRECEIVED):
+            continue
+        items.append(BriefingItem(task, section))
+
+    def sort_key(item: BriefingItem):
+        deadline, _ = repositories.task_action_deadline(item.task)
+        return (SECTION_ORDER.index(item.section), deadline is None, deadline.timestamp() if deadline else 0)
+
+    return sorted(items, key=sort_key)[:MAX_ITEMS]
+
+
+STAFF_FOOTER = "你是這些任務的相關同仁，這則只是讓你知道進度。想看某一筆的內容，用下方選單。"
+
+
 def _acked_tag(acked_on: str | None, today: date) -> str:
     if not acked_on or acked_on == today.isoformat():
         return ""
@@ -101,6 +126,7 @@ def briefing_text(
     items: list[BriefingItem],
     deadline_text,
     extra_count: int = 0,
+    footer: str | None = None,
 ) -> str:
     """早報內文。deadline_text 由呼叫端傳入（cogs/ui_text.deadline_text），這裡不 import cogs。"""
     weekdays = "一二三四五六日"
@@ -116,7 +142,7 @@ def briefing_text(
             lines.append(f"・{name}｜{deadline_text(item.task)}{_acked_tag(item.acked_on, day)}")
     if extra_count:
         lines.append(f"\n（另有 {extra_count} 筆，完整清單請用 `/我的任務`）")
-    lines.append("\n想看某一筆的內容，用下方選單；看完按「👌 我都看到了」。要交件請用 `/我的任務`。")
+    lines.append("\n" + (footer or "想看某一筆的內容，用下方選單；看完按「👌 我都看到了」。要交件請用 `/我的任務`。"))
     text = "\n".join(lines)
     if len(text) > MESSAGE_LIMIT:
         text = text[: MESSAGE_LIMIT - 30].rstrip() + "\n…（太長了，完整清單請用 `/我的任務`）"

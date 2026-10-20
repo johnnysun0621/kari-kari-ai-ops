@@ -90,3 +90,16 @@ def unreachable_message(task: TaskItem, teacher_names: list[str]) -> str:
         f"📝 **課後提醒（老師聯絡不到）**｜{task.name}\n"
         f"負責老師：{who}，沒有 Discord ID 或私訊失敗。請控方轉告老師到論壇發布作業要求與評語。"
     )
+
+
+def teacher_digest_message(entries: list[tuple[TaskItem, list[str], int]]) -> str:
+    """同一位老師這一輪有好幾堂課要發作業時，合成一則（M3-25 第三階段）。"""
+    lines = ["📝 **課後提醒**｜請到 Discord 論壇各藝人的個人專區，發布這幾堂課的作業要求與評語："]
+    for task, artist_names, count in entries:
+        ended = class_ended_at(task)
+        when = ended.strftime("%m/%d %H:%M") if ended else "未設定"
+        who = "、".join(artist_names) or "（未關聯藝人）"
+        nth = f"｜已提醒第 {count} 天" if count > 1 else ""
+        lines.append(f"・**{task.name}**｜{who}｜{when}{nth}")
+    lines.append("發布後由營運結案；結案前每天會提醒一次。")
+    return "\n".join(lines)

@@ -387,3 +387,65 @@ def test_狀態檔沒有這則早報時_從訊息的選單讀任務(send_env, mo
 
     assert edits and "已讀" in edits[0]["content"]
     assert {p for p, _ in send_env.lines} == {"late", "soon"}
+
+
+# ---------- 相關同仁每天一則（M3-25 第三階段） ----------
+
+def test_同仁早報_只列自己有關的_沒有我都看到了(monkeypatch):
+    tasks = [
+        dataclasses.replace(task("late", "已逾期"), staff_page_ids=["p1"]),
+        dataclasses.replace(task("soon"), staff_page_ids=["p1"]),
+        dataclasses.replace(task("new", "尚未開始", acknowledged=False), staff_page_ids=["p1"]),
+        task("not_mine", "已逾期"),
+    ]
+
+    async def get_active_tasks():
+        return tasks
+
+    async def get_artist_map():
+        return {}
+
+    async def get_people(ids):
+        return [repositories.PersonItem(page_id="p1", name="子喬", discord_user_id="7")]
+
+    async def append(*a):
+        return True
+
+    monkeypatch.setattr(repositories, "get_active_tasks", get_active_tasks)
+    monkeypatch.setattr(repositories, "get_artist_map", get_artist_map)
+    monkeypatch.setattr(repositories, "get_people_items_by_ids", get_people)
+    monkeypatch.setattr(repositories, "append_reminder_ack_line", append)
+    state = notification_log.shared()
+    daily_briefing.queue_stages(state, "soon", ["5 天前"], NOW)
+    client = BriefClient()
+
+    stats = asyncio.run(briefing.send_daily_briefings(client, NOW))
+
+    assert stats["staff_sent"] == 1
+    content, view = client.sent[0]
+    assert "任務late" in content and "任務soon" in content
+    assert "任務new" not in content, "同仁不用按收到，不列那一區"
+    assert "任務not_mine" not in content
+    assert "相關同仁" in content
+    assert [child.custom_id for child in view.children] == ["briefing_detail:20261020"]
+
+
+def test_早報模式_同仁不再逐階段私訊(monkeypatch):
+    state = notification_log.shared()
+    state["reminders_baseline_done"] = True
+    h = LoopHarness(monkeypatch, [dataclasses.replace(task("t1", end=datetime(2026, 10, 22, tzinfo=TZ)), staff_page_ids=["p1"])])
+    staff_calls = []
+
+    async def notify_staff(*a, **k):
+        staff_calls.append(a)
+        return 1
+
+    async def get_people(ids):
+        return [repositories.PersonItem(page_id="p1", name="子喬", discord_user_id="7")]
+
+    monkeypatch.setattr(tasks_artist, "notify_staff", notify_staff)
+    monkeypatch.setattr(repositories, "get_people_items_by_ids", get_people)
+
+    h.run()
+
+    assert staff_calls == [] and h.dms == []

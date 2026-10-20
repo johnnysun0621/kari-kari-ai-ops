@@ -54,8 +54,7 @@ class BriefingDetailSelect(
         values = (interaction.data or {}).get("values") or []
         task_id = values[0] if values else ""
         task = await repositories.get_task(task_id) if task_id and task_id != "none" else None
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if task is None or artist is None or artist.page_id not in task.artist_page_ids:
+        if task is None or not await _can_view(interaction.user.id, task):
             await interaction.followup.send("❌ 找不到這筆任務，可能已經結案。用 `/我的任務` 看最新清單。", ephemeral=True)
             return
         body = task.description
@@ -77,6 +76,17 @@ class BriefingDetailSelect(
         view.add_item(BriefingDetailSelect(self.day, options))
         view.add_item(BriefingAckButton(self.day))
         await interaction.edit_original_response(embed=embed, view=view)
+
+
+async def _can_view(discord_user_id: int, task: repositories.TaskItem) -> bool:
+    """關聯藝人或相關同仁才看得到這筆任務的詳細。"""
+    artist = await repositories.find_artist_by_discord_id(discord_user_id)
+    if artist is not None and artist.page_id in task.artist_page_ids:
+        return True
+    if not task.staff_page_ids:
+        return False
+    people = await repositories.get_people_items_by_ids(task.staff_page_ids)
+    return any(person.discord_user_id == str(discord_user_id) for person in people)
 
 
 class BriefingAckButton(
@@ -159,7 +169,9 @@ async def _entry_from_message(interaction: discord.Interaction, day: str) -> dic
     }
 
 
-def briefing_view(day: date, items: list[daily_briefing.BriefingItem], now: datetime) -> discord.ui.View:
+def briefing_view(
+    day: date, items: list[daily_briefing.BriefingItem], now: datetime, *, with_ack: bool = True,
+) -> discord.ui.View:
     deadline_text = _deadline_fn(now)
     options = [
         discord.SelectOption(
@@ -171,7 +183,8 @@ def briefing_view(day: date, items: list[daily_briefing.BriefingItem], now: date
     ]
     view = discord.ui.View(timeout=None)
     view.add_item(BriefingDetailSelect(_day_code(day), options))
-    view.add_item(BriefingAckButton(_day_code(day)))
+    if with_ack:
+        view.add_item(BriefingAckButton(_day_code(day)))
     return view
 
 
@@ -205,7 +218,8 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
         items = daily_briefing.build_items(artist.page_id, tasks, queued, acks)
         if previous and previous.get("day") == _day_code(day):
             continue  # 今天已發過（重啟後同一天不重發）
-        if previous and previous.get("day") and not previous.get("acked_at") and previous.get("task_ids"):
+        if (previous and previous.get("day") and not previous.get("acked_at") and previous.get("task_ids")
+                and previous.get("role") != "staff"):
             # 昨天那則沒按「我都看到了」→ 給營運早報的「昨天的早報沒看」（M3-25）
             ops_briefing.record_unread(state, previous["day"], previous.get("artist_name") or artist.name)
         await _delete_previous(client, previous)
@@ -234,6 +248,7 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
         sent += 1
         for item in items:
             sent_per_task[item.task.page_id] = sent_per_task.get(item.task.page_id, 0) + 1
+    staff_sent = await _send_staff_briefings(client, state, tasks, queued, day, now)
     daily_briefing.clear_queue(state)
     notification_log.persist()
     # 送出也記一行，控方才分得出「還沒發」和「發了沒人按」（M3-18 的語意不變）
@@ -244,4 +259,44 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
             )
         except Exception:
             logger.exception("早報送出紀錄寫入失敗：%s", task_id)
-    return {"sent": sent, "cleared": cleared, "tasks": len(sent_per_task)}
+    return {"sent": sent, "cleared": cleared, "tasks": len(sent_per_task), "staff_sent": staff_sent}
+
+
+async def _send_staff_briefings(client, state: dict, tasks, queued: set[str], day: date, now: datetime) -> int:
+    """相關同仁每人每天一則（M3-25 第三階段）；取代逐階段的同仁提醒。沒有「我都看到了」。"""
+    staff_ids = sorted({pid for task in tasks if task.discord_visible for pid in task.staff_page_ids})
+    if not staff_ids:
+        return 0
+    try:
+        people = await repositories.get_people_items_by_ids(staff_ids)
+    except Exception:
+        logger.exception("同仁早報：讀取 People 失敗")
+        return 0
+    sent = 0
+    for person in people:
+        if not person.discord_user_id:
+            continue
+        previous = daily_briefing.briefing_for(state, person.discord_user_id)
+        if previous and previous.get("day") == _day_code(day):
+            continue
+        await _delete_previous(client, previous)
+        items = daily_briefing.build_staff_items(person.page_id, tasks, queued)
+        if not items:
+            if previous:
+                state.get("briefings", {}).pop(str(person.discord_user_id), None)
+            continue
+        try:
+            user = await client.fetch_user(int(person.discord_user_id))
+            message = await user.send(
+                daily_briefing.briefing_text(day, items, _deadline_fn(now), footer=daily_briefing.STAFF_FOOTER),
+                view=briefing_view(day, items, now, with_ack=False),
+            )
+        except Exception:
+            logger.exception("同仁早報發送失敗：%s", person.name)
+            continue
+        daily_briefing.remember_briefing(state, person.discord_user_id, {
+            "day": _day_code(day), "channel_id": message.channel.id, "message_id": message.id,
+            "task_ids": [item.task.page_id for item in items], "role": "staff", "artist_name": person.name,
+        })
+        sent += 1
+    return sent

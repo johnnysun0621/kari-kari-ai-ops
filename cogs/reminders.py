@@ -469,6 +469,7 @@ class RemindersCog(commands.Cog):
         for task, action in actions:
             key = (action, task.name, teacher_reminder.class_ended_at(task), tuple(sorted(task.teacher_page_ids)))
             groups.setdefault(key, []).append(task)
+        remind_groups: list[tuple] = []
         for (action, _, _, teacher_ids), group in groups.items():
             task = group[0]
             counts = []
@@ -496,17 +497,29 @@ class RemindersCog(commands.Cog):
             artist_names = list(dict.fromkeys(
                 artist_map[p].name for item in group for p in item.artist_page_ids if p in artist_map
             ))
-            message = teacher_reminder.teacher_message(task, artist_names)
-            sent = 0
+            remind_groups.append((group, task, teachers, teacher_names, artist_names, max(counts)))
+
+        # 每位老師這一輪只收一則（M3-25 第三階段）：原本一堂課一則，一位老師有好幾堂就連收好幾則。
+        per_teacher: dict[str, tuple] = {}
+        for index, (_, task, teachers, _, artist_names, count) in enumerate(remind_groups):
             for teacher in teachers:
-                if not teacher.discord_user_id:
-                    continue
-                try:
-                    user = await self.bot.fetch_user(int(teacher.discord_user_id))
-                    await user.send(message)
-                    sent += 1
-                except Exception:
-                    logger.exception("課後提醒老師失敗：%s", teacher.name)
+                if teacher.discord_user_id:
+                    per_teacher.setdefault(teacher.page_id, (teacher, []))[1].append((index, task, artist_names, count))
+        reached: dict[int, int] = {}
+        for teacher, entries in per_teacher.values():
+            message = (
+                teacher_reminder.teacher_message(entries[0][1], entries[0][2]) if len(entries) == 1
+                else teacher_reminder.teacher_digest_message([(task, names, count) for _, task, names, count in entries])
+            )
+            try:
+                user = await self.bot.fetch_user(int(teacher.discord_user_id))
+                await user.send(message)
+                for index, *_ in entries:
+                    reached[index] = reached.get(index, 0) + 1
+            except Exception:
+                logger.exception("課後提醒老師失敗：%s", teacher.name)
+        for index, (group, task, teachers, teacher_names, artist_names, count) in enumerate(remind_groups):
+            sent = reached.get(index, 0)
             if not sent:
                 if tenant.ops_briefing_enabled:
                     ops_briefing.add_teacher_note(state, teacher_reminder.unreachable_note(task, teacher_names))
@@ -862,8 +875,9 @@ class RemindersCog(commands.Cog):
                             sent_count += 1
                         except Exception:
                             logger.exception("任務提醒 DM 失敗：%s／%s", t.name, a.name)
-                    if staff:
+                    if staff and not briefing_mode:
                         # M6-05：同仁也收同一則提醒（沒有確認鈕，也不算進「已發送給 N 人」）。
+                        # 早報模式（M3-25 第三階段）：同仁改收每天一則同仁早報。
                         await notify_staff(
                             self.bot, t,
                             overdue_text if is_overdue
