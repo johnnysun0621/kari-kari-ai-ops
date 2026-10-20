@@ -10,6 +10,7 @@ from cogs import channel_guard, ui_text
 from services import (
     audit,
     daily_briefing,
+    ops_notice,
     daily_nag,
     drive_api,
     drive_health,
@@ -106,10 +107,7 @@ class RemindersCog(commands.Cog):
         return artists, missing, progress
 
     async def _check_scheduling_sla(self):
-        channel = (
-            self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
-        )
+        channel = channel_guard.ops_channel(self.bot)
         if channel is None:
             return
         for event in scheduling_sla.due_events(int(datetime.now(config.TZ).timestamp())):
@@ -162,8 +160,7 @@ class RemindersCog(commands.Cog):
         if not collections:
             return
         now = datetime.now(config.TZ)
-        admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
-            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+        admin_channel = channel_guard.ops_channel(self.bot)
         for collection in collections:
             deadline = datetime.fromtimestamp(collection.deadline_ts, tz=config.TZ)
             artists, missing, progress = await self._monthly_pool_progress(collection)
@@ -256,15 +253,16 @@ class RemindersCog(commands.Cog):
             outcome = await send_task_notification(self.bot, task)
             if outcome is None:
                 if task.page_id not in self._dispatch_warning_sent:
-                    admin_channel = (
-                        self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-                        or self.bot.get_channel(config.TASK_CHANNEL_ID)
-                        or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
-                    )
+                    admin_channel = channel_guard.ops_channel(self.bot)
                     if admin_channel:
-                        await admin_channel.send(
-                            f"⚠️ **任務通知未送出：{task.name}**\n"
+                        from cogs.ops_actions import ops_action_view
+
+                        await channel_guard.try_send(
+                            admin_channel,
+                            content=ops_notice.action_title(f"任務通知送不出去：{task.name}") + "\n"
                             "找不到有效的關聯藝人／相關同仁或 Discord User ID，請回 Notion 補齊後再使用 `/任務通知重送`。"
+                            + (f"\n🔗 {task.url}" if task.url else ""),
+                            view=ops_action_view(),
                         )
                     self._dispatch_warning_sent.add(task.page_id)
                     await audit.log_event(
@@ -398,11 +396,7 @@ class RemindersCog(commands.Cog):
                 logger.exception("任務未確認提醒失敗：%s", artist.name)
 
     def _admin_channel(self):
-        return (
-            self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-            or self.bot.get_channel(config.TASK_CHANNEL_ID)
-            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
-        )
+        return channel_guard.ops_channel(self.bot)
 
     async def _check_batch_resend(self):
         """批次重送（M3-22）：Notion 勾了「重送通知」的任務，重送給藝人並取消勾選。
@@ -539,19 +533,35 @@ class RemindersCog(commands.Cog):
         except Exception as exc:
             logger.exception("Drive 健康檢查失敗")
             drive_api.drop_cached_service()
-            state[drive_health.FAILING_KEY] = True
-            notification_log.persist()
-            await channel_guard.try_send(
-                self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID),
+            message = await channel_guard.try_send(
+                channel_guard.ops_channel(self.bot),
                 content=drive_health.failure_message(drive_health.classify_error(exc), str(exc)),
             )
-            return
-        if state.pop(drive_health.FAILING_KEY, False):
-            notification_log.persist()
-            await channel_guard.try_send(
-                self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID),
-                content=drive_health.RECOVERED_MESSAGE,
+            state[drive_health.FAILING_KEY] = (
+                {"channel_id": message.channel.id, "message_id": message.id, "since": now.strftime("%m/%d")}
+                if message is not None else True
             )
+            notification_log.persist()
+            return
+        failing = state.pop(drive_health.FAILING_KEY, False)
+        if failing:
+            notification_log.persist()
+            # 恢復時把失敗那則改成綠色，不另發一則（M3-25）；找不到原訊息才另發
+            edited = False
+            if isinstance(failing, dict) and failing.get("message_id"):
+                try:
+                    partial = self.bot.get_partial_messageable(int(failing["channel_id"]))
+                    await partial.get_partial_message(int(failing["message_id"])).edit(
+                        content=drive_health.recovered_message(failing.get("since", ""))
+                    )
+                    edited = True
+                except Exception:
+                    logger.warning("Drive 恢復：原本的失敗訊息改不了，改另發一則")
+            if not edited:
+                await channel_guard.try_send(
+                    channel_guard.ops_channel(self.bot),
+                    content=drive_health.RECOVERED_MESSAGE,
+                )
         logger.info("Drive 健康檢查正常")
 
     async def _check_daily_briefing(self):
@@ -667,11 +677,7 @@ class RemindersCog(commands.Cog):
         if waiting:
             artist_map = await repositories.get_artist_map()
             artist_names = {page_id: artist.name for page_id, artist in artist_map.items()}
-            admin_channel = (
-                self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-                or self.bot.get_channel(config.TASK_CHANNEL_ID)
-                or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
-            )
+            admin_channel = channel_guard.ops_channel(self.bot)
             sent = await channel_guard.try_send(
                 admin_channel,
                 content=task_notifications.publish_confirm_digest_message(
@@ -772,9 +778,7 @@ class RemindersCog(commands.Cog):
         staff_map = {
             p.page_id: p for p in await repositories.get_people_items_by_ids(staff_ids)
         } if staff_ids else {}
-        admin_channel = self.bot.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
-            or self.bot.get_channel(config.TASK_CHANNEL_ID) \
-            or self.bot.get_channel(config.SCHEDULE_CHANNEL_ID)
+        admin_channel = channel_guard.ops_channel(self.bot)
 
         for t, stages, deadline in due:
             for stage in stages:  # 一次標記全部，補跑不重複發

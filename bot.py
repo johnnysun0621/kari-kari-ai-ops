@@ -9,6 +9,7 @@ from discord.ext import commands
 
 import config
 from cogs.briefing import BriefingAckButton, BriefingDetailSelect
+from cogs.ops_actions import OpsClaimButton, OpsDoneButton
 from cogs.scheduling_artist import PoolAvailabilityButton
 from cogs.tasks_artist import ReminderAckButton, TaskConcernButton, TaskReceiptButton
 from cogs import channel_guard
@@ -76,6 +77,7 @@ class KariKariBot(commands.Bot):
         self.add_dynamic_items(TaskConcernButton)
         self.add_dynamic_items(ReminderAckButton)
         self.add_dynamic_items(BriefingAckButton, BriefingDetailSelect)  # 每日早報（M3-24）
+        self.add_dynamic_items(OpsClaimButton, OpsDoneButton)  # 控方「我來處理／已處理」（M3-25）
         if config.GUILD_ID:
             guild = discord.Object(id=config.GUILD_ID)
             self.tree.copy_global_to(guild=guild)
@@ -112,7 +114,7 @@ class KariKariBot(commands.Bot):
             if problems:
                 logger.warning("Notion 選項和程式對不上：%s", "；".join(problems))
                 await channel_guard.try_send(
-                    self.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID),
+                    channel_guard.ops_channel(self),
                     content=schema_check.alert_message(problems),
                 )
             else:

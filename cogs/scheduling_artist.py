@@ -455,8 +455,7 @@ async def _send_pool_completion_notifications(
     month: str,
     deadline_ts: int,
 ) -> None:
-    admin_channel = interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) \
-        or interaction.client.get_channel(config.SCHEDULE_CHANNEL_ID)
+    admin_channel = channel_guard.ops_channel(interaction.client)
     if not admin_channel:
         return
     try:

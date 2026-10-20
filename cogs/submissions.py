@@ -14,7 +14,7 @@ from discord.ext import commands, tasks
 import config
 from cogs import channel_guard, ui_text
 from services.permissions import is_admin
-from services import audit, drive_api, drive_archive, repositories, task_notifications
+from services import audit, drive_api, drive_archive, ops_notice, repositories, task_notifications
 from services.notion_api import NotionAPIError
 
 logger = logging.getLogger(__name__)
@@ -49,8 +49,17 @@ async def notify_submission_reviewers(
     reviewers = await repositories.get_people_by_ids(task.reviewer_page_ids)
     notifiable = [r for r in reviewers if r.discord_user_id]
     if not notifiable:
-        internal = client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-        await channel_guard.try_send(internal, content=message)
+        from cogs.ops_actions import ops_action_view
+
+        # 頻道裡的版本是「要處理」：沒有審核人，要有人認領（M3-25）
+        lines = message.splitlines()
+        title = lines[0].replace("**", "").replace("📥 ", "").strip() if lines else "新提交待審核"
+        body = "\n".join(lines[1:])
+        await channel_guard.try_send(
+            channel_guard.ops_channel(client),
+            content=ops_notice.action_title(f"{title}（沒有指定審核人）") + ("\n" + body if body else ""),
+            view=ops_action_view(),
+        )
         return
     for reviewer in notifiable:
         try:

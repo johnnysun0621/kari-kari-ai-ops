@@ -662,7 +662,10 @@ class TestNotifySubmissionReviewers:
 
         asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=[]), "msg"))
 
-        assert channel.sent == [{"content": "msg"}]
+        # M3-25：頻道版是「要處理」，附「我來處理／已處理」
+        assert len(channel.sent) == 1
+        assert channel.sent[0]["content"].startswith("🟥 **要處理｜msg（沒有指定審核人）**")
+        assert [c.custom_id for c in channel.sent[0]["view"].children] == ["ops_claim", "ops_done"]
 
     def test_reviewer_without_discord_id_falls_back_to_admin_channel(self, monkeypatch):
         """審核人員欄位有填人，但那個人缺 Discord ID——視同沒有可通知對象，
@@ -675,7 +678,7 @@ class TestNotifySubmissionReviewers:
 
         asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=["p1"]), "msg"))
 
-        assert channel.sent == [{"content": "msg"}]
+        assert len(channel.sent) == 1 and "要處理｜msg" in channel.sent[0]["content"]
 
     def test_single_reviewer_is_dmed_and_admin_channel_stays_silent(self, monkeypatch):
         """有指定審核人員時是純 fallback，不是「兩邊都發」——

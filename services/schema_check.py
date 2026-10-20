@@ -10,7 +10,7 @@ Notion 的 select filter 只要帶到不存在的選項，整個查詢就回 400
 from dataclasses import dataclass
 
 import config
-from services import notion_api, repositories
+from services import notion_api, ops_notice, repositories
 
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ async def find_problems() -> list[str]:
 
 def alert_message(lines: list[str]) -> str:
     return (
-        "⚠️ **Notion 選項和程式對不上**（bot 啟動檢查）\n"
+        ops_notice.system_title("Notion 選項和程式對不上") + "（bot 啟動檢查）\n"
         + "\n".join(lines)
         + "\n\n通常是 Notion 的選項被刪除或改名。改回原本的名稱，或通知開發端更新程式。"
     )

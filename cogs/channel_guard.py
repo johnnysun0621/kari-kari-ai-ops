@@ -8,6 +8,19 @@ import config
 logger = logging.getLogger(__name__)
 
 
+def ops_channel(client):
+    """控方通知唯一出口：只發到「營運內部通知」（M3-25／M7-09，2026-10-20）。
+
+    原本各處各自備援：沒設定時逾期、派發失敗、藝人回報問題會改發到「任務查詢入口」，
+    時間池與排課進度會改發到「時間管理」——這兩個頻道藝人都看得到，排課進度還帶 Notion 連結。
+    現在找不到就回 None，呼叫端（try_send）只寫記錄檔，絕不改發到藝人看得到的頻道。
+    """
+    channel = client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID) if config.ADMIN_NOTIFY_CHANNEL_ID else None
+    if channel is None:
+        logger.warning("找不到「營運內部通知」頻道（ADMIN_NOTIFY_CHANNEL_ID），控方通知只寫記錄檔")
+    return channel
+
+
 async def try_send(channel, **kwargs) -> discord.Message | None:
     """發訊息到頻道，權限不足或頻道不存在時記 log 不拋例外。
 

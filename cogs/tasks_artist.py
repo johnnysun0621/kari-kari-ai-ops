@@ -10,7 +10,7 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, paging, ui_text
 from services.permissions import is_admin
-from services import audit, notification_log, repositories, task_notifications
+from services import audit, notification_log, ops_notice, repositories, task_notifications
 
 logger = logging.getLogger(__name__)
 
@@ -318,21 +318,19 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
             await interaction.followup.send("❌ 回饋寫入失敗，請稍後再試。", ephemeral=True)
             return
 
-        admin_channel = (
-            interaction.client.get_channel(config.ADMIN_NOTIFY_CHANNEL_ID)
-            or interaction.client.get_channel(config.TASK_CHANNEL_ID)
+        from cogs.ops_actions import ops_action_view
+
+        link = f"\n🔗 {task.url}" if task.url else ""
+        await channel_guard.try_send(
+            channel_guard.ops_channel(interaction.client),
+            content=ops_notice.action_title(f"藝人回報任務問題：{task.name}") + "\n"
+            f"藝人：{artist.name}\n"
+            f"回饋：{reason}\n"
+            "狀態：已退回「尚未開始」，並取消 Discord 顯示。\n"
+            "請修改任務後重新勾選「Discord 顯示」，Bot 會重新通知藝人。"
+            f"{link}",
+            view=ops_action_view(),
         )
-        if admin_channel:
-            link = f"\n🔗 [開啟 Notion Task]({task.url})" if task.url else ""
-            await admin_channel.send(
-                f"⚠️ **藝人回報任務問題**\n"
-                f"任務：**{task.name}**\n"
-                f"藝人：{artist.name}\n"
-                f"回饋：{reason}\n"
-                "狀態：已退回「尚未開始」，並取消 Discord 顯示。\n"
-                "請修改任務後重新勾選「Discord 顯示」，Bot 會重新通知藝人。"
-                f"{link}"
-            )
         await interaction.followup.send(
             "✅ 已將問題回報給控方，任務已暫停。控方調整後會重新通知你。",
             ephemeral=True,

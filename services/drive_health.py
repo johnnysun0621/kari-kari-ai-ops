@@ -9,6 +9,8 @@ OAuth app 已發布為正式（沒有 7 天過期），但 refresh token 約 6 �
 """
 from datetime import datetime
 
+from services import ops_notice
+
 LAST_DATE_KEY = "drive_health_last_date"
 FAILING_KEY = "drive_health_failing"
 
@@ -50,7 +52,7 @@ FIX_STEPS = {
 
 def failure_message(reason: str, detail: str) -> str:
     return (
-        f"🔴 **Google Drive 健康檢查失敗：{reason}**\n"
+        ops_notice.system_title(f"Google Drive 健康檢查失敗：{reason}") + "\n"
         "藝人現在交件會失敗（拿不到 Drive 資料夾），老師的大型批改檔也無法歸檔。\n\n"
         f"**怎麼修**\n{FIX_STEPS.get(reason, FIX_STEPS['Drive 連線失敗'])}\n\n"
         f"詳細：`{detail[:300]}`\n"
@@ -58,4 +60,9 @@ def failure_message(reason: str, detail: str) -> str:
     )
 
 
-RECOVERED_MESSAGE = "🟢 Google Drive 健康檢查恢復正常，藝人可以照常交件。"
+def recovered_message(failed_at: str = "") -> str:
+    when = f"（{failed_at} 起的問題）" if failed_at else ""
+    return ops_notice.recovered_title("Google Drive 恢復正常") + f"{when}\n藝人可以照常交件。"
+
+
+RECOVERED_MESSAGE = recovered_message()
