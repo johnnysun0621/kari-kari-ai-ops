@@ -90,11 +90,18 @@ class BriefingAckButton(
 
     async def callback(self, interaction: discord.Interaction) -> None:
         state = notification_log.shared()
-        entry = daily_briefing.briefing_for(state, interaction.user.id)
-        if not entry or entry.get("day") != self.day:
+        now = datetime.now(config.get_tenant().tz)
+        if self.day != _day_code(now.date()):
             await interaction.response.send_message("ℹ️ 這是之前的早報，請看最新的那一則。", ephemeral=True)
             return
-        now = datetime.now(config.get_tenant().tz)
+        entry = daily_briefing.briefing_for(state, interaction.user.id)
+        if not entry or entry.get("day") != self.day:
+            # 狀態檔沒有這則（例如狀態遺失、或是手動補發的早報）：任務清單直接從訊息的選單讀
+            entry = await _entry_from_message(interaction, self.day)
+            if entry is None:
+                await interaction.response.send_message("❌ 讀不到這則早報的任務，請用 `/我的任務`。", ephemeral=True)
+                return
+            daily_briefing.remember_briefing(state, interaction.user.id, entry)
         day = datetime.strptime(self.day, "%Y%m%d").date()
         task_ids = list(entry.get("task_ids") or [])
         # 先改訊息（Discord 3 秒內要回應），再寫 Notion。編輯訊息不會跳通知。
@@ -117,6 +124,27 @@ class BriefingAckButton(
             action_type="更新", operator=artist_name, discord_user_id=str(interaction.user.id),
             target_db="Tasks", after=f"{day:%m/%d} 早報｜{len(task_ids)} 筆",
         )
+
+
+async def _entry_from_message(interaction: discord.Interaction, day: str) -> dict | None:
+    """從早報訊息的「看某一筆的詳細」選單撈出任務 ID；選單選項就是這則早報列的任務。"""
+    message = getattr(interaction, "message", None)
+    task_ids: list[str] = []
+    for row in getattr(message, "components", None) or []:
+        for component in getattr(row, "children", None) or []:
+            if getattr(component, "custom_id", "") == f"briefing_detail:{day}":
+                task_ids = [option.value for option in component.options if option.value != "none"]
+    artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+    if not task_ids or artist is None:
+        return None
+    return {
+        "day": day,
+        "channel_id": getattr(getattr(message, "channel", None), "id", None),
+        "message_id": getattr(message, "id", None),
+        "task_ids": task_ids,
+        "artist_page_id": artist.page_id,
+        "artist_name": artist.name,
+    }
 
 
 def briefing_view(day: date, items: list[daily_briefing.BriefingItem], now: datetime) -> discord.ui.View:

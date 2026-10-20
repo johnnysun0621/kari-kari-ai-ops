@@ -347,3 +347,30 @@ def test_任務總覽的提醒確認_早報只算最近那天():
     summary = task_notifications.reminder_ack_summary(t, ["方晨", "采奕"])
 
     assert summary == "提醒確認（10/20 早報）：1/2 ✓（采奕）"
+
+
+def test_狀態檔沒有這則早報時_從訊息的選單讀任務(send_env, monkeypatch):
+    async def noop(**kwargs):
+        return None
+
+    async def find_artist(_uid):
+        return repositories.Artist(page_id="a1", name="方晨", discord_user_id="1")
+
+    monkeypatch.setattr(briefing.audit, "log_event", noop)
+    monkeypatch.setattr(repositories, "find_artist_by_discord_id", find_artist)
+    monkeypatch.setattr(briefing, "datetime", SimpleNamespace(now=lambda tz=None: NOW, strptime=datetime.strptime))
+    select = SimpleNamespace(custom_id="briefing_detail:20261020",
+                             options=[SimpleNamespace(value="late"), SimpleNamespace(value="soon")])
+    message = SimpleNamespace(id=5, channel=SimpleNamespace(id=900), components=[SimpleNamespace(children=[select])])
+    edits = []
+
+    async def edit_message(**kwargs):
+        edits.append(kwargs)
+
+    interaction = SimpleNamespace(user=SimpleNamespace(id=1), message=message,
+                                  response=SimpleNamespace(edit_message=edit_message))
+
+    asyncio.run(briefing.BriefingAckButton("20261020").callback(interaction))
+
+    assert edits and "已讀" in edits[0]["content"]
+    assert {p for p, _ in send_env.lines} == {"late", "soon"}
