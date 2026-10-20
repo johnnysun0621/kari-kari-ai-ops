@@ -133,6 +133,9 @@ class TenantConfig:
     publish_confirm_digest_after_days: int = 3
     # 每日催辦（M3-11）：已逾期／需修改催藝人、待審核催審核人員，每天這個整點跑一次
     daily_nag_hour: int = 10
+    # 每日早報（M3-24）：藝人的事前提醒、每日催辦、未收到重送都併成每天一則。關掉就回到舊的逐則通知。
+    daily_briefing_enabled: bool = True
+    daily_briefing_hour: int = 9
     # 課後提醒老師（M5-01）：課程結束後幾小時發第一次、最多每天催幾天（之後改通知控方）
     teacher_reminder_after_hours: float = 2
     teacher_reminder_max_days: int = 7
@@ -242,6 +245,9 @@ def _load_karikari_from_env() -> TenantConfig:
         publish_confirm_digest_hour=min(max(_env_int("PUBLISH_CONFIRM_DIGEST_HOUR", 10), 0), 23),
         publish_confirm_digest_after_days=max(_env_int("PUBLISH_CONFIRM_DIGEST_AFTER_DAYS", 3), 0),
         daily_nag_hour=min(max(_env_int("DAILY_NAG_HOUR", 10), 0), 23),
+        daily_briefing_enabled=os.getenv("DAILY_BRIEFING_ENABLED", "true").strip().lower()
+        not in {"0", "false", "no", "off"},
+        daily_briefing_hour=min(max(_env_int("DAILY_BRIEFING_HOUR", 9), 0), 23),
         teacher_reminder_after_hours=max(_env_float("TEACHER_REMINDER_AFTER_HOURS", 2), 0),
         teacher_reminder_max_days=max(_env_int("TEACHER_REMINDER_MAX_DAYS", 7), 1),
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),

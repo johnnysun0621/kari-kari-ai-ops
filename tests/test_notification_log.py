@@ -17,6 +17,11 @@ NOW = datetime(2026, 10, 11, 10, 0, tzinfo=TZ)
 @pytest.fixture(autouse=True)
 def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(notification_log, "STATE_PATH", tmp_path / "log.json")
+    # 這裡測的是逐則通知（每日早報關掉時的行為，M3-24 之前的預設）；早報模式見 tests/test_daily_briefing.py
+    import dataclasses
+    import config as _config
+
+    monkeypatch.setattr(_config, "TENANT", dataclasses.replace(_config.TENANT, daily_briefing_enabled=False))
     notification_log.reset_for_tests()
     yield
     notification_log.reset_for_tests()
@@ -77,6 +82,7 @@ class FakeMessage:
         self.id = message_id
         self.content = content
         self.edits = []
+        self.deleted = False
 
     async def edit(self, content=None, view="unchanged"):
         self.edits.append({"content": content, "view": view})
@@ -91,39 +97,46 @@ class FakeClient:
     def get_partial_messageable(self, channel_id):
         client = self
 
-        class Partial:
-            async def fetch_message(self, message_id):
-                if message_id in client.missing:
+        class PartialMessage:
+            def __init__(self, message_id):
+                self.message_id = message_id
+
+            async def delete(self):
+                if self.message_id in client.missing:
                     raise RuntimeError("Unknown Message")
-                return client.messages[message_id]
+                client.messages[self.message_id].deleted = True
+
+        class Partial:
+            def get_partial_message(self, message_id):
+                return PartialMessage(message_id)
 
         return Partial()
 
 
 class TestMarkReceived:
-    def test_同一任務的歷史通知全部改成已收到並拿掉按鈕(self):
-        old1, old2, other_task = FakeMessage(9, 1), FakeMessage(9, 2), FakeMessage(9, 3)
+    """M3-24（2026-10-20）：按的那則收成一行，同任務其他舊通知刪掉；取代 M3-23 的每則加一行已收到。"""
+
+    def test_按的那則收成一行_同任務舊通知刪掉(self):
+        current, old1, old2, other_task = (FakeMessage(9, i) for i in (1, 2, 3, 4))
         state = notification_log.shared()
-        for m, task_id in ((old1, "t1"), (old2, "t1"), (other_task, "t2")):
+        for m, task_id in ((current, "t1"), (old1, "t1"), (old2, "t1"), (other_task, "t2")):
             notification_log.record_message(state, task_id, 100, 9, m.id, NOW)
-        client = FakeClient([old1, old2, other_task])
+        client = FakeClient([current, old1, old2, other_task])
 
-        edited = asyncio.run(tasks_artist.mark_previous_notifications_received(client, "t1", 100, NOW))
+        handled = asyncio.run(tasks_artist.mark_previous_notifications_received(
+            client, "t1", 100, NOW, current, "✅ 已收到｜任務（截止 10/25）｜10/11 10:00"))
 
-        assert edited == 2
-        for m in (old1, old2):
-            assert m.edits[-1]["view"] is None
-            assert "✅ 已收到（10/11 10:00）" in m.content
-        assert other_task.edits == []  # 別的任務不受影響
+        assert handled == 3
+        assert current.content == "✅ 已收到｜任務（截止 10/25）｜10/11 10:00" and current.edits[-1]["view"] is None
+        assert old1.deleted and old2.deleted and not current.deleted
+        assert not other_task.deleted and other_task.edits == []  # 別的任務不受影響
         assert notification_log.messages_for(state, "t1", 100) == []
 
     def test_按的那一則就算沒被紀錄也會處理(self):
         current = FakeMessage(9, 7)
-        client = FakeClient([current])
-        edited = asyncio.run(
-            tasks_artist.mark_previous_notifications_received(client, "t1", 100, NOW, current)
-        )
-        assert edited == 1 and current.edits[-1]["view"] is None
+        handled = asyncio.run(tasks_artist.mark_previous_notifications_received(
+            FakeClient([current]), "t1", 100, NOW, current, "✅ 已收到｜x"))
+        assert handled == 1 and current.edits[-1]["view"] is None
 
     def test_別的藝人的通知不動(self):
         mine, theirs = FakeMessage(9, 1), FakeMessage(8, 2)
@@ -132,25 +145,24 @@ class TestMarkReceived:
         notification_log.record_message(state, "t1", 200, 8, 2, NOW)
         asyncio.run(tasks_artist.mark_previous_notifications_received(
             FakeClient([mine, theirs]), "t1", 100, NOW))
-        assert theirs.edits == []
+        assert not theirs.deleted and theirs.edits == []
         assert len(notification_log.messages_for(state, "t1", 200)) == 1
 
-    def test_被刪掉的舊通知略過_不讓流程失敗(self):
+    def test_已被刪掉的舊通知略過_不讓流程失敗(self):
         alive = FakeMessage(9, 2)
         state = notification_log.shared()
         notification_log.record_message(state, "t1", 100, 9, 1, NOW)
         notification_log.record_message(state, "t1", 100, 9, 2, NOW)
-        edited = asyncio.run(tasks_artist.mark_previous_notifications_received(
+        handled = asyncio.run(tasks_artist.mark_previous_notifications_received(
             FakeClient([alive], missing={1}), "t1", 100, NOW))
-        assert edited == 1
+        assert handled == 1 and alive.deleted
 
-    def test_重複按不會重複加上已收到字樣(self):
+    def test_重複按只會是同一行(self):
         msg = FakeMessage(9, 1)
         client = FakeClient([msg])
-        asyncio.run(tasks_artist.mark_previous_notifications_received(client, "t1", 100, NOW, msg))
-        later = NOW + timedelta(hours=2)
-        asyncio.run(tasks_artist.mark_previous_notifications_received(client, "t1", 100, later, msg))
-        assert msg.content.count("✅ 已收到") == 1
+        asyncio.run(tasks_artist.mark_previous_notifications_received(client, "t1", 100, NOW, msg, "✅ 已收到｜A"))
+        asyncio.run(tasks_artist.mark_previous_notifications_received(client, "t1", 100, NOW, msg, "✅ 已收到｜A"))
+        assert msg.content == "✅ 已收到｜A"
 
 
 class TestSendTaskDm:

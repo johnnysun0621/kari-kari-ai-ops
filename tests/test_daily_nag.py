@@ -18,6 +18,11 @@ NOW = datetime(2026, 10, 12, 10, 5, tzinfo=TZ)
 @pytest.fixture(autouse=True)
 def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(notification_log, "STATE_PATH", tmp_path / "log.json")
+    # 這裡測的是逐則通知（每日早報關掉時的行為，M3-24 之前的預設）；早報模式見 tests/test_daily_briefing.py
+    import dataclasses
+    import config as _config
+
+    monkeypatch.setattr(_config, "TENANT", dataclasses.replace(_config.TENANT, daily_briefing_enabled=False))
     notification_log.reset_for_tests()
     yield
     notification_log.reset_for_tests()

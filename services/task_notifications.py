@@ -222,13 +222,24 @@ def reminder_ack_summary(task: TaskItem, artist_names: list[str]) -> str:
     if not task.reminder_ack.strip():
         return ""
     latest_stage = None
+    latest_day = ""
     for line in task.reminder_ack.splitlines():
         parts = [part.strip() for part in line.split("｜")]
         if len(parts) == 3:
-            latest_stage = parts[0]
+            latest_stage, latest_day = parts[0], parts[1][:5]
     if latest_stage is None:
         return ""
-    confirmed = acknowledged_artists(task.reminder_ack, latest_stage)
+    ack_text = task.reminder_ack
+    if latest_stage == "早報":
+        # 每日早報每天的階段名稱都是「早報」，只算最近那天的，昨天按過的不算今天看過（M3-24）
+        ack_text = "\n".join(
+            line for line in task.reminder_ack.splitlines()
+            if len(line.split("｜")) == 3 and line.split("｜")[1].strip().startswith(latest_day)
+        )
+        latest_stage = f"{latest_day} 早報"
+        confirmed = acknowledged_artists(ack_text, "早報")
+    else:
+        confirmed = acknowledged_artists(ack_text, latest_stage)
     ordered = [name for name in artist_names if name in confirmed]
     total = len(artist_names) or len(confirmed)
     names_text = f"（{'、'.join(ordered)}）" if ordered else ""

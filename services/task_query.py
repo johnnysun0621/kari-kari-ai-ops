@@ -278,3 +278,30 @@ def build_task_context(
     content = clean_description(strip_notion_links(body))
     lines.append(f"任務內容：\n{content}" if content else "任務內容：（控方沒有寫）")
     return "\n".join(lines)
+
+
+def task_detail_text(task: repositories.TaskItem, *, deadline_text: str, body: str) -> str:
+    """任務詳細（基本資訊＋任務內容），小律與每日早報的「看某一筆的詳細」共用。"""
+    from services.notion_links import strip_notion_links
+
+    content = clean_description(strip_notion_links(body or ""))
+    if len(content) > MAX_DETAIL_CHARS:
+        content = content[:MAX_DETAIL_CHARS].rstrip() + "…（內容較長，只顯示前段；完整內容請問控方）"
+    info = [
+        f"・類型：{task.task_type or '任務'}",
+        f"・狀態：{task.status or '未填狀態'}",
+        f"・期限：{deadline_text}",
+    ]
+    if task.start:
+        start_text = f"{task.start.month}/{task.start.day}"
+        if task.start_has_time:
+            start_text += task.start.strftime(" %H:%M")
+        info.insert(2, f"・開始：{start_text}")
+    if repositories.is_task_submittable(task):
+        info.append("・可以交件：用 `/我的任務` → 提交任務")
+    return (
+        f"📌 **{strip_notion_links(task.name)}**\n"
+        + "\n".join(info)
+        + "\n\n**任務內容**\n"
+        + (content or "（控方還沒寫任務內容）")
+    )

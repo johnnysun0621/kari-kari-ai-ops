@@ -9,6 +9,7 @@ import config
 from cogs import channel_guard, ui_text
 from services import (
     audit,
+    daily_briefing,
     daily_nag,
     drive_api,
     drive_health,
@@ -71,6 +72,7 @@ class RemindersCog(commands.Cog):
             await self._check_unacknowledged_task_notifications()
             await self._check_batch_resend()
             await self._check_drive_health()
+            await self._check_daily_briefing()
             await self._check_daily_nags()
             await self._check_teacher_post_class()
             await self._check_revision_deadlines()
@@ -337,7 +339,12 @@ class RemindersCog(commands.Cog):
                 )
 
     async def _check_unacknowledged_task_notifications(self):
-        """依 TASK_ACK_REMINDER_HOURS 掃描一次，重新推送所有尚未確認的任務。"""
+        """依 TASK_ACK_REMINDER_HOURS 掃描一次，重新推送所有尚未確認的任務。
+
+        每日早報開著時不跑（M3-24）：沒按收到的任務改列在早報的「還沒按收到」，不再每 12 小時發新訊息。
+        """
+        if config.get_tenant().daily_briefing_enabled:
+            return
         now = datetime.now(config.get_tenant().tz)
         if not task_notifications.should_run_acknowledgement_scan(
             self._last_unacknowledged_scan_at,
@@ -547,6 +554,27 @@ class RemindersCog(commands.Cog):
             )
         logger.info("Drive 健康檢查正常")
 
+    async def _check_daily_briefing(self):
+        """每日早報（M3-24）：每位藝人每天一則，取代逐則的事前提醒、藝人端每日催辦與未確認重送。"""
+        tenant = config.get_tenant()
+        if not tenant.daily_briefing_enabled:
+            return
+        now = datetime.now(tenant.tz)
+        state = notification_log.shared()
+        if not daily_briefing.briefing_due(now, state.get("briefing_last_date"), tenant.daily_briefing_hour):
+            return
+        # 先記下今天已跑：中途失敗也不會同一天每 30 分鐘重發（各藝人另有「今天已發」判斷）
+        state["briefing_last_date"] = now.date().isoformat()
+        notification_log.persist()
+        from cogs.briefing import send_daily_briefings
+
+        stats = await send_daily_briefings(self.bot, now)
+        await audit.log_event(
+            event_name="每日早報",
+            action_type="提醒", operator="System", source="System", target_db="Tasks",
+            after=f"發出 {stats['sent']} 則｜列入 {stats['tasks']} 筆任務｜沒有任務而清掉舊早報 {stats['cleared']} 位",
+        )
+
     async def _check_daily_nags(self):
         """每日催辦（M3-11）：已逾期／需修改催藝人，待審核催審核人員，一天一次、不帶按鈕。
 
@@ -565,7 +593,9 @@ class RemindersCog(commands.Cog):
         tasks = await repositories.get_active_tasks()
         artist_map = await repositories.get_artist_map()
         artist_sent = 0
-        for nag in daily_nag.group_artist_nags(tasks, artist_map):
+        # 每日早報開著時，已逾期／需修改改在早報裡列（M3-24），這裡只留審核人員催辦。
+        artist_nags = [] if tenant.daily_briefing_enabled else daily_nag.group_artist_nags(tasks, artist_map)
+        for nag in artist_nags:
             try:
                 user = await self.bot.fetch_user(int(nag.artist.discord_user_id))
                 await user.send(daily_nag.artist_nag_message(nag))
@@ -755,6 +785,12 @@ class RemindersCog(commands.Cog):
             deadline_text = ui_text.deadline_text(t, now)
             artists = [artist_map[pid] for pid in t.artist_page_ids if pid in artist_map]
 
+            briefing_mode = config.get_tenant().daily_briefing_enabled
+            if briefing_mode and t.discord_visible and not is_overdue:
+                # M3-24：到期的提醒階段排進明早的早報，不再一則一則私訊藝人。
+                daily_briefing.queue_stages(log_state, t.page_id, stages, now)
+                notification_log.persist()
+
             # DM 藝人（僅 Discord 顯示的任務；內部行政任務不打擾藝人）
             if t.discord_visible:
                 from cogs.tasks_artist import notify_staff, reminder_view
@@ -770,7 +806,8 @@ class RemindersCog(commands.Cog):
                         f"請盡快處理；若已完成請提交或聯絡營運。"
                     )
                     for a in artists:
-                        if not a.discord_user_id:
+                        if not a.discord_user_id or briefing_mode:
+                            # 早報模式：逾期與事前提醒都改在早報列（逾期仍會改狀態並通知控方）
                             continue
                         try:
                             user = await self.bot.fetch_user(int(a.discord_user_id))

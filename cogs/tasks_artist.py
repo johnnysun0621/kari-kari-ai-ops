@@ -57,36 +57,49 @@ async def notify_staff(
     return sent
 
 
+def received_line(task: repositories.TaskItem, received_at: datetime) -> str:
+    """派發卡按了「收到任務」後收成的那一行。"""
+    now = datetime.now(config.get_tenant().tz)
+    return f"✅ 已收到｜{task.name}（{ui_text.deadline_text(task, now)}）｜{received_at:%m/%d %H:%M}"
+
+
 async def mark_previous_notifications_received(
     client: discord.Client,
     task_id: str,
     user_id: int,
     received_at: datetime,
     current_message: discord.Message | None = None,
+    collapsed: str | None = None,
 ) -> int:
-    """把同一任務發給這位藝人的所有歷史通知，改成「已收到」並拿掉按鈕。
+    """按了「收到任務」：按的那則收成一行，同一任務發給這位藝人的其他舊通知刪掉。
 
-    只動這位藝人自己的訊息，不影響其他任務、其他藝人。訊息被藝人刪掉或拿不到時略過，
-    不讓整個收到流程失敗。回傳實際改到幾則。
+    2026-10-20（M3-24）：原本每則舊通知各加一行「✅ 已收到」，私訊裡會疊成一排，改成只留一行。
+    只動這位藝人自己的訊息，不影響其他任務、其他藝人。訊息被刪或拿不到時略過，回傳處理了幾則。
     """
     state = notification_log.shared()
     targets = {(m["channel_id"], m["message_id"]) for m in notification_log.messages_for(state, task_id, user_id)}
+    current_key = (current_message.channel.id, current_message.id) if current_message is not None else None
+    if current_key:
+        targets.discard(current_key)
+    handled = 0
     if current_message is not None:
-        targets.add((current_message.channel.id, current_message.id))
-    suffix = notification_log.received_suffix(received_at)
-    edited = 0
+        try:
+            content = collapsed or (current_message.content + notification_log.received_suffix(received_at))
+            await current_message.edit(content=content[:2000], view=None)
+            handled += 1
+        except Exception:
+            logger.warning("任務通知無法收合：%s／%s", task_id, current_message.id)
     for channel_id, message_id in targets:
         try:
-            message = await client.get_partial_messageable(channel_id).fetch_message(message_id)
-            already = "\n\n✅ 已收到（" in message.content
-            content = message.content if already else message.content + suffix
-            await message.edit(content=content[:2000], view=None)
-            edited += 1
+            await client.get_partial_messageable(channel_id).get_partial_message(message_id).delete()
+            handled += 1
+        except discord.NotFound:
+            pass
         except Exception:
-            logger.warning("舊任務通知無法標記已收到（可能已被刪除）：%s／%s", task_id, message_id)
+            logger.warning("舊任務通知無法刪除：%s／%s", task_id, message_id)
     notification_log.forget_messages(state, task_id, user_id)
     notification_log.persist()
-    return edited
+    return handled
 
 
 class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"task_receipt:(?P<task_id>[\w-]+)"):
@@ -114,23 +127,19 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
         return cls(match.group("task_id"))
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        # 先回應 Discord，再進行 Notion 查詢，避免超過 3 秒互動期限。
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        # 先回應 Discord（不另發訊息，只更新這則），再進行 Notion 查詢，避免超過 3 秒互動期限。
+        await interaction.response.defer()
         task = await repositories.get_task(self.task_id)
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if task is None or artist is None or artist.page_id not in task.artist_page_ids:
             await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
             return
         if not task_notifications.can_acknowledge(task):
-            # 已經收到過：順手把這則與其他舊通知改成已收到，按鈕不再留著。
+            # 已經收到過（或已進入後續狀態）：直接收合，不再多跳一則說明。
+            received = task.discord_acknowledged_at or datetime.now(config.get_tenant().tz)
             await mark_previous_notifications_received(
-                interaction.client, self.task_id, interaction.user.id,
-                task.discord_acknowledged_at or datetime.now(config.get_tenant().tz),
-                interaction.message,
-            )
-            await interaction.followup.send(
-                f"ℹ️ 這項任務目前狀態是「{task.status or '未設定'}」，不需要重複確認。",
-                ephemeral=True,
+                interaction.client, self.task_id, interaction.user.id, received,
+                interaction.message, received_line(task, received),
             )
             return
 
@@ -153,17 +162,12 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
             logger.exception("任務收到確認寫入失敗：%s", self.task_id)
             await interaction.followup.send("❌ 收到確認寫入失敗，請稍後再試。", ephemeral=True)
             return
-        edited = await mark_previous_notifications_received(
-            interaction.client, self.task_id, interaction.user.id, received_at, interaction.message,
+        handled = await mark_previous_notifications_received(
+            interaction.client, self.task_id, interaction.user.id, received_at,
+            interaction.message, received_line(task, received_at),
         )
-        logger.info("收到任務：%s 已把 %s 則舊通知標成已收到", task.name, edited)
-        # 原始任務通知已經包含完整內容；確認後只回覆狀態，避免重複洗版。
-        content = (
-            f"✅ 已收到「{task.name}」\n"
-            "狀態：進行中\n"
-            "請依原任務通知完成；要再看一次內容可以用 `/我的任務`。"
-        )
-        await interaction.followup.send(content, ephemeral=True)
+        # 不再另外回一則「已收到」：按的那則自己收成一行就是回饋，私訊不會越疊越長（M3-24）。
+        logger.info("收到任務：%s，收合／清掉 %s 則通知", task.name, handled)
 
 
 class ReminderAckButton(
@@ -198,7 +202,7 @@ class ReminderAckButton(
         return cls(match.group("task_id"), match.group("stage_code"))
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer()  # 只更新這則，不另發訊息（M3-24）
         stage = task_notifications.reminder_stage_from_code(self.stage_code)
         task = await repositories.get_task(self.task_id)
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
@@ -227,10 +231,12 @@ class ReminderAckButton(
             logger.exception("提醒確認寫入失敗：%s", self.task_id)
             await interaction.followup.send("❌ 確認寫入失敗，請稍後再試。", ephemeral=True)
             return
-        await interaction.followup.send(
-            f"👌 已記錄你收到「{task.name}」的{stage}提醒。",
-            ephemeral=True,
-        )
+        try:
+            await interaction.message.edit(
+                content=f"👌 已收到｜{task.name}（{stage}提醒）｜{now:%m/%d %H:%M}", view=None,
+            )
+        except Exception:
+            logger.warning("提醒訊息無法收合：%s", self.task_id)
 
 
 def reminder_view(task_id: str, stage: str) -> discord.ui.View | None:

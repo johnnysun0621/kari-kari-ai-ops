@@ -515,6 +515,7 @@ class TestReminderAckButton:
             user=SimpleNamespace(id=user_id),
             response=SimpleNamespace(defer=AsyncMock()),
             followup=SimpleNamespace(send=AsyncMock()),
+            message=SimpleNamespace(edit=AsyncMock()),
         )
 
     def _wire(self, monkeypatch, *, task=None, artist=None):
@@ -557,8 +558,11 @@ class TestReminderAckButton:
         page_id, line = appended[0]
         assert page_id == "task-1"
         assert line.startswith("當天｜") and line.endswith("｜Johnny")
-        reply = interaction.followup.send.await_args.args[0]
-        assert "當天" in reply and "歌唱課作業" in reply
+        # M3-24：不再另外跳一則「已記錄」，按的那則原地收合、拿掉按鈕
+        interaction.followup.send.assert_not_awaited()
+        edit = interaction.message.edit.await_args.kwargs
+        assert "已收到" in edit["content"] and "當天" in edit["content"] and "歌唱課作業" in edit["content"]
+        assert edit["view"] is None
 
     def test_someone_else_cannot_ack_your_task(self, monkeypatch):
         import asyncio
