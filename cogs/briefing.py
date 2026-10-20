@@ -10,7 +10,7 @@ import discord
 
 import config
 from cogs import ui_text
-from services import audit, daily_briefing, notification_log, repositories, task_notifications, task_query
+from services import audit, daily_briefing, notification_log, ops_briefing, repositories, task_notifications, task_query
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -205,6 +205,9 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
         items = daily_briefing.build_items(artist.page_id, tasks, queued, acks)
         if previous and previous.get("day") == _day_code(day):
             continue  # 今天已發過（重啟後同一天不重發）
+        if previous and previous.get("day") and not previous.get("acked_at") and previous.get("task_ids"):
+            # 昨天那則沒按「我都看到了」→ 給營運早報的「昨天的早報沒看」（M3-25）
+            ops_briefing.record_unread(state, previous["day"], previous.get("artist_name") or artist.name)
         await _delete_previous(client, previous)
         if not items:
             if previous:

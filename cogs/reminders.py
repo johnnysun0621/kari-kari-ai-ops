@@ -10,6 +10,7 @@ from cogs import channel_guard, ui_text
 from services import (
     audit,
     daily_briefing,
+    ops_briefing,
     ops_notice,
     daily_nag,
     drive_api,
@@ -74,6 +75,7 @@ class RemindersCog(commands.Cog):
             await self._check_batch_resend()
             await self._check_drive_health()
             await self._check_daily_briefing()
+            await self._check_ops_briefing()
             await self._check_daily_nags()
             await self._check_teacher_post_class()
             await self._check_revision_deadlines()
@@ -186,7 +188,7 @@ class RemindersCog(commands.Cog):
                     collection.month, collection.deadline_ts, "pre_deadline"
                 ):
                     dm_sent = await self._dm_monthly_pool_missing(missing, collection.month, deadline)
-                    if admin_channel:
+                    if admin_channel and not config.get_tenant().ops_briefing_enabled:
                         await admin_channel.send(
                             f"⏰ **{collection.month} 月度時間池催填**\n"
                             f"未填：{names}\n"
@@ -206,7 +208,7 @@ class RemindersCog(commands.Cog):
                     dm_sent = await self._dm_monthly_pool_missing(
                         missing, collection.month, deadline, overdue=True
                     )
-                    if admin_channel:
+                    if admin_channel and not config.get_tenant().ops_briefing_enabled:
                         await admin_channel.send(
                             f"🔴 **{collection.month} 月度時間池已截止，仍有人未填**\n"
                             f"未填：{names}\n"
@@ -482,10 +484,14 @@ class RemindersCog(commands.Cog):
             teachers = await repositories.get_people_items_by_ids(list(teacher_ids))
             teacher_names = [t.name for t in teachers]
             if action == "escalate":
-                await channel_guard.try_send(
-                    admin_channel,
-                    content=teacher_reminder.escalation_message(task, teacher_names, max(counts)),
-                )
+                if tenant.ops_briefing_enabled:
+                    ops_briefing.add_teacher_note(state, teacher_reminder.escalation_note(task, teacher_names, max(counts)))
+                    notification_log.persist()
+                else:
+                    await channel_guard.try_send(
+                        admin_channel,
+                        content=teacher_reminder.escalation_message(task, teacher_names, max(counts)),
+                    )
                 continue
             artist_names = list(dict.fromkeys(
                 artist_map[p].name for item in group for p in item.artist_page_ids if p in artist_map
@@ -502,9 +508,13 @@ class RemindersCog(commands.Cog):
                 except Exception:
                     logger.exception("課後提醒老師失敗：%s", teacher.name)
             if not sent:
-                await channel_guard.try_send(
-                    admin_channel, content=teacher_reminder.unreachable_message(task, teacher_names)
-                )
+                if tenant.ops_briefing_enabled:
+                    ops_briefing.add_teacher_note(state, teacher_reminder.unreachable_note(task, teacher_names))
+                    notification_log.persist()
+                else:
+                    await channel_guard.try_send(
+                        admin_channel, content=teacher_reminder.unreachable_message(task, teacher_names)
+                    )
             for item in group:
                 await audit.log_event(
                     event_name=f"課後提醒老師｜{item.name}",
@@ -585,6 +595,25 @@ class RemindersCog(commands.Cog):
             after=f"發出 {stats['sent']} 則｜列入 {stats['tasks']} 筆任務｜沒有任務而清掉舊早報 {stats['cleared']} 位",
         )
 
+    async def _check_ops_briefing(self):
+        """控方營運早報（M3-25）：每天一則，取代逾期／修改期限逐筆通知、時間池進度、發文待確認等。"""
+        tenant = config.get_tenant()
+        if not tenant.ops_briefing_enabled:
+            return
+        now = datetime.now(tenant.tz)
+        state = notification_log.shared()
+        if not ops_briefing.briefing_due(now, state.get("ops_briefing_last_date"), tenant.ops_briefing_hour, tenant.ops_briefing_minute):
+            return
+        state["ops_briefing_last_date"] = now.date().isoformat()
+        notification_log.persist()
+        from cogs.ops_briefing import send_ops_briefing
+
+        sent = await send_ops_briefing(self.bot, now)
+        await audit.log_event(
+            event_name="營運早報", action_type="提醒", operator="System", source="System",
+            target_db="Tasks", after="已發送" if sent else "未發送（找不到營運內部通知頻道）",
+        )
+
     async def _check_daily_nags(self):
         """每日催辦（M3-11）：已逾期／需修改催藝人，待審核催審核人員，一天一次、不帶按鈕。
 
@@ -643,7 +672,7 @@ class RemindersCog(commands.Cog):
             except Exception:
                 logger.exception("每日催辦（審核人員）失敗：%s", reviewers[pid].name)
                 unassigned += entries  # 私訊不到就退回控方頻道，不讓提交沒人知道
-        if unassigned:
+        if unassigned and not tenant.ops_briefing_enabled:
             await channel_guard.try_send(
                 self._admin_channel(),
                 content=daily_nag.review_nag_message(
@@ -659,8 +688,13 @@ class RemindersCog(commands.Cog):
             )
 
     async def _check_publish_confirm_digest(self):
-        """發文類停在「已完成」的任務，彙整成一則提醒控方確認實際發布（M2-05）。"""
+        """發文類停在「已完成」的任務，彙整成一則提醒控方確認實際發布（M2-05）。
+
+        營運早報開著時不另發（M3-25）：在早報的「發文待確認發布」那一區列出。
+        """
         tenant = config.get_tenant()
+        if tenant.ops_briefing_enabled:
+            return
         now = datetime.now(tenant.tz)
         state = task_notifications.load_state(task_notifications.PUBLISH_DIGEST_STATE_PATH)
         if not task_notifications.publish_confirm_digest_due(
@@ -702,7 +736,10 @@ class RemindersCog(commands.Cog):
         """修改期限逾時通知控方，每筆每個期限只通知一次（寫檔去重，重啟不重發）。
 
         藝人端的需修改提醒已併進每日催辦（M3-11），這裡只剩控方的逾時升級。
+        營運早報開著時不逐筆發（M3-25）：早報的「修改期限已過」每天列出。
         """
+        if config.get_tenant().ops_briefing_enabled:
+            return
         tasks = await repositories.get_active_tasks()
         now = datetime.now(config.TZ)
         state = notification_log.shared()
@@ -851,7 +888,10 @@ class RemindersCog(commands.Cog):
                     if deadline is not None:
                         self._once(f"overdue-failed:{t.page_id}", deadline.date().isoformat())
                 names = "、".join(a.name for a in artists) or "（未關聯藝人）"
-                if admin_channel:
+                if config.get_tenant().ops_briefing_enabled:
+                    ops_briefing.record_new_overdue(log_state, t.page_id, now)  # 早報列「新逾期」（M3-25）
+                    notification_log.persist()
+                elif admin_channel:
                     await admin_channel.send(
                         f"🚨 任務逾期：**{t.name}**｜{names}｜{deadline_text}"
                     )

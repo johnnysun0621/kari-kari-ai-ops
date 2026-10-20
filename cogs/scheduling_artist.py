@@ -467,7 +467,8 @@ async def _send_pool_completion_notifications(
         return
 
     artist_notice_key = f"{month}:{deadline_ts}:{artist.page_id}"
-    if artist_notice_key not in _sent_pool_artist_done_notices:
+    # 營運早報開著時不再每位藝人填完各發一則（M3-25），控方在早報看進度；收齊仍即時通知
+    if artist_notice_key not in _sent_pool_artist_done_notices and not config.get_tenant().ops_briefing_enabled:
         await admin_channel.send(pool_artist_done_notice(month, artist, artists, progress))
         _sent_pool_artist_done_notices.add(artist_notice_key)
 

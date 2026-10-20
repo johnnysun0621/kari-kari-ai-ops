@@ -57,6 +57,11 @@ class TestNextAction:
 @pytest.fixture(autouse=True)
 def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(notification_log, "STATE_PATH", tmp_path / "log.json")
+    # 這裡測的是營運早報關閉時「直接發控方頻道」的行為；早報模式見 tests/test_ops_briefing.py
+    import dataclasses
+    import config as _config
+
+    monkeypatch.setattr(_config, "TENANT", dataclasses.replace(_config.TENANT, ops_briefing_enabled=False))
     notification_log.reset_for_tests()
     yield
     notification_log.reset_for_tests()

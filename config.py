@@ -14,6 +14,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _hhmm(value: str, default: tuple[int, int] = (9, 30)) -> tuple[int, int]:
+    """「09:30」→ (9, 30)；格式不對就用預設。"""
+    try:
+        hour, minute = (int(part) for part in value.strip().split(":", 1))
+    except (AttributeError, ValueError):
+        return default
+    return (hour, minute) if 0 <= hour <= 23 and 0 <= minute <= 59 else default
+
+
 def _env_int(name: str, default: int = 0) -> int:
     value = os.getenv(name, "").strip()
     if not value:
@@ -136,6 +145,10 @@ class TenantConfig:
     # 每日早報（M3-24）：藝人的事前提醒、每日催辦、未收到重送都併成每天一則。關掉就回到舊的逐則通知。
     daily_briefing_enabled: bool = True
     daily_briefing_hour: int = 9
+    # 控方營運早報（M3-25）：逾期、修改期限、時間池進度、發文待確認等併成每天一則。關掉就回到逐則通知。
+    ops_briefing_enabled: bool = True
+    ops_briefing_hour: int = 9
+    ops_briefing_minute: int = 30
     # 課後提醒老師（M5-01）：課程結束後幾小時發第一次、最多每天催幾天（之後改通知控方）
     teacher_reminder_after_hours: float = 2
     teacher_reminder_max_days: int = 7
@@ -248,6 +261,10 @@ def _load_karikari_from_env() -> TenantConfig:
         daily_briefing_enabled=os.getenv("DAILY_BRIEFING_ENABLED", "true").strip().lower()
         not in {"0", "false", "no", "off"},
         daily_briefing_hour=min(max(_env_int("DAILY_BRIEFING_HOUR", 9), 0), 23),
+        ops_briefing_enabled=os.getenv("OPS_BRIEFING_ENABLED", "true").strip().lower()
+        not in {"0", "false", "no", "off"},
+        ops_briefing_hour=_hhmm(os.getenv("OPS_BRIEFING_TIME", "09:30"))[0],
+        ops_briefing_minute=_hhmm(os.getenv("OPS_BRIEFING_TIME", "09:30"))[1],
         teacher_reminder_after_hours=max(_env_float("TEACHER_REMINDER_AFTER_HOURS", 2), 0),
         teacher_reminder_max_days=max(_env_int("TEACHER_REMINDER_MAX_DAYS", 7), 1),
         drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", ""),

@@ -22,7 +22,8 @@ def isolated_state(tmp_path, monkeypatch):
     import dataclasses
     import config as _config
 
-    monkeypatch.setattr(_config, "TENANT", dataclasses.replace(_config.TENANT, daily_briefing_enabled=False))
+    monkeypatch.setattr(_config, "TENANT", dataclasses.replace(
+        _config.TENANT, daily_briefing_enabled=False, ops_briefing_enabled=False))  # 營運早報關閉時的逐則行為
     notification_log.reset_for_tests()
     yield
     notification_log.reset_for_tests()
