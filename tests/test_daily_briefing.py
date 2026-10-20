@@ -304,7 +304,8 @@ def test_舊早報的按鈕不會誤記(send_env):
     assert "之前的早報" in replies[0] and send_env.lines == []
 
 
-def test_看某一筆的詳細_只有自己看得到_不帶網址(monkeypatch):
+def test_看某一筆的詳細_展開在早報同一則_不另跳訊息(monkeypatch):
+    """2026-10-20 QA：原本每看一筆另跳一則，看兩筆以上往下疊，「我都看到了」被推到上面。"""
     target = dataclasses.replace(task("soon", name="week4 聽力"), description="• 聽力：50 題音程／截圖 https://www.notion.so/x")
 
     async def get_task(task_id):
@@ -315,24 +316,36 @@ def test_看某一筆的詳細_只有自己看得到_不帶網址(monkeypatch):
 
     monkeypatch.setattr(repositories, "get_task", get_task)
     monkeypatch.setattr(repositories, "find_artist_by_discord_id", find_artist)
-    sent = []
+    followups, edits = [], []
 
     async def defer(**kwargs):
         return None
 
     async def followup_send(content, **kwargs):
-        sent.append((content, kwargs))
+        followups.append(content)
+
+    async def edit_original_response(**kwargs):
+        edits.append(kwargs)
 
     interaction = SimpleNamespace(
         user=SimpleNamespace(id=1), data={"values": ["soon"]},
         response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=followup_send),
+        edit_original_response=edit_original_response,
     )
-    asyncio.run(briefing.BriefingDetailSelect("20261020").callback(interaction))
+    import discord
 
-    content, kwargs = sent[0]
-    assert kwargs.get("ephemeral") is True
-    assert "week4 聽力" in content and "50 題音程／截圖" in content
-    assert not notion_links.contains_notion_link(content)
+    options = [discord.SelectOption(label="week4 聽力", value="soon"), discord.SelectOption(label="別筆", value="late")]
+    asyncio.run(briefing.BriefingDetailSelect("20261020", options).callback(interaction))
+
+    assert followups == [], "不能另外跳一則"
+    embed = edits[0]["embed"]
+    assert "week4 聽力" in embed.description and "50 題音程／截圖" in embed.description
+    assert not notion_links.contains_notion_link(embed.description)
+    view = edits[0]["view"]
+    ids = [child.custom_id for child in view.children]
+    assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"], "選單與「我都看到了」留在最下面"
+    picked = [o for o in view.children[0].item.options if o.default]
+    assert [o.value for o in picked] == ["soon"]
 
 
 def test_任務總覽的提醒確認_早報只算最近那天():

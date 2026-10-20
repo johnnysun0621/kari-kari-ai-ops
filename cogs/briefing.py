@@ -47,7 +47,9 @@ class BriefingDetailSelect(
         return cls(match.group("day"), list(item.options))
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        # 2026-10-20 QA：原本每看一筆就另跳一則 ephemeral，看兩筆以上就往下疊，「我都看到了」被推到上面。
+        # 改成展開在早報同一則裡（embed），再選別筆就替換；選單與按鈕永遠在最下面。編輯訊息不會跳通知。
+        await interaction.response.defer()
         values = (interaction.data or {}).get("values") or []
         task_id = values[0] if values else ""
         task = await repositories.get_task(task_id) if task_id and task_id != "none" else None
@@ -64,7 +66,16 @@ class BriefingDetailSelect(
                 body = ""
         now = datetime.now(config.get_tenant().tz)
         detail = task_query.task_detail_text(task, deadline_text=ui_text.deadline_text(task, now), body=body)
-        await interaction.followup.send(detail[:1990], ephemeral=True)
+        embed = discord.Embed(description=detail[:4000], color=0x5865F2)
+        embed.set_footer(text="再選別筆會換成那一筆；看完按「我都看到了」")
+        options = [
+            discord.SelectOption(label=o.label, value=o.value, description=o.description, default=o.value == task_id)
+            for o in self.item.options
+        ]
+        view = discord.ui.View(timeout=None)
+        view.add_item(BriefingDetailSelect(self.day, options))
+        view.add_item(BriefingAckButton(self.day))
+        await interaction.edit_original_response(embed=embed, view=view)
 
 
 class BriefingAckButton(
@@ -106,7 +117,7 @@ class BriefingAckButton(
         task_ids = list(entry.get("task_ids") or [])
         # 先改訊息（Discord 3 秒內要回應），再寫 Notion。編輯訊息不會跳通知。
         await interaction.response.edit_message(
-            content=daily_briefing.collapsed_text(day, len(task_ids), now), view=None,
+            content=daily_briefing.collapsed_text(day, len(task_ids), now), view=None, embed=None,
         )
         artist_page_id = entry.get("artist_page_id", "")
         artist_name = entry.get("artist_name", "")
