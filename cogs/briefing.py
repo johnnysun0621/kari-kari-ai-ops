@@ -31,10 +31,11 @@ class BriefingDetailSelect(
     """「看某一筆的詳細」：選了跳出只有自己看得到的完整內容，私訊裡不會多一則。"""
 
     def __init__(self, day: str, options: list[discord.SelectOption] | None = None):
+        self.options = options or [discord.SelectOption(label="（沒有任務）", value="none")]
         super().__init__(
             discord.ui.Select(
                 placeholder="看某一筆的詳細…",
-                options=options or [discord.SelectOption(label="（沒有任務）", value="none")],
+                options=self.options,
                 custom_id=f"briefing_detail:{day}",
                 min_values=1,
                 max_values=1,
@@ -70,7 +71,7 @@ class BriefingDetailSelect(
         embed.set_footer(text="再選別筆會換成那一筆；看完按「我都看到了」")
         options = [
             discord.SelectOption(label=o.label, value=o.value, description=o.description, default=o.value == task_id)
-            for o in self.item.options
+            for o in self.options
         ]
         view = discord.ui.View(timeout=None)
         view.add_item(BriefingDetailSelect(self.day, options))

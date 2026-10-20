@@ -344,7 +344,7 @@ def test_看某一筆的詳細_展開在早報同一則_不另跳訊息(monkeypa
     view = edits[0]["view"]
     ids = [child.custom_id for child in view.children]
     assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"], "選單與「我都看到了」留在最下面"
-    picked = [o for o in view.children[0].item.options if o.default]
+    picked = [o for o in view.children[0].options if o.default]
     assert [o.value for o in picked] == ["soon"]
 
 
