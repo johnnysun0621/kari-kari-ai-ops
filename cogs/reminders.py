@@ -769,7 +769,8 @@ class RemindersCog(commands.Cog):
             notification_log.persist()
             deadline_text = task.revision_deadline.strftime("%m/%d %H:%M")
             await channel_guard.try_send(
-                admin_channel, content=f"🚨 **修改期限逾時**｜{task.name}｜期限：{deadline_text}"
+                admin_channel,
+                content=f"🚨 **修改期限逾時**｜{task.name}｜期限：{deadline_text}" + (f"\n🔗 {task.url}" if task.url else ""),
             )
             await audit.log_event(
                 event_name=f"修改期限提醒｜{task.name}",
@@ -907,7 +908,7 @@ class RemindersCog(commands.Cog):
                     notification_log.persist()
                 elif admin_channel:
                     await admin_channel.send(
-                        f"🚨 任務逾期：**{t.name}**｜{names}｜{deadline_text}"
+                        f"🚨 任務逾期：**{t.name}**｜{names}｜{deadline_text}" + (f"\n🔗 {t.url}" if t.url else "")
                     )
                 await audit.log_event(
                     event_name=f"任務逾期升級｜{t.name}",

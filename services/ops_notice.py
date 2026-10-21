@@ -20,6 +20,14 @@ def recovered_title(text: str) -> str:
     return f"🟢 **系統恢復｜{text}**"
 
 
+def link(text: str, url: str | None) -> str:
+    """控方訊息裡的 Notion 連結：文字變成可點的連結，<> 讓 Discord 不展開預覽卡片。沒有網址就只回文字。"""
+    if not url:
+        return text
+    safe = text.replace("[", "(").replace("]", ")")
+    return f"[{safe}](<{url}>)"
+
+
 def first_line(content: str) -> str:
     """訊息第一行去掉粗體與類別前綴，給「已處理」收合用。"""
     line = (content or "").strip().splitlines()[0] if (content or "").strip() else ""

@@ -7,7 +7,7 @@
 """
 from datetime import datetime, time, timedelta
 
-from services import repositories
+from services import ops_notice, repositories
 from services.repositories import TaskItem
 
 
@@ -76,12 +76,12 @@ def escalation_message(task: TaskItem, teacher_names: list[str], days: int) -> s
 def escalation_note(task: TaskItem, teacher_names: list[str], days: int) -> str:
     """營運早報裡的一行（M3-25）。"""
     who = "、".join(teacher_names) or "（未指定負責老師）"
-    return f"{who}｜{task.name}｜已提醒 {days} 天仍未結案，請確認是否已在論壇發布"
+    return f"{who}｜{ops_notice.link(task.name, task.url)}｜已提醒 {days} 天仍未結案，請確認是否已在論壇發布"
 
 
 def unreachable_note(task: TaskItem, teacher_names: list[str]) -> str:
     who = "、".join(teacher_names) or "（未指定）"
-    return f"{who}｜{task.name}｜老師聯絡不到（沒有 Discord ID 或私訊失敗），請轉告"
+    return f"{who}｜{ops_notice.link(task.name, task.url)}｜老師聯絡不到（沒有 Discord ID 或私訊失敗），請轉告"
 
 
 def unreachable_message(task: TaskItem, teacher_names: list[str]) -> str:

@@ -35,7 +35,7 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
             continue
         if task.page_id in new_ids:
             b.new_overdue.append(ops_briefing.task_line(
-                task.page_id, _names(task, artist_map), task.name, ui_text.deadline_text(task, now), "新逾期"))
+                task.page_id, _names(task, artist_map), task.name, ui_text.deadline_text(task, now), "新逾期", task.url))
         else:
             for name in _names(task, artist_map) or ["（未關聯藝人）"]:
                 b.still_overdue_counts[name] = b.still_overdue_counts.get(name, 0) + 1
@@ -44,7 +44,7 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
         if task.status == "需修改" and task.revision_deadline and task.revision_deadline < now:
             b.revision_passed.append(ops_briefing.task_line(
                 task.page_id, _names(task, artist_map), task.name,
-                f"修改期限 {task.revision_deadline:%m/%d}", "修改期限已過"))
+                f"修改期限 {task.revision_deadline:%m/%d}", "修改期限已過", task.url))
 
     try:
         from cogs.reminders import review_reminder_due
@@ -62,7 +62,7 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
             hours = int((now - oldest).total_seconds() // 3600) if oldest else None
             b.review_unassigned.append(ops_briefing.task_line(
                 task_id, _names(task, artist_map), task.name,
-                f"已 {hours} 小時" if hours is not None else "", "待審核沒人負責"))
+                f"已 {hours} 小時" if hours is not None else "", "待審核沒人負責", task.url))
     except Exception:
         logger.exception("營運早報：讀取待審核失敗，這一區先略過")
 
@@ -74,7 +74,7 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
                 and task.discord_notified_at and task.discord_notified_at <= cutoff):
             b.unreceived.append(ops_briefing.task_line(
                 task.page_id, _names(task, artist_map), task.name,
-                f"{task.discord_notified_at:%m/%d} 派發", "還沒按收到"))
+                f"{task.discord_notified_at:%m/%d} 派發", "還沒按收到", task.url))
 
     b.unread_artists = ops_briefing.unread_for(state, _day_code(now.date() - timedelta(days=1)))
     b.teacher_notes = ops_briefing.teacher_notes(state)
@@ -101,7 +101,7 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
                 await repositories.get_tasks_by_status(["已完成"]), now, tenant.publish_confirm_digest_after_days)
             for task in waiting:
                 b.publish_waiting.append(ops_briefing.task_line(
-                    task.page_id, _names(task, artist_map), task.name, ui_text.deadline_text(task, now), "發文待確認"))
+                    task.page_id, _names(task, artist_map), task.name, ui_text.deadline_text(task, now), "發文待確認", task.url))
         except Exception:
             logger.exception("營運早報：發文待確認讀取失敗")
     return b

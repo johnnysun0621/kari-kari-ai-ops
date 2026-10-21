@@ -288,3 +288,33 @@ def test_只派給同仁的任務不算藝人還沒按收到(repos):
     b = asyncio.run(ops_cog.collect(NOW, notification_log.shared()))
 
     assert b.unreceived == []
+
+
+def test_briefing_lines_link_to_notion_but_select_labels_stay_plain():
+    from datetime import date
+
+    url = "https://www.notion.so/abc123"
+    line = ops_briefing.task_line("t1", ["方晨"], "羊文學周邊 [限動]", "截止 10/20", "新逾期", url)
+    assert "notion" not in line.text
+    assert line.linked == f"方晨｜[羊文學周邊 (限動)](<{url}>)｜截止 10/20"
+    b = ops_briefing.OpsBriefing(new_overdue=[line])
+    text = ops_briefing.briefing_text(date(2026, 10, 21), b)
+    assert f"(<{url}>)" in text
+
+
+def test_briefing_without_url_stays_plain():
+    line = ops_briefing.task_line("t1", [], "任務", "", "新逾期")
+    assert line.linked == line.text == "（未關聯藝人）｜任務"
+
+
+def test_briefing_drops_links_when_too_long():
+    from datetime import date
+
+    url = "https://www.notion.so/" + "a" * 60
+    lines = [ops_briefing.task_line(f"t{i}", ["方晨"], f"任務{i}" + "字" * 40, "截止 10/20", "新逾期", url) for i in range(8)]
+    lines += [ops_briefing.task_line(f"u{i}", ["采奕"], f"待審{i}" + "字" * 40, "已 30 小時", "待審核沒人負責", url) for i in range(8)]
+    lines += [ops_briefing.task_line(f"v{i}", ["月夜"], f"未收{i}" + "字" * 40, "10/14 派發", "還沒按收到", url) for i in range(8)]
+    b = ops_briefing.OpsBriefing(new_overdue=lines[:8], review_unassigned=lines[8:16], unreceived=lines[16:])
+    text = ops_briefing.briefing_text(date(2026, 10, 21), b)
+    assert len(text) <= ops_briefing.MESSAGE_LIMIT
+    assert "(<" not in text

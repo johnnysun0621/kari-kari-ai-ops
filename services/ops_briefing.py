@@ -15,10 +15,12 @@
 
 這裡是純函式＋.state 讀寫；收集資料與 Discord 在 cogs/ops_briefing.py。
 """
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from services.notion_links import strip_notion_links
+from services.ops_notice import link
 
 MESSAGE_LIMIT = 1900
 SECTION_LINES = 8  # 每區最多列幾筆，其餘寫「另有 N 筆」
@@ -31,6 +33,16 @@ class OpsLine:
     task_id: str
     text: str
     section: str  # 給選單描述用
+    url: str = ""  # Notion 頁面；訊息內文用 linked，選單選項用純文字 text
+    who: str = ""
+    name: str = ""
+    detail: str = ""
+
+    @property
+    def linked(self) -> str:
+        if not self.url:
+            return self.text
+        return f"{self.who}｜{link(self.name, self.url)}" + (f"｜{self.detail}" if self.detail else "")
 
 
 @dataclass
@@ -65,9 +77,15 @@ def briefing_due(now: datetime, last_date: str | None, hour: int, minute: int) -
     return (now.hour, now.minute) >= (hour, minute) and last_date != now.date().isoformat()
 
 
-def task_line(task_id: str, artist_names: list[str], task_name: str, detail: str, section: str) -> OpsLine:
+def task_line(
+    task_id: str, artist_names: list[str], task_name: str, detail: str, section: str, url: str = "",
+) -> OpsLine:
     who = "、".join(artist_names) or "（未關聯藝人）"
-    return OpsLine(task_id, f"{who}｜{strip_notion_links(task_name)}" + (f"｜{detail}" if detail else ""), section)
+    name = strip_notion_links(task_name)
+    return OpsLine(
+        task_id, f"{who}｜{name}" + (f"｜{detail}" if detail else ""), section,
+        url=url or "", who=who, name=name, detail=detail,
+    )
 
 
 def _section(title: str, lines: list[str]) -> list[str]:
@@ -78,14 +96,27 @@ def _section(title: str, lines: list[str]) -> list[str]:
     return out
 
 
+_LINK = re.compile(r"\[([^\]]*)\]\(<[^>]*>\)")
+
+
 def briefing_text(day: date, b: OpsBriefing) -> str:
+    """每一筆任務都帶 Notion 連結；連結讓訊息變長，超過上限就退回純文字（詳細仍可從選單開）。"""
+    text = _briefing_text(day, b)
+    if len(text) > MESSAGE_LIMIT:
+        text = _LINK.sub(r"\1", text)
+    if len(text) > MESSAGE_LIMIT:
+        text = text[: MESSAGE_LIMIT - 40].rstrip() + "\n…（太長了，完整清單請用 `/任務總覽`）"
+    return text
+
+
+def _briefing_text(day: date, b: OpsBriefing) -> str:
     weekdays = "一二三四五六日"
     lines = [f"📋 **{day.month}/{day.day}（{weekdays[day.weekday()]}）營運早報**"]
     if b.is_empty():
         lines.append("✅ 今天沒有需要注意的事。")
         return "\n".join(lines)
     if b.new_overdue:
-        lines += _section("🔴 **新逾期**", [line.text for line in b.new_overdue])
+        lines += _section("🔴 **新逾期**", [line.linked for line in b.new_overdue])
     if b.still_overdue_counts:
         total = sum(b.still_overdue_counts.values())
         parts = "、".join(f"{name} {n}" for name, n in sorted(b.still_overdue_counts.items(), key=lambda kv: -kv[1]))
@@ -93,9 +124,9 @@ def briefing_text(day: date, b: OpsBriefing) -> str:
     if b.revision_passed:
         lines += _section("🛠 **修改期限已過**", [line.text for line in b.revision_passed])
     if b.review_unassigned:
-        lines += _section("📮 **待審核超過 24 小時，沒人負責**", [line.text for line in b.review_unassigned])
+        lines += _section("📮 **待審核超過 24 小時，沒人負責**", [line.linked for line in b.review_unassigned])
     if b.unreceived:
-        lines += _section(f"📌 **藝人還沒按收到超過 {UNRECEIVED_DAYS} 天**", [line.text for line in b.unreceived])
+        lines += _section(f"📌 **藝人還沒按收到超過 {UNRECEIVED_DAYS} 天**", [line.linked for line in b.unreceived])
     if b.unread_artists:
         lines += ["", f"👀 **昨天的早報沒看**：{'、'.join(b.unread_artists)}"]
     if b.teacher_notes:
@@ -103,13 +134,10 @@ def briefing_text(day: date, b: OpsBriefing) -> str:
     if b.pools:
         lines += ["", "🗓 **時間池**", *[f"・{line}" for line in b.pools]]
     if b.publish_waiting:
-        lines += _section("📣 **發文待確認發布**（確認發布後改成「已完成發文」）", [line.text for line in b.publish_waiting])
+        lines += _section("📣 **發文待確認發布**（確認發布後改成「已完成發文」）", [line.linked for line in b.publish_waiting])
     if b.option_lines():
         lines.append("\n想看某一筆的詳細，用下方選單（附 Notion 連結）。")
-    text = "\n".join(lines)
-    if len(text) > MESSAGE_LIMIT:
-        text = text[: MESSAGE_LIMIT - 40].rstrip() + "\n…（太長了，完整清單請用 `/任務總覽`）"
-    return text
+    return "\n".join(lines)
 
 
 def collapsed_previous(day_code: str) -> str:
