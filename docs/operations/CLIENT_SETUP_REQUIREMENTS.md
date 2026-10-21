@@ -106,7 +106,7 @@ Google Drive OAuth 細節見 [DRIVE_OAUTH_SETUP.md](DRIVE_OAUTH_SETUP.md)。
 - [ ] Bot 要部署在本機還是固定雲端主機
 - [ ] 老師與藝人的 Discord User ID 已填入 Notion People／Artists
 - [ ] 會收通知的公司同仁、審核人員的 Discord User ID 已填入 People
-- [ ] Tasks 已建立 `提前交件`（Checkbox）、`提醒確認(From 藝人)`（Text）、`重送通知`（Checkbox）、`相關同仁`（Relation → People）。截至 2026-10-13，前兩個尚未建立
+- [ ] Tasks 已建立 `提前交件`（Checkbox）、`提醒確認(From 藝人)`（Text）、`重送通知`（Checkbox）、`相關同仁`（Relation → People）。2026-10-21 確認四個都已建立
 
 ## 不要用這些方式交付
 
