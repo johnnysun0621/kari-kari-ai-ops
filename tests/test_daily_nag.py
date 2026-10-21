@@ -148,6 +148,7 @@ class Harness:
     def cog(self):
         cog = SimpleNamespace(bot=self.bot, _sent={})
         cog._admin_channel = lambda: "admin"
+        cog._send_daily_nags = lambda *a: reminders_cog.RemindersCog._send_daily_nags(cog, *a)
         return cog
 
     def run(self, method="_check_daily_nags"):
@@ -189,11 +190,57 @@ class TestDailyNagCog:
         h.run()
         assert len(h.admin) == 1 and "交件A" in h.admin[0]
 
-    def test_審核人員私訊失敗退回控方頻道(self, monkeypatch):
+    def test_審核人員私訊失敗_同日重試_用完才退回控方頻道(self, monkeypatch):
+        """M3-11：失敗不再當天整個漏掉；先重試，重試次數用完還送不到才退回控方頻道。"""
         h = Harness(monkeypatch, [task("r1", "待審核", reviewers=("p1",))],
                     submissions=[OLD_SUB], people=[person("p1", "9")], fail_users={"9"})
         h.run()
-        assert len(h.admin) == 1
+        assert h.admin == []  # 第一次失敗：先不退回，下一輪重試
+        h.run()
+        h.run()
+        assert len(h.admin) == 1  # 第三次（最後一次）仍失敗才退回控方頻道
+        h.run()
+        assert len(h.admin) == 1  # 今天已結束，不再重試
+
+    def test_部分失敗_重試只補發沒送到的人(self, monkeypatch):
+        fail = {"9"}
+        h = Harness(monkeypatch, [task("r1", "待審核", reviewers=("p1", "p2"))],
+                    submissions=[OLD_SUB], people=[person("p1", "9"), person("p2", "8")], fail_users=fail)
+        h.run()
+        assert len(h.dms["8"]) == 1 and "9" not in h.dms
+        fail.clear()  # Discord 恢復
+        h.run()
+        assert len(h.dms["8"]) == 1, "已送達的人不重複收到"
+        assert len(h.dms["9"]) == 1
+        h.run()
+        assert len(h.dms["9"]) == 1, "全部送達後同一天不再發"
+
+    def test_重試狀態重啟後仍保留(self, monkeypatch):
+        fail = {"9"}
+        h = Harness(monkeypatch, [task("r1", "待審核", reviewers=("p1", "p2"))],
+                    submissions=[OLD_SUB], people=[person("p1", "9"), person("p2", "8")], fail_users=fail)
+        h.run()
+        notification_log.reset_for_tests()  # 模擬重啟（從 .state 讀回）
+        fail.clear()
+        h.run()
+        assert len(h.dms["8"]) == 1 and len(h.dms["9"]) == 1
+
+    def test_讀_Notion_失敗_不算完成_下一輪重試(self, monkeypatch):
+        h = Harness(monkeypatch, [task("1", "已逾期")])
+        calls = {"n": 0}
+        original = repositories.get_active_tasks
+
+        async def flaky():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("Notion 503")
+            return await original()
+
+        monkeypatch.setattr(repositories, "get_active_tasks", flaky)
+        h.run()
+        assert h.dms == {}
+        h.run()
+        assert len(h.dms["1"]) == 1
 
     def test_待審核不催藝人(self, monkeypatch):
         h = Harness(monkeypatch, [task("r1", "待審核", reviewers=("p1",))],

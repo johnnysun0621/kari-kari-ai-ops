@@ -473,3 +473,44 @@ def test_早報模式_同仁不再逐階段私訊(monkeypatch):
     h.run()
 
     assert staff_calls == [] and h.dms == []
+
+
+def test_有人送失敗_重跑只補發那個人_快到期佇列保留到最後(send_env, monkeypatch):
+    """M3-11：失敗時不清「快到期」佇列，重跑時補發的人一樣看得到快到期的任務；已送達的人不重複收到。"""
+    send_env.tasks.append(task("t2", "已逾期", artists=("a2",)))
+
+    async def two_artists():
+        return {
+            "a1": repositories.Artist(page_id="a1", name="方晨", discord_user_id="1"),
+            "a2": repositories.Artist(page_id="a2", name="月夜", discord_user_id="2"),
+        }
+
+    monkeypatch.setattr(repositories, "get_artist_map", two_artists)
+    state = notification_log.shared()
+    daily_briefing.queue_stages(state, "soon", ["5 天前"], NOW)
+    failing = {"1"}
+    sent_to = []
+
+    class Client(BriefClient):
+        async def fetch_user(self, uid):
+            client = self
+
+            class User:
+                async def send(self, content, view=None):
+                    if str(uid) in failing:
+                        raise RuntimeError("cannot DM")
+                    sent_to.append((str(uid), content))
+                    client.sent.append((content, view))
+                    return FakeMsg(1000 + len(client.sent))
+
+            return User()
+
+    first = asyncio.run(briefing.send_daily_briefings(Client(), NOW, final=False))
+    assert first["failed"] == 1 and [u for u, _ in sent_to] == ["2"]
+    assert daily_briefing.queued_task_ids(state) == {"soon"}, "有人失敗時佇列要留給重試"
+
+    failing.clear()
+    second = asyncio.run(briefing.send_daily_briefings(Client(), NOW, final=False))
+    assert second["failed"] == 0 and [u for u, _ in sent_to] == ["2", "1"], "月夜不重複收到"
+    assert "任務soon" in sent_to[-1][1], "補發的早報仍有快到期的任務"
+    assert daily_briefing.queued_task_ids(state) == set()

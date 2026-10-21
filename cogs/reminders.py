@@ -10,6 +10,7 @@ from cogs import channel_guard, ui_text
 from services import (
     audit,
     daily_briefing,
+    daily_runs,
     ops_briefing,
     ops_notice,
     daily_nag,
@@ -594,18 +595,32 @@ class RemindersCog(commands.Cog):
             return
         now = datetime.now(tenant.tz)
         state = notification_log.shared()
-        if not daily_briefing.briefing_due(now, state.get("briefing_last_date"), tenant.daily_briefing_hour):
+        job = "daily_briefing"
+        if not daily_briefing.briefing_due(now, None, tenant.daily_briefing_hour):
             return
-        # 先記下今天已跑：中途失敗也不會同一天每 30 分鐘重發（各藝人另有「今天已發」判斷）
-        state["briefing_last_date"] = now.date().isoformat()
+        if not daily_runs.should_run(state, job, now, state.get("briefing_last_date")):
+            return
+        # M3-11：全部送達才算今天完成；有人失敗下一輪重試（今天已收到的人會跳過，不重複收）
+        attempt = daily_runs.begin(state, job, now)
         notification_log.persist()
         from cogs.briefing import send_daily_briefings
 
-        stats = await send_daily_briefings(self.bot, now)
+        try:
+            stats = await send_daily_briefings(self.bot, now, final=daily_runs.is_last_attempt(state, job, now))
+        except Exception:
+            logger.exception("每日早報失敗（第 %s 次），下一輪重試", attempt)
+            daily_runs.finish(state, job, now, complete=False, note="讀取資料失敗")
+            notification_log.persist()
+            return
+        done = daily_runs.finish(state, job, now, complete=not stats["failed"], note=f"失敗 {stats['failed']}")
+        if done:
+            state["briefing_last_date"] = now.date().isoformat()
+        notification_log.persist()
         await audit.log_event(
             event_name="每日早報",
             action_type="提醒", operator="System", source="System", target_db="Tasks",
-            after=f"發出 {stats['sent']} 則｜列入 {stats['tasks']} 筆任務｜沒有任務而清掉舊早報 {stats['cleared']} 位",
+            after=(f"第 {attempt} 次｜發出 {stats['sent']} 則｜失敗 {stats['failed']} 位｜列入 {stats['tasks']} 筆任務"
+                   f"｜沒有任務而清掉舊早報 {stats['cleared']} 位" + ("" if done else "｜下一輪重試")),
         )
 
     async def _check_ops_briefing(self):
@@ -615,16 +630,28 @@ class RemindersCog(commands.Cog):
             return
         now = datetime.now(tenant.tz)
         state = notification_log.shared()
-        if not ops_briefing.briefing_due(now, state.get("ops_briefing_last_date"), tenant.ops_briefing_hour, tenant.ops_briefing_minute):
+        job = "ops_briefing"
+        if not ops_briefing.briefing_due(now, None, tenant.ops_briefing_hour, tenant.ops_briefing_minute):
             return
-        state["ops_briefing_last_date"] = now.date().isoformat()
+        if not daily_runs.should_run(state, job, now, state.get("ops_briefing_last_date")):
+            return
+        attempt = daily_runs.begin(state, job, now)
         notification_log.persist()
         from cogs.ops_briefing import send_ops_briefing
 
-        sent = await send_ops_briefing(self.bot, now)
+        try:
+            sent = await send_ops_briefing(self.bot, now)
+        except Exception:
+            logger.exception("營運早報失敗（第 %s 次），下一輪重試", attempt)
+            sent = False
+        done = daily_runs.finish(state, job, now, complete=sent)
+        if done:
+            state["ops_briefing_last_date"] = now.date().isoformat()
+        notification_log.persist()
         await audit.log_event(
             event_name="營運早報", action_type="提醒", operator="System", source="System",
-            target_db="Tasks", after="已發送" if sent else "未發送（找不到營運內部通知頻道）",
+            target_db="Tasks",
+            after=f"第 {attempt} 次｜" + ("已發送" if sent else "未發送" + ("，下一輪重試" if not done else "，今天不再重試")),
         )
 
     async def _check_daily_nags(self):
@@ -636,24 +663,49 @@ class RemindersCog(commands.Cog):
         tenant = config.get_tenant()
         now = datetime.now(tenant.tz)
         state = notification_log.shared()
-        if not daily_nag.daily_nag_due(now, state.get("daily_nag_last_date"), tenant.daily_nag_hour):
+        job = "daily_nag"
+        if not daily_nag.daily_nag_due(now, None, tenant.daily_nag_hour):
             return
-        # 先記下今天已跑，再發送：中途失敗也不會在同一天每 30 分鐘重試轟炸一次。
-        state["daily_nag_last_date"] = now.date().isoformat()
+        if not daily_runs.should_run(state, job, now, state.get("daily_nag_last_date")):
+            return
+        # M3-11：全部送達才算今天完成；失敗的下一輪重試，已送達的收件人記在 delivered 不重發
+        attempt = daily_runs.begin(state, job, now)
+        notification_log.persist()
+        try:
+            failed = await self._send_daily_nags(now, state, job)
+        except Exception:
+            logger.exception("每日催辦失敗（第 %s 次），下一輪重試", attempt)
+            daily_runs.finish(state, job, now, complete=False, note="讀取資料失敗")
+            notification_log.persist()
+            return
+        if daily_runs.finish(state, job, now, complete=not failed, note=f"失敗 {failed}"):
+            state["daily_nag_last_date"] = now.date().isoformat()
         notification_log.persist()
 
+    async def _send_daily_nags(self, now: datetime, state: dict, job: str) -> int:
+        """發每日催辦，回傳失敗的收件人數。已送達的（delivered）跳過。"""
+        tenant = config.get_tenant()
+        done_keys = daily_runs.delivered(state, job, now)
+        last_attempt = daily_runs.is_last_attempt(state, job, now)
+        failed = 0
         tasks = await repositories.get_active_tasks()
         artist_map = await repositories.get_artist_map()
         artist_sent = 0
         # 每日早報開著時，已逾期／需修改改在早報裡列（M3-24），這裡只留審核人員催辦。
         artist_nags = [] if tenant.daily_briefing_enabled else daily_nag.group_artist_nags(tasks, artist_map)
         for nag in artist_nags:
+            key = f"artist:{nag.artist.page_id}"
+            if key in done_keys:
+                continue
             try:
                 user = await self.bot.fetch_user(int(nag.artist.discord_user_id))
                 await user.send(daily_nag.artist_nag_message(nag))
                 artist_sent += 1
+                daily_runs.mark_delivered(state, job, now, key)
+                notification_log.persist()
             except Exception:
                 logger.exception("每日催辦（藝人）失敗：%s", nag.artist.name)
+                failed += 1
 
         after_hours = tenant.review_reminder_after_hours
         submissions = await repositories.get_submissions_by_review_status(["待審核"])
@@ -678,27 +730,37 @@ class RemindersCog(commands.Cog):
                 per_reviewer.setdefault(pid, []).extend(entries)
         reviewer_sent = 0
         for pid, entries in per_reviewer.items():
+            key = f"reviewer:{pid}"
+            if key in done_keys:
+                continue
             try:
                 user = await self.bot.fetch_user(int(reviewers[pid].discord_user_id))
                 await user.send(daily_nag.review_nag_message(entries, after_hours, "⏰ **每日待審核提醒**"))
                 reviewer_sent += 1
+                daily_runs.mark_delivered(state, job, now, key)
+                notification_log.persist()
             except Exception:
                 logger.exception("每日催辦（審核人員）失敗：%s", reviewers[pid].name)
-                unassigned += entries  # 私訊不到就退回控方頻道，不讓提交沒人知道
-        if unassigned and not tenant.ops_briefing_enabled:
-            await channel_guard.try_send(
+                failed += 1
+                if last_attempt:
+                    unassigned += entries  # 重試用完還私訊不到，就退回控方頻道，不讓提交沒人知道
+        if unassigned and not tenant.ops_briefing_enabled and "ops_channel" not in done_keys:
+            posted = await channel_guard.try_send(
                 self._admin_channel(),
                 content=daily_nag.review_nag_message(
                     unassigned, after_hours, "⏰ **待審核提醒（未指定或聯絡不到審核人員）**"
                 ),
             )
-        if artist_sent or reviewer_sent or unassigned:
+            if posted is not None:
+                daily_runs.mark_delivered(state, job, now, "ops_channel")
+        if artist_sent or reviewer_sent or unassigned or failed:
             await audit.log_event(
                 event_name="每日催辦",
                 action_type="提醒", operator="System", source="System",
                 target_db="Tasks & Submissions",
-                after=f"藝人 {artist_sent} 位｜審核人員 {reviewer_sent} 位｜控方頻道 {len(unassigned)} 筆",
+                after=f"藝人 {artist_sent} 位｜審核人員 {reviewer_sent} 位｜控方頻道 {len(unassigned)} 筆｜失敗 {failed} 位",
             )
+        return failed
 
     async def _check_publish_confirm_digest(self):
         """發文類停在「已完成」的任務，彙整成一則提醒控方確認實際發布（M2-05）。

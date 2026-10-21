@@ -194,8 +194,12 @@ async def _delete_previous(client: discord.Client, entry: dict | None) -> None:
         logger.warning("刪除前一天的早報失敗：%s", entry.get("message_id"))
 
 
-async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
-    """每位藝人一則早報；沒有要列的就只刪掉昨天那則。回傳統計供 audit。"""
+async def send_daily_briefings(client: discord.Client, now: datetime, *, final: bool = True) -> dict:
+    """每位藝人一則早報；沒有要列的就只刪掉昨天那則。回傳統計供 audit。
+
+    今天已發過的人會跳過，所以失敗後重跑只補發沒送到的人（M3-11）。`final=False` 時有人失敗就
+    保留「快到期」佇列給下一次重試；最後一次（或全部成功）才清掉。
+    """
     state = notification_log.shared()
     tasks = await repositories.get_active_tasks()
     artist_map = await repositories.get_artist_map()
@@ -203,7 +207,7 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
     daily_briefing.prune_acks(state, {task.page_id for task in tasks})
     acks = state.get("briefing_acks", {})
     day = now.date()
-    sent = cleared = 0
+    sent = cleared = failed = 0
     sent_per_task: dict[str, int] = {}
     for artist in artist_map.values():
         if not artist.discord_user_id:
@@ -230,6 +234,7 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
             )
         except Exception:
             logger.exception("每日早報發送失敗：%s", artist.name)
+            failed += 1
             continue
         daily_briefing.remember_briefing(state, artist.discord_user_id, {
             "day": _day_code(day),
@@ -242,8 +247,10 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
         sent += 1
         for item in items:
             sent_per_task[item.task.page_id] = sent_per_task.get(item.task.page_id, 0) + 1
-    staff_sent = await _send_staff_briefings(client, state, tasks, queued, day, now)
-    daily_briefing.clear_queue(state)
+    staff_sent, staff_failed = await _send_staff_briefings(client, state, tasks, queued, day, now)
+    failed += staff_failed
+    if not failed or final:
+        daily_briefing.clear_queue(state)
     notification_log.persist()
     # 送出也記一行，控方才分得出「還沒發」和「發了沒人按」（M3-18 的語意不變）
     for task_id, count in sent_per_task.items():
@@ -253,20 +260,22 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
             )
         except Exception:
             logger.exception("早報送出紀錄寫入失敗：%s", task_id)
-    return {"sent": sent, "cleared": cleared, "tasks": len(sent_per_task), "staff_sent": staff_sent}
+    return {"sent": sent, "cleared": cleared, "tasks": len(sent_per_task), "staff_sent": staff_sent, "failed": failed}
 
 
-async def _send_staff_briefings(client, state: dict, tasks, queued: set[str], day: date, now: datetime) -> int:
-    """相關同仁每人每天一則（M3-25 第三階段）；取代逐階段的同仁提醒。沒有「我都看到了」。"""
+async def _send_staff_briefings(
+    client, state: dict, tasks, queued: set[str], day: date, now: datetime,
+) -> tuple[int, int]:
+    """相關同仁每人每天一則（M3-25 第三階段）；取代逐階段的同仁提醒。沒有「我都看到了」。回傳（送出, 失敗）。"""
     staff_ids = sorted({pid for task in tasks if task.discord_visible for pid in task.staff_page_ids})
     if not staff_ids:
-        return 0
+        return 0, 0
     try:
         people = await repositories.get_people_items_by_ids(staff_ids)
     except Exception:
         logger.exception("同仁早報：讀取 People 失敗")
-        return 0
-    sent = 0
+        return 0, 1
+    sent = failed = 0
     for person in people:
         if not person.discord_user_id:
             continue
@@ -287,10 +296,11 @@ async def _send_staff_briefings(client, state: dict, tasks, queued: set[str], da
             )
         except Exception:
             logger.exception("同仁早報發送失敗：%s", person.name)
+            failed += 1
             continue
         daily_briefing.remember_briefing(state, person.discord_user_id, {
             "day": _day_code(day), "channel_id": message.channel.id, "message_id": message.id,
             "task_ids": [item.task.page_id for item in items], "role": "staff", "artist_name": person.name,
         })
         sent += 1
-    return sent
+    return sent, failed

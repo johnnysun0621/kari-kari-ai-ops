@@ -40,6 +40,7 @@
 - **管理指令看不到**：bot 是否已重開並同步 slash commands、是否仍在該 guild。
 - **首次啟用通知功能**時，bot 不會回頭轟炸既有任務；測試請建一筆新的測試任務。
 - 去重與狀態檔都在 `.state/`（`task_notification_log.json` 等），重開 bot 不會重發。
+- **每天一次的發送**（藝人／同仁早報、營運早報、每日催辦）的送達狀態在 `task_notification_log.json` 的 `daily_runs`（M3-11）：`attempts` 第幾次、`done` 今天是否完成、`delivered` 已送達的收件人。全部送達才算完成；失敗下一輪重試，同一天最多 3 次（`services/daily_runs.py` 的 `MAX_ATTEMPTS`）。audit 的「每日早報」「營運早報」「每日催辦」會寫第幾次、失敗幾位。
 
 ## 系統限制
 
