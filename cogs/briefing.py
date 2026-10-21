@@ -57,13 +57,7 @@ class BriefingDetailSelect(
         if task is None or not await _can_view(interaction.user.id, task):
             await interaction.followup.send("❌ 找不到這筆任務，可能已經結案。用 `/我的任務` 看最新清單。", ephemeral=True)
             return
-        body = task.description
-        if not body:
-            try:
-                body = await repositories.get_task_page_body(task.page_id)
-            except Exception:
-                logger.exception("早報讀取任務內頁失敗：%s", task.page_id)
-                body = ""
+        body = task.description  # get_task 已經讀了任務內頁整頁
         now = datetime.now(config.get_tenant().tz)
         detail = task_query.task_detail_text(task, deadline_text=ui_text.deadline_text(task, now), body=body)
         embed = discord.Embed(description=detail[:4000], color=0x5865F2)

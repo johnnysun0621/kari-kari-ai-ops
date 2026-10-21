@@ -459,6 +459,7 @@ class CourseQACog(commands.Cog):
         return task_query.match_tasks_by_name(question, tasks)
 
     async def _task_body(self, task: repositories.TaskItem) -> str:
+        """任務內頁整頁。查詢路徑大多已讀過（task.description），沒讀過的才補讀。"""
         if task.description:
             return task.description
         try:

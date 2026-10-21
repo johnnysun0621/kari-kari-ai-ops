@@ -184,10 +184,15 @@ def _read_unique_id(page: dict, name: str) -> int | None:
     return uid.get("number") if uid else None
 
 
-# M7-07：任務說明改由 Notion 任務內頁的「任務說明」段落提供。
-# 舊 rich-text 欄位只作為既有資料的過渡回退，避免尚未搬移的任務通知變成空白。
+# M7-07（2026-10-21 Johnny 定案）：任務說明＝任務內頁整頁。Tasks 的 `任務說明` 欄位廢除，程式不讀也不寫。
+# 原本只讀 `## 任務說明` 標題底下、沒有標題就退回舊欄位；控方常直接寫在內頁不加標題，
+# 結果派發通知說「尚未填寫」、小律卻念得出內容（2026-10-21 QA）。現在所有地方都讀整頁。
+# `## 任務說明` 標題仍可以用（時間池建的任務會自動加），只是當記號，不再限定範圍。
 TASK_DESCRIPTION_HEADING = "任務說明"
 _task_description_cache: dict[tuple[str, str], str] = {}
+# 切換清單、分欄、callout、表格等裡面的內容要往下讀；子頁面／子資料庫是別的頁，不讀。
+_NO_DESCEND_BLOCK_TYPES = {"child_page", "child_database", "link_to_page"}
+_MAX_BLOCK_DEPTH = 3
 
 
 def _heading_level(block: dict) -> int | None:
@@ -197,50 +202,55 @@ def _heading_level(block: dict) -> int | None:
     return None
 
 
-def task_page_description(blocks: list[dict]) -> str:
-    """Extract the body of the first ``任務說明`` heading from page blocks.
-
-    The heading itself is a marker, not user-facing content.  A subsequent
-    heading at the same or higher level starts the next section.  Lower-level
-    headings remain part of the description, which lets operators structure a
-    long brief without changing what Discord receives.
-    """
-    description_level: int | None = None
-    lines: list[str] = []
+async def get_page_blocks(block_id: str, *, depth: int = 0) -> list[dict]:
+    """頁面內所有區塊，巢狀內容（切換清單、分欄、callout、表格）攤平成閱讀順序。"""
+    blocks = await notion_api.retrieve_block_children(block_id)
+    flat: list[dict] = []
     for block in blocks:
-        level = _heading_level(block)
-        text = _block_plain_text(block)
-        if description_level is None:
-            if level is not None and text == TASK_DESCRIPTION_HEADING:
-                description_level = level
-            continue
-        if level is not None and level <= description_level:
-            break
-        if text:
-            lines.append(text)
-    return "\n".join(lines).strip()
+        flat.append(block)
+        if (
+            block.get("has_children")
+            and block.get("type") not in _NO_DESCEND_BLOCK_TYPES
+            and depth < _MAX_BLOCK_DEPTH
+            and block.get("id")
+        ):
+            flat.extend(await get_page_blocks(block["id"], depth=depth + 1))
+    return flat
+
+
+def _task_block_text(block: dict) -> str:
+    """任務內容用的區塊文字：一般文字區塊、表格列、書籤／嵌入的網址。"""
+    block_type = block.get("type", "")
+    data = block.get(block_type, {})
+    if block_type == "table_row" and isinstance(data, dict):
+        cells = ["".join(item.get("plain_text", "") for item in cell).strip() for cell in data.get("cells", [])]
+        return "｜".join(cell for cell in cells if cell)
+    if block_type in {"bookmark", "embed", "link_preview"} and isinstance(data, dict):
+        caption = "".join(item.get("plain_text", "") for item in data.get("caption", [])).strip()
+        url = data.get("url", "")
+        return f"{caption} {url}".strip()
+    return _block_plain_text(block)
 
 
 async def _task_description_from_page(page: dict) -> str:
-    """Return the page-body description, falling back to the legacy property."""
-    legacy = _read_rich_text(page, "任務說明")
+    """任務內頁整頁的文字（略過 bot 寫的段落）；讀不到內頁就回空字串。"""
     page_id = page.get("id", "")
     edited_at = page.get("last_edited_time") or ""
     cache_key = (page_id, edited_at)
     if page_id and edited_at and cache_key in _task_description_cache:
-        return _task_description_cache[cache_key] or legacy
+        return _task_description_cache[cache_key]
     try:
-        blocks = await notion_api.retrieve_block_children(page_id)
+        blocks = await get_page_blocks(page_id)
     except NotionAPIError as exc:
         logger.warning(
             "Unable to read task description from page body: page=%s status=%s",
             page_id, exc.status_code,
         )
-        return legacy
-    description = task_page_description(blocks)
+        return ""
+    description = task_page_body_text(blocks)
     if page_id and edited_at:
         _task_description_cache[cache_key] = description
-    return description or legacy
+    return description
 
 
 # Bot 自己寫進任務內頁的段落；給藝人看任務內容時略過，避免把系統索引或藝人回報當成任務說明。
@@ -248,16 +258,15 @@ BOT_WRITTEN_TASK_SECTIONS = ("藝人回覆", "Drive 資料夾索引")
 
 
 def task_page_body_text(blocks: list[dict]) -> str:
-    """任務內頁的全文（小律「任務詳細內容」用）。
+    """任務內頁的全文：派發通知、提醒、早報、交件清單、小律都用這份。
 
-    控方常直接把說明寫在內頁、沒有加「任務說明」標題（2026-10-18 QA 實例），
-    所以這裡讀整頁，只跳過 bot 自己寫的段落與「任務說明」標題本身。
+    讀整頁，只跳過 bot 自己寫的段落（藝人回覆、Drive 資料夾索引）與「任務說明」標題本身。
     """
     lines: list[str] = []
     skip_level: int | None = None
     for block in blocks:
         level = _heading_level(block)
-        text = _block_plain_text(block)
+        text = _task_block_text(block)
         if skip_level is not None:
             if level is not None and level <= skip_level:
                 skip_level = None
@@ -274,7 +283,7 @@ def task_page_body_text(blocks: list[dict]) -> str:
 
 
 async def get_task_page_body(page_id: str) -> str:
-    return task_page_body_text(await notion_api.retrieve_block_children(page_id))
+    return task_page_body_text(await get_page_blocks(page_id))
 
 
 async def _to_task_with_page_description(page: dict) -> "TaskItem":
@@ -975,7 +984,7 @@ def _to_task(page: dict) -> TaskItem:
         start_has_time=start.has_time,
         end_has_time=end.has_time,
         url=page.get("url", ""),
-        description=_read_rich_text(page, "任務說明"),
+        description="",  # 任務說明欄位已廢除；需要內容的查詢走 _to_task_with_page_description 讀內頁
         open_for_submission=_read_checkbox(page, "是否開放提交"),
         latest_submission_url=_read_url(page, "最新提交 URL"),
         task_id=_read_unique_id(page, "Task ID"),
@@ -1374,7 +1383,7 @@ async def find_task_by_latest_submission_url(submission_url: str) -> TaskItem | 
             "url": {"equals": submission_url},
         },
     )
-    return _to_task(pages[0]) if pages else None
+    return await _to_task_with_page_description(pages[0]) if pages else None
 
 
 # ---------- P0-2 任務查詢（Discord 顯示） ----------
@@ -1608,23 +1617,6 @@ async def set_task_drive_folder(page_id: str, folder_url: str) -> None:
     if not folder_url:
         return
     await notion_api.update_page(page_id, {"Google Drive Folder": _url(folder_url)})
-
-
-def append_drive_folder_link_to_description(
-    description: str,
-    artist_name: str,
-    folder_url: str,
-) -> str:
-    """在任務說明追加多人任務的藝人 Drive 資料夾索引，並保持冪等。"""
-    if not artist_name or not folder_url:
-        return description
-    entry = f"・{artist_name}：{folder_url}"
-    if entry in description:
-        return description
-    marker = "Drive 資料夾索引："
-    if marker in description:
-        return f"{description.rstrip()}\n{entry}"
-    return f"{description.rstrip()}\n\n{marker}\n{entry}".strip()
 
 
 async def append_task_drive_folder_link(

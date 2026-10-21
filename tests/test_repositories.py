@@ -68,22 +68,6 @@ class TestAvailabilitySlotProps:
 
 
 class TestTaskDriveFolder:
-    def test_appends_labeled_link_for_multi_artist_task(self):
-        description = repositories.append_drive_folder_link_to_description(
-            "任務內容", "Johnny", "https://drive.google.com/drive/folders/johnny"
-        )
-
-        assert description.endswith(
-            "Drive 資料夾索引：\n・Johnny：https://drive.google.com/drive/folders/johnny"
-        )
-
-    def test_drive_folder_link_append_is_idempotent(self):
-        description = "任務內容\n\nDrive 資料夾索引：\n・Johnny：https://drive.google.com/drive/folders/johnny"
-
-        assert repositories.append_drive_folder_link_to_description(
-            description, "Johnny", "https://drive.google.com/drive/folders/johnny"
-        ) == description
-
     def test_writes_task_drive_folder_url(self, monkeypatch):
         calls = []
 
@@ -147,7 +131,11 @@ class TestTaskSubmissionFallback:
             return [{"id": "task-1"}]
 
         monkeypatch.setattr(repositories.notion_api, "query_data_source", fake_query)
-        monkeypatch.setattr(repositories, "_to_task", lambda page: expected)
+
+        async def fake_to_task(page):
+            return expected
+
+        monkeypatch.setattr(repositories, "_to_task_with_page_description", fake_to_task)
 
         result = asyncio.run(
             repositories.find_task_by_latest_submission_url(
@@ -1948,22 +1936,24 @@ class TestTaskPageDescription:
             block_type: {"rich_text": [{"plain_text": text}]},
         }
 
-    def test_reads_only_first_task_description_section(self):
-        blocks = [
-            self._block("paragraph", "頁首備註"),
-            self._block("heading_2", "任務說明"),
-            self._block("paragraph", "請在週五前交 Demo。"),
-            self._block("heading_3", "交件格式"),
-            self._block("paragraph", "WAV 與工程檔。"),
-            self._block("heading_2", "內部備註"),
-            self._block("paragraph", "這段不得送到 Discord。"),
-        ]
+    def test_reads_whole_page_without_heading(self, monkeypatch):
+        """2026-10-21 QA：控方直接寫在內頁、沒加「任務說明」標題，派發通知說尚未填寫，小律卻念得出來。"""
+        page = {"id": "task-plain", "properties": {}}
 
-        assert repositories.task_page_description(blocks) == (
-            "請在週五前交 Demo。\n交件格式\nWAV 與工程檔。"
+        async def blocks(_page_id):
+            return [
+                self._block("paragraph", "milet 終於要再來香港開唱啦！"),
+                self._block("paragraph", "日期：2027 年 1 月 24 日"),
+            ]
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_block_children", blocks)
+
+        assert asyncio.run(repositories._task_description_from_page(page)) == (
+            "milet 終於要再來香港開唱啦！\n日期：2027 年 1 月 24 日"
         )
 
-    def test_missing_or_empty_section_falls_back_to_legacy_property(self, monkeypatch):
+    def test_legacy_property_is_ignored(self, monkeypatch):
+        """任務說明欄位廢除：內頁空白就是空白，不再退回舊欄位（舊欄位刪掉之後兩邊行為才一致）。"""
         page = {
             "id": "task-legacy",
             "properties": {"任務說明": {"rich_text": [{"plain_text": "舊欄位內容"}]}},
@@ -1974,7 +1964,67 @@ class TestTaskPageDescription:
 
         monkeypatch.setattr(repositories.notion_api, "retrieve_block_children", empty_blocks)
 
-        assert asyncio.run(repositories._task_description_from_page(page)) == "舊欄位內容"
+        assert asyncio.run(repositories._task_description_from_page(page)) == ""
+        assert repositories._to_task({"id": "t", **page}).description == ""
+
+    def test_reads_everything_except_bot_sections(self, monkeypatch):
+        page = {"id": "task-mixed", "properties": {}}
+
+        async def blocks(_page_id):
+            return [
+                self._block("paragraph", "頁首說明"),
+                self._block("heading_2", "任務說明"),
+                self._block("paragraph", "請在週五前交 Demo。"),
+                self._block("heading_2", "交件格式"),
+                self._block("paragraph", "WAV 與工程檔。"),
+                self._block("heading_2", "藝人回覆"),
+                self._block("paragraph", "藝人回報不算任務內容"),
+                self._block("heading_2", "Drive 資料夾索引"),
+                self._block("bulleted_list_item", "・A：https://drive.test/a"),
+            ]
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_block_children", blocks)
+
+        assert asyncio.run(repositories._task_description_from_page(page)) == (
+            "頁首說明\n請在週五前交 Demo。\n交件格式\nWAV 與工程檔。"
+        )
+
+    def test_reads_nested_blocks_tables_and_bookmarks(self, monkeypatch):
+        """切換清單、分欄、表格裡的內容也要讀；子頁面不讀。"""
+        page = {"id": "page", "properties": {}}
+        children = {
+            "page": [
+                {**self._block("toggle", "交件規格"), "id": "toggle", "has_children": True},
+                {"type": "column_list", "column_list": {}, "id": "cols", "has_children": True},
+                {"type": "table", "table": {}, "id": "table", "has_children": True},
+                {"type": "bookmark", "bookmark": {"url": "https://youtu.be/x", "caption": [{"plain_text": "示範影片"}]}},
+                {"type": "child_page", "child_page": {"title": "內部"}, "id": "sub", "has_children": True},
+            ],
+            "toggle": [self._block("paragraph", "WAV 48kHz")],
+            "cols": [{"type": "column", "column": {}, "id": "col1", "has_children": True}],
+            "col1": [self._block("paragraph", "左欄說明")],
+            "table": [{"type": "table_row", "table_row": {"cells": [[{"plain_text": "項目"}], [{"plain_text": "數量"}]]}}],
+            "sub": [self._block("paragraph", "子頁面內容不讀")],
+        }
+
+        async def blocks(block_id):
+            return children.get(block_id, [])
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_block_children", blocks)
+
+        assert asyncio.run(repositories._task_description_from_page(page)) == (
+            "交件規格\nWAV 48kHz\n左欄說明\n項目｜數量\n示範影片 https://youtu.be/x"
+        )
+
+    def test_unreadable_page_returns_empty(self, monkeypatch):
+        page = {"id": "task-err", "properties": {"任務說明": {"rich_text": [{"plain_text": "舊欄位內容"}]}}}
+
+        async def boom(_page_id):
+            raise repositories.NotionAPIError(500, "boom")
+
+        monkeypatch.setattr(repositories.notion_api, "retrieve_block_children", boom)
+
+        assert asyncio.run(repositories._task_description_from_page(page)) == ""
 
     def test_page_body_wins_over_legacy_property_and_is_cached(self, monkeypatch):
         repositories._task_description_cache.clear()
