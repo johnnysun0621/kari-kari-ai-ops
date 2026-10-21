@@ -122,7 +122,8 @@ def _briefing_text(day: date, b: OpsBriefing) -> str:
         parts = "、".join(f"{name} {n}" for name, n in sorted(b.still_overdue_counts.items(), key=lambda kv: -kv[1]))
         lines += ["", f"🔴 **仍逾期**（{total}）｜{parts}"]
     if b.revision_passed:
-        lines += _section("🛠 **修改期限已過**", [line.text for line in b.revision_passed])
+        # M3-25：和其他任務列一致，任務名稱要直接連到 Notion；控方才能從早報立即處理。
+        lines += _section("🛠 **修改期限已過**", [line.linked for line in b.revision_passed])
     if b.review_unassigned:
         lines += _section("📮 **待審核超過 24 小時，沒人負責**", [line.linked for line in b.review_unassigned])
     if b.unreceived:

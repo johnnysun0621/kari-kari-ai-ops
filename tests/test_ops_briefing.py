@@ -108,6 +108,7 @@ def test_收集各區(repos):
     text = ops_briefing.briefing_text(NOW.date(), b)
     for title in ("新逾期", "仍逾期", "方晨 2", "修改期限已過", "沒人負責", "還沒按收到", "昨天的早報沒看", "老師的課後作業"):
         assert title in text
+    assert "[任務fix](<https://www.notion.so/fix>)" in text
 
 
 def test_有負責審核人時不列(repos):
