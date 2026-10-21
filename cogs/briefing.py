@@ -10,7 +10,7 @@ import discord
 
 import config
 from cogs import ui_text
-from services import audit, daily_briefing, notification_log, ops_briefing, repositories, task_notifications, task_query
+from services import audit, daily_briefing, notification_log, ops_briefing, repositories, task_bundle, task_notifications, task_query
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -66,10 +66,27 @@ class BriefingDetailSelect(
             discord.SelectOption(label=o.label, value=o.value, description=o.description, default=o.value == task_id)
             for o in self.options
         ]
+        # 同仁早報本來就沒有「我都看到了」：看詳細時也不要冒出來（照原訊息有沒有這顆判斷）
+        message = getattr(interaction, "message", None)
+        artist_briefing = message is None or _has_ack_button(message, self.day)
         view = discord.ui.View(timeout=None)
         view.add_item(BriefingDetailSelect(self.day, options))
-        view.add_item(BriefingAckButton(self.day))
+        if artist_briefing:
+            view.add_item(BriefingAckButton(self.day))
+            # 收到之後仍可回報問題（M3-27）：藝人每天看早報，展開某一筆時就能說這筆不行
+            if task_bundle.can_report_concern(task):
+                from cogs.tasks_artist import TaskConcernButton
+
+                view.add_item(TaskConcernButton(task.page_id, "這筆有問題"))
         await interaction.edit_original_response(embed=embed, view=view)
+
+
+def _has_ack_button(message, day: str) -> bool:
+    for row in getattr(message, "components", None) or []:
+        for component in getattr(row, "children", None) or []:
+            if getattr(component, "custom_id", "") == f"briefing_ack:{day}":
+                return True
+    return False
 
 
 async def _can_view(discord_user_id: int, task: repositories.TaskItem) -> bool:

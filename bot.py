@@ -12,7 +12,9 @@ from cogs.briefing import BriefingAckButton, BriefingDetailSelect
 from cogs.ops_actions import OpsClaimButton, OpsDoneButton
 from cogs.ops_briefing import OpsDetailSelect
 from cogs.scheduling_artist import PoolAvailabilityButton
-from cogs.tasks_artist import ReminderAckButton, TaskConcernButton, TaskReceiptButton
+from cogs.tasks_artist import (
+    BundleConcernSelect, BundleDetailSelect, BundleReceiveButton, ReminderAckButton, TaskConcernButton, TaskReceiptButton,
+)
 from cogs import channel_guard
 from services import audit, notion_api, repositories, schema_check
 from web import server as teacher_web
@@ -77,6 +79,7 @@ class KariKariBot(commands.Bot):
         self.add_dynamic_items(TaskReceiptButton)
         self.add_dynamic_items(TaskConcernButton)
         self.add_dynamic_items(ReminderAckButton)
+        self.add_dynamic_items(BundleDetailSelect, BundleReceiveButton, BundleConcernSelect)  # 合併任務通知（M3-27）
         self.add_dynamic_items(BriefingAckButton, BriefingDetailSelect)  # 每日早報（M3-24）
         self.add_dynamic_items(OpsClaimButton, OpsDoneButton)  # 控方「我來處理／已處理」（M3-25）
         self.add_dynamic_items(OpsDetailSelect)  # 營運早報「看某一筆的詳細」（M3-25）

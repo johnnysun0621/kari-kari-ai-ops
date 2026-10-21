@@ -127,7 +127,9 @@ class TestMarkReceived:
             client, "t1", 100, NOW, current, "✅ 已收到｜任務（截止 10/25）｜10/11 10:00"))
 
         assert handled == 3
-        assert current.content == "✅ 已收到｜任務（截止 10/25）｜10/11 10:00" and current.edits[-1]["view"] is None
+        assert current.content == "✅ 已收到｜任務（截止 10/25）｜10/11 10:00"
+        # 收到之後仍可回報問題（M3-27）：收成一行的那則只留一顆「有問題」
+        assert [c.custom_id for c in current.edits[-1]["view"].children] == ["task_concern:t1"]
         assert old1.deleted and old2.deleted and not current.deleted
         assert not other_task.deleted and other_task.edits == []  # 別的任務不受影響
         assert notification_log.messages_for(state, "t1", 100) == []
@@ -136,7 +138,7 @@ class TestMarkReceived:
         current = FakeMessage(9, 7)
         handled = asyncio.run(tasks_artist.mark_previous_notifications_received(
             FakeClient([current]), "t1", 100, NOW, current, "✅ 已收到｜x"))
-        assert handled == 1 and current.edits[-1]["view"] is None
+        assert handled == 1 and [c.custom_id for c in current.edits[-1]["view"].children] == ["task_concern:t1"]
 
     def test_別的藝人的通知不動(self):
         mine, theirs = FakeMessage(9, 1), FakeMessage(8, 2)

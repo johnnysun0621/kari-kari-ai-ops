@@ -70,12 +70,15 @@ def mark_reminder_sent(
 
 
 def record_message(
-    state: dict, task_id: str, user_id: int | str, channel_id: int, message_id: int, now: datetime
+    state: dict, task_id: str, user_id: int | str, channel_id: int, message_id: int, now: datetime,
+    bundle_id: str | None = None,
 ) -> None:
+    """bundle_id：這則是合併訊息（M3-27），同一則會記在裡面每一筆任務底下。"""
     per_task = state["messages"].setdefault(str(task_id), {})
-    per_task.setdefault(str(user_id), []).append(
-        {"channel_id": int(channel_id), "message_id": int(message_id), "sent_at": now.isoformat()}
-    )
+    entry = {"channel_id": int(channel_id), "message_id": int(message_id), "sent_at": now.isoformat()}
+    if bundle_id:
+        entry["bundle"] = bundle_id
+    per_task.setdefault(str(user_id), []).append(entry)
 
 
 def messages_for(state: dict, task_id: str, user_id: int | str) -> list[dict]:

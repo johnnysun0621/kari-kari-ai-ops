@@ -1391,6 +1391,14 @@ async def get_task(task_page_id: str) -> TaskItem | None:
     return await _to_task_with_page_description(page) if page else None
 
 
+async def get_task_brief(task_page_id: str) -> TaskItem | None:
+    """只讀任務欄位、不讀內頁（快）：按鈕要在 Discord 3 秒內回應時用，例如先判斷能不能回報問題。"""
+    if not task_page_id:
+        return None
+    page = await notion_api.retrieve_page(task_page_id)
+    return _to_task(page) if page else None
+
+
 async def find_task_by_latest_submission_url(submission_url: str) -> TaskItem | None:
     """舊 Submission 缺 relation 時，以 Tasks.最新提交 URL 找回原任務。"""
     if not submission_url:

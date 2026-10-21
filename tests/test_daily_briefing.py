@@ -367,9 +367,17 @@ def test_看某一筆的詳細_展開在早報同一則_不另跳訊息(monkeypa
     assert not notion_links.contains_notion_link(embed.description)
     view = edits[0]["view"]
     ids = [child.custom_id for child in view.children]
-    assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"], "選單與「我都看到了」留在最下面"
+    # 選單與「我都看到了」留在最下面；展開某一筆時多一顆「這筆有問題」（M3-27）
+    assert ids == ["briefing_detail:20261020", "briefing_ack:20261020", "task_concern:soon"]
     picked = [o for o in view.children[0].options if o.default]
     assert [o.value for o in picked] == ["soon"]
+
+    # 同仁早報（原訊息沒有「我都看到了」）：看詳細時不冒出「我都看到了」，也沒有「這筆有問題」
+    edits.clear()
+    staff_message = SimpleNamespace(components=[SimpleNamespace(children=[SimpleNamespace(custom_id="briefing_detail:20261020")])])
+    staff_interaction = SimpleNamespace(**{**interaction.__dict__, "message": staff_message})
+    asyncio.run(briefing.BriefingDetailSelect("20261020", options).callback(staff_interaction))
+    assert [child.custom_id for child in edits[0]["view"].children] == ["briefing_detail:20261020"]
 
 
 def test_任務總覽的提醒確認_早報只算最近那天():

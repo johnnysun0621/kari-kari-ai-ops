@@ -18,6 +18,11 @@ _ARTIST_ONLY_PROMPTS = re.compile(
 )
 
 
+def strip_artist_prompts(text: str) -> str:
+    """拿掉「請先按收到任務／收到通知」與交件指引：合併訊息的「看詳細」、同仁版都用不到（M3-27）。"""
+    return _ARTIST_ONLY_PROMPTS.sub("", text.replace(SUBMIT_GUIDE, "")).strip()
+
+
 def staff_message(artist_content: str) -> str:
     """M6-05：發給相關同仁的版本。沿用藝人那份內容（同樣不含 Notion 網址），
     拿掉只對藝人有意義的交件指引與按鈕提示——同仁不在 Artists，/我的任務 查不到這筆，也沒有按鈕。"""

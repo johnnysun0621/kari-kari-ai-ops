@@ -10,13 +10,50 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, paging, ui_text
 from services.permissions import is_admin
-from services import audit, notification_log, ops_notice, repositories, task_notifications
+from services import audit, notification_log, ops_notice, repositories, task_bundle, task_notifications
 
 logger = logging.getLogger(__name__)
 
 
-async def send_task_dm(user: discord.abc.User, task_id: str, content: str) -> discord.Message:
-    """送出帶「收到任務」按鈕的任務通知，並記下訊息編號，之後按收到時才清得掉舊的（M3-23）。"""
+async def clear_old_notifications(
+    client, task_ids: set[str], user_id: int | str, keep: tuple[int, int] | None = None,
+) -> int:
+    """這些任務要發新通知了：同一任務發給同一個人的舊通知先刪掉（M3-27）。
+
+    舊的合併訊息如果還有別的任務沒被取代，就保留不刪（只把這幾筆從它的待處理清單拿掉）。
+    `keep` 是不要刪的那則（例如藝人正在按的那則）。回傳刪了幾則。
+    """
+    state = notification_log.shared()
+    seen: set[tuple[int, int]] = set()
+    deleted = 0
+    for task_id in task_ids:
+        for record in notification_log.messages_for(state, task_id, user_id):
+            key = (record["channel_id"], record["message_id"])
+            if key in seen or key == keep:
+                continue
+            seen.add(key)
+            bundle_id = record.get("bundle")
+            if bundle_id and not task_bundle.supersede(state, bundle_id, task_ids):
+                continue  # 舊合併訊息裡還有別的任務要留著
+            try:
+                await client.get_partial_messageable(key[0]).get_partial_message(key[1]).delete()
+                deleted += 1
+            except discord.NotFound:
+                pass
+            except Exception:
+                logger.warning("舊任務通知無法刪除：%s／%s", task_id, key[1])
+        notification_log.forget_messages(state, task_id, user_id)
+    notification_log.persist()
+    return deleted
+
+
+async def send_task_dm(user: discord.abc.User, task_id: str, content: str, client=None) -> discord.Message:
+    """送出帶「收到任務」按鈕的任務通知，並記下訊息編號，之後按收到時才清得掉舊的（M3-23）。
+
+    送之前先刪掉同一任務發給這個人的舊通知（M3-27）：重送時私訊裡只留最新那張。
+    """
+    if client is not None:
+        await clear_old_notifications(client, {task_id}, user.id)
     view = discord.ui.View(timeout=None)
     view.add_item(TaskReceiptButton(task_id))
     view.add_item(TaskConcernButton(task_id))
@@ -27,6 +64,51 @@ async def send_task_dm(user: discord.abc.User, task_id: str, content: str) -> di
         state, task_id, user.id, message.channel.id, message.id,
         datetime.now(config.get_tenant().tz),
     )
+    notification_log.persist()
+    return message
+
+
+def _deadline_fn():
+    now = datetime.now(config.get_tenant().tz)
+    return lambda task: ui_text.deadline_text(task, now)
+
+
+def bundle_options(tasks: list[repositories.TaskItem], selected: str | None = None) -> list[discord.SelectOption]:
+    deadline = _deadline_fn()
+    return [
+        discord.SelectOption(
+            label=(task.name or "未命名任務")[:100], value=task.page_id,
+            description=deadline(task)[:100], default=task.page_id == selected,
+        )
+        for task in tasks[: task_bundle.MAX_BUNDLE]
+    ]
+
+
+def bundle_view(bundle_id: str, options: list[discord.SelectOption], *, received: bool = False) -> discord.ui.View:
+    """合併訊息的元件。收到之後只留「某一筆有問題」。"""
+    view = discord.ui.View(timeout=None)
+    if not received:
+        view.add_item(BundleDetailSelect(bundle_id, options))
+        view.add_item(BundleReceiveButton(bundle_id))
+    plain = [discord.SelectOption(label=o.label, value=o.value, description=o.description) for o in options]
+    view.add_item(BundleConcernSelect(bundle_id, plain))
+    return view
+
+
+async def send_bundle_dm(client, user, kind: str, tasks: list[repositories.TaskItem]) -> discord.Message:
+    """同一輪 2 筆以上：合併成一則（M3-27）。送之前先刪掉這幾筆的舊通知。"""
+    task_ids = [task.page_id for task in tasks]
+    await clear_old_notifications(client, set(task_ids), user.id)
+    bundle_id = task_bundle.new_bundle_id()
+    message = await user.send(
+        task_bundle.bundle_text(kind, tasks, _deadline_fn()),
+        view=bundle_view(bundle_id, bundle_options(tasks)),
+    )
+    now = datetime.now(config.get_tenant().tz)
+    state = notification_log.shared()
+    task_bundle.remember_bundle(state, bundle_id, user.id, kind, task_ids, now)
+    for task_id in task_ids:
+        notification_log.record_message(state, task_id, user.id, message.channel.id, message.id, now, bundle_id=bundle_id)
     notification_log.persist()
     return message
 
@@ -57,6 +139,27 @@ async def notify_staff(
     return sent
 
 
+async def _send_staff_dm(bot, person, tasks: list[repositories.TaskItem], artist_names) -> bool:
+    """同仁這一輪的知會：1 筆用原本的同仁版內容，2 筆以上合併成清單。送之前刪掉這幾筆的舊知會。"""
+    try:
+        user = await bot.fetch_user(int(person.discord_user_id))
+        await clear_old_notifications(bot, {task.page_id for task in tasks}, user.id)
+        if len(tasks) == 1:
+            content = task_notifications.staff_message(task_notifications.notification_message(tasks[0]))
+        else:
+            content = task_bundle.staff_bundle_text(tasks, artist_names, _deadline_fn())
+        message = await user.send(content)
+    except Exception:
+        logger.exception("相關同仁通知失敗：%s", person.name)
+        return False
+    now = datetime.now(config.get_tenant().tz)
+    state = notification_log.shared()
+    for task in tasks:
+        notification_log.record_message(state, task.page_id, user.id, message.channel.id, message.id, now)
+    notification_log.persist()
+    return True
+
+
 def received_line(task: repositories.TaskItem, received_at: datetime) -> str:
     """派發卡按了「收到任務」後收成的那一行。"""
     now = datetime.now(config.get_tenant().tz)
@@ -85,7 +188,7 @@ async def mark_previous_notifications_received(
     if current_message is not None:
         try:
             content = collapsed or (current_message.content + notification_log.received_suffix(received_at))
-            await current_message.edit(content=content[:2000], view=None)
+            await current_message.edit(content=content[:2000], view=_concern_only_view(task_id))
             handled += 1
         except Exception:
             logger.warning("任務通知無法收合：%s／%s", task_id, current_message.id)
@@ -100,6 +203,13 @@ async def mark_previous_notifications_received(
     notification_log.forget_messages(state, task_id, user_id)
     notification_log.persist()
     return handled
+
+
+def _concern_only_view(task_id: str) -> discord.ui.View:
+    """收到之後仍可回報問題（M3-27）：收成一行的那則留一顆「有問題／無法配合」。"""
+    view = discord.ui.View(timeout=None)
+    view.add_item(TaskConcernButton(task_id))
+    return view
 
 
 class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"task_receipt:(?P<task_id>[\w-]+)"):
@@ -252,12 +362,12 @@ def reminder_view(task_id: str, stage: str) -> discord.ui.View | None:
 class TaskConcernButton(discord.ui.DynamicItem[discord.ui.Button], template=r"task_concern:(?P<task_id>[\w-]+)"):
     """任務通知中的持久化問題／無法配合按鈕。"""
 
-    def __init__(self, task_id: str):
+    def __init__(self, task_id: str, label: str = "有問題／無法配合"):
         super().__init__(
             discord.ui.Button(
-                label="有問題／無法配合",
+                label=label,
                 style=discord.ButtonStyle.secondary,
-                emoji="💬",
+                emoji="⚠️",
                 custom_id=f"task_concern:{task_id}",
             )
         )
@@ -265,10 +375,23 @@ class TaskConcernButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
 
     @classmethod
     async def from_custom_id(cls, interaction, item, match):
-        return cls(match.group("task_id"))
+        return cls(match.group("task_id"), item.label or "有問題／無法配合")
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(TaskConcernModal(self.task_id))
+        await open_concern_modal(interaction, self.task_id)
+
+
+async def open_concern_modal(interaction: discord.Interaction, task_id: str) -> None:
+    """已交件、修改中的任務不能用按鈕回報（M3-27）；其他跳出填原因的視窗。只讀欄位，趕在 3 秒內回應。"""
+    try:
+        task = await repositories.get_task_brief(task_id)
+    except Exception:
+        logger.exception("回報問題前讀取任務失敗：%s", task_id)
+        task = None
+    if task is not None and not task_bundle.can_report_concern(task):
+        await interaction.response.send_message(task_bundle.CONCERN_BLOCKED_REPLY, ephemeral=True)
+        return
+    await interaction.response.send_modal(TaskConcernModal(task_id))
 
 
 class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
@@ -289,6 +412,9 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if task is None or artist is None or artist.page_id not in task.artist_page_ids:
             await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
+            return
+        if not task_bundle.can_report_concern(task):
+            await interaction.followup.send(task_bundle.CONCERN_BLOCKED_REPLY, ephemeral=True)
             return
         reason = self.reason.value.strip()
         if not reason:
@@ -335,6 +461,151 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
             "✅ 已將問題回報給控方，任務已暫停。控方調整後會重新通知你。",
             ephemeral=True,
         )
+
+def _bundle_task_ids(interaction: discord.Interaction, bundle_id: str) -> list[str]:
+    """合併訊息裡有哪幾筆：先看狀態檔，沒有就從訊息上的選單讀（狀態檔被清掉也按得動）。"""
+    entry = task_bundle.bundle_for(notification_log.shared(), bundle_id)
+    if entry and entry.get("task_ids"):
+        return list(entry["task_ids"])
+    ids: list[str] = []
+    for row in getattr(interaction.message, "components", []) or []:
+        for child in getattr(row, "children", []) or []:
+            if str(getattr(child, "custom_id", "")).startswith(("bundle_detail:", "bundle_concern:")):
+                ids += [o.value for o in getattr(child, "options", []) if o.value not in ids]
+    return ids
+
+
+class BundleDetailSelect(
+    discord.ui.DynamicItem[discord.ui.Select],
+    template=r"bundle_detail:(?P<bundle_id>[0-9a-f]{12})",
+):
+    """合併訊息的「看某一筆的詳細」：展開在同一則（embed），再選別筆就換成那一筆（M3-27）。"""
+
+    def __init__(self, bundle_id: str, options: list[discord.SelectOption] | None = None):
+        self.options = options or [discord.SelectOption(label="（沒有任務）", value="none")]
+        super().__init__(discord.ui.Select(
+            placeholder="看某一筆的詳細…", options=self.options,
+            custom_id=f"bundle_detail:{bundle_id}", min_values=1, max_values=1,
+        ))
+        self.bundle_id = bundle_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item: discord.ui.Select, match):
+        return cls(match.group("bundle_id"), list(item.options))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        values = (interaction.data or {}).get("values") or []
+        task_id = values[0] if values else ""
+        task = await repositories.get_task(task_id) if task_id and task_id != "none" else None
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if task is None or artist is None or artist.page_id not in task.artist_page_ids:
+            await interaction.followup.send("❌ 找不到這筆任務，可能已經結案。用 `/我的任務` 看最新清單。", ephemeral=True)
+            return
+        entry = task_bundle.bundle_for(notification_log.shared(), self.bundle_id) or {}
+        if entry.get("kind") == task_bundle.KIND_ASSIGNMENT:
+            text = task_notifications.assignment_notification_message(task)
+        else:
+            text = task_notifications.notification_message(task)
+        text = task_notifications.strip_artist_prompts(text)
+        embed = discord.Embed(description=text[:4000], color=0x5865F2)
+        embed.set_footer(text="再選別筆會換成那一筆；看完按「全部收到」")
+        options = [
+            discord.SelectOption(label=o.label, value=o.value, description=o.description, default=o.value == task_id)
+            for o in self.options
+        ]
+        await interaction.edit_original_response(embed=embed, view=bundle_view(self.bundle_id, options))
+
+
+class BundleReceiveButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"bundle_receive:(?P<bundle_id>[0-9a-f]{12})",
+):
+    """合併訊息的「✅ 全部收到」：每一筆都記成收到任務，整則收成一行，留「某一筆有問題」（M3-27）。"""
+
+    def __init__(self, bundle_id: str):
+        super().__init__(discord.ui.Button(
+            label="全部收到", style=discord.ButtonStyle.success, emoji="✅",
+            custom_id=f"bundle_receive:{bundle_id}",
+        ))
+        self.bundle_id = bundle_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match.group("bundle_id"))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+        if artist is None:
+            await interaction.followup.send("❌ 找不到你的藝人資料，請聯絡控方。", ephemeral=True)
+            return
+        now = datetime.now(config.get_tenant().tz)
+        here = (interaction.message.channel.id, interaction.message.id) if interaction.message else None
+        mine: list[repositories.TaskItem] = []
+        for task_id in _bundle_task_ids(interaction, self.bundle_id):
+            try:
+                task = await repositories.get_task_brief(task_id)
+            except Exception:
+                logger.exception("全部收到：讀取任務失敗：%s", task_id)
+                continue
+            if task is None or artist.page_id not in task.artist_page_ids:
+                continue
+            if task_notifications.can_acknowledge(task):
+                try:
+                    stored = await repositories.acknowledge_task(task_id, now)
+                    await audit.log_event(
+                        event_name=f"藝人收到任務｜{task.name}", action_type="更新", operator=artist.name,
+                        discord_user_id=str(interaction.user.id), target_db="Tasks", target_url=task.url,
+                        after=f"狀態：進行中｜收到時間：{now.isoformat()}｜合併通知全部收到"
+                        + ("" if stored else "｜收到時間欄位尚未建立"),
+                    )
+                except Exception:
+                    logger.exception("全部收到：寫入失敗：%s", task_id)
+                    await interaction.followup.send("❌ 收到確認寫入失敗，請稍後再試。", ephemeral=True)
+                    return
+            mine.append(task)
+            await clear_old_notifications(interaction.client, {task_id}, interaction.user.id, keep=here)
+        if not mine:
+            await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
+            return
+        lines = [task_bundle.received_bundle_line(len(mine), now)]
+        lines += [f"・{task.name}（{ui_text.deadline_text(task, now)}）" for task in mine]
+        lines.append("收到之後才發現不行，用下方「⚠️ 某一筆有問題」回報。")
+        try:
+            await interaction.message.edit(
+                content="\n".join(lines)[:2000], embed=None,
+                view=bundle_view(self.bundle_id, bundle_options(mine), received=True),
+            )
+        except Exception:
+            logger.warning("合併通知無法收合：%s", self.bundle_id)
+        logger.info("全部收到：%s 筆（%s）", len(mine), artist.name)
+
+
+class BundleConcernSelect(
+    discord.ui.DynamicItem[discord.ui.Select],
+    template=r"bundle_concern:(?P<bundle_id>[0-9a-f]{12})",
+):
+    """合併訊息的「⚠️ 某一筆有問題」：選一筆、填原因，只退回那一筆（M3-27）。收到前後都在。"""
+
+    def __init__(self, bundle_id: str, options: list[discord.SelectOption] | None = None):
+        self.options = options or [discord.SelectOption(label="（沒有任務）", value="none")]
+        super().__init__(discord.ui.Select(
+            placeholder="⚠️ 某一筆有問題…", options=self.options,
+            custom_id=f"bundle_concern:{bundle_id}", min_values=1, max_values=1,
+        ))
+        self.bundle_id = bundle_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item: discord.ui.Select, match):
+        return cls(match.group("bundle_id"), list(item.options))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        values = (interaction.data or {}).get("values") or []
+        if not values or values[0] == "none":
+            await interaction.response.defer()
+            return
+        await open_concern_modal(interaction, values[0])
 
 # 顯示順序：藝人要行動的在前，資訊性的在後
 SECTION_ORDER = [
@@ -476,56 +747,106 @@ class DispatchOutcome:
 
 
 async def send_task_notification(bot, task: repositories.TaskItem) -> DispatchOutcome | None:
-    """對任務關聯的藝人與相關同仁送出派發通知（私訊＋公開類型另發公告頻道）。
+    """單筆任務的派發通知（/任務通知重送 等）。回傳 None 代表沒有任何有效收件人。"""
+    return (await send_task_notifications(bot, [task]))[task.page_id]
 
-    回傳 None 代表沒有找到任何有效收件人（藝人與同仁都沒有，或都缺 Discord User ID）；
-    呼叫端各自決定要怎麼提示（背景 loop 發警告到管理頻道，重送指令直接回覆操作者）。
+
+async def send_task_notifications(
+    bot, tasks: list[repositories.TaskItem], kind: str = task_bundle.KIND_DISPATCH,
+) -> dict[str, DispatchOutcome | None]:
+    """這一輪要通知的任務，依收件人分組送出（M3-27）。
+
+    同一位藝人 1 筆 → 原本的任務卡；2 筆以上 → 一則合併訊息（最多 25 筆一則）。
+    相關同仁同樣分組（課後作業通知不發同仁，跟原本一樣）。送之前先刪掉同一任務發給同一個人的舊通知。
+    回傳每筆任務的結果；None 代表那筆沒有任何有效收件人（藝人與同仁都沒有，或都缺 Discord User ID）。
+    派發（kind=dispatch）全部送達的任務會發公開公告、寫「Discord 通知時間」；課後作業由呼叫端記錄。
     """
-    artists = await repositories.get_artists_by_ids(task.artist_page_ids)
-    notifyable_artists = [artist for artist in artists if artist.discord_user_id]
-    staff = await repositories.get_people_items_by_ids(task.staff_page_ids)
-    notifyable_staff = [person for person in staff if person.discord_user_id]
-    if not notifyable_artists and not notifyable_staff:
-        return None
-    # 任務說明已經寫在 notification_message 裡，藝人不需要開 Notion。
-    content = task_notifications.notification_message(task)
-    sent = 0
-    for artist in notifyable_artists:
+    artist_ids = sorted({pid for task in tasks for pid in task.artist_page_ids})
+    artists = {a.page_id: a for a in await repositories.get_artists_by_ids(artist_ids)} if artist_ids else {}
+    staff_ids = sorted({pid for task in tasks for pid in task.staff_page_ids}) if kind == task_bundle.KIND_DISPATCH else []
+    people = {p.page_id: p for p in await repositories.get_people_items_by_ids(staff_ids)} if staff_ids else {}
+
+    outcomes: dict[str, DispatchOutcome | None] = {}
+    per_artist: dict[str, list[repositories.TaskItem]] = {}
+    per_staff: dict[str, list[repositories.TaskItem]] = {}
+    for task in tasks:
+        notifyable_artists = [artists[pid] for pid in task.artist_page_ids if pid in artists and artists[pid].discord_user_id]
+        notifyable_staff = [people[pid] for pid in task.staff_page_ids if pid in people and people[pid].discord_user_id]
+        if not notifyable_artists and not notifyable_staff:
+            outcomes[task.page_id] = None
+            continue
+        outcomes[task.page_id] = DispatchOutcome(notifyable_artists=notifyable_artists, notifyable_staff=notifyable_staff)
+        for artist in notifyable_artists:
+            per_artist.setdefault(artist.page_id, []).append(task)
+        for person in notifyable_staff:
+            per_staff.setdefault(person.page_id, []).append(task)
+
+    for artist_id, artist_tasks in per_artist.items():
+        artist = artists[artist_id]
         try:
             user = await bot.fetch_user(int(artist.discord_user_id))
-            await send_task_dm(user, task.page_id, content)
-            sent += 1
         except Exception:
-            logger.exception("任務派發通知失敗：%s／%s", task.name, artist.name)
-    staff_sent = await notify_staff(bot, task, content, notifyable_staff) if notifyable_staff else 0
-    outcome = DispatchOutcome(
-        notifyable_artists=notifyable_artists, sent=sent,
-        notifyable_staff=notifyable_staff, staff_sent=staff_sent,
-    )
-    if outcome.is_complete:
-        logger.info("任務派發通知成功：%s，已通知 %s 位藝人、%s 位同仁", task.name, sent, staff_sent)
-        if task_notifications.is_public_announcement_task(
-            task, config.get_tenant().public_task_types
-        ):
-            announce_channel = bot.get_channel(config.get_tenant().resolved_announce_channel_id)
-            if announce_channel is not None:
-                try:
-                    await announce_channel.send(task_notifications.public_announcement_message(task))
-                    await audit.log_event(
-                        event_name=f"任務公開通知｜{task.name}",
-                        action_type="建立",
-                        operator="System",
-                        target_db="Tasks",
-                        target_url=task.url,
-                        after=f"公告頻道 {announce_channel.id}",
+            logger.exception("任務通知失敗（找不到 Discord 使用者）：%s", artist.name)
+            continue
+        for group in task_bundle.chunks(artist_tasks):
+            try:
+                if len(group) == 1:
+                    task = group[0]
+                    # 任務說明已經寫在訊息裡，藝人不需要開 Notion。
+                    content = (
+                        task_notifications.assignment_notification_message(task)
+                        if kind == task_bundle.KIND_ASSIGNMENT else task_notifications.notification_message(task)
                     )
-                except Exception:
-                    logger.exception("任務公開公告發送失敗：%s", task.name)
-        try:
-            await repositories.mark_task_discord_notified(task.page_id)
-        except Exception:
-            logger.exception("任務通知時間寫入 Notion 失敗：%s", task.page_id)
-    return outcome
+                    await send_task_dm(user, task.page_id, content, client=bot)
+                else:
+                    await send_bundle_dm(bot, user, kind, group)
+            except Exception:
+                logger.exception("任務通知失敗：%s／%s", artist.name, "、".join(t.name for t in group))
+                continue
+            for task in group:
+                outcomes[task.page_id].sent += 1
+
+    def artist_names(task):
+        return [artists[pid].name for pid in task.artist_page_ids if pid in artists]
+
+    for person_id, person_tasks in per_staff.items():
+        for group in task_bundle.chunks(person_tasks):
+            if await _send_staff_dm(bot, people[person_id], group, artist_names):
+                for task in group:
+                    outcomes[task.page_id].staff_sent += 1
+
+    for task in tasks:
+        outcome = outcomes.get(task.page_id)
+        if outcome is None or not outcome.is_complete or kind != task_bundle.KIND_DISPATCH:
+            continue
+        await _after_dispatch(bot, task, outcome)
+    return outcomes
+
+
+async def _after_dispatch(bot, task: repositories.TaskItem, outcome: DispatchOutcome) -> None:
+    """派發全部送達後：公開類型發公告區、寫「Discord 通知時間」。"""
+    logger.info("任務派發通知成功：%s，已通知 %s 位藝人、%s 位同仁", task.name, outcome.sent, outcome.staff_sent)
+    if task_notifications.is_public_announcement_task(
+        task, config.get_tenant().public_task_types
+    ):
+        announce_channel = bot.get_channel(config.get_tenant().resolved_announce_channel_id)
+        if announce_channel is not None:
+            try:
+                await announce_channel.send(task_notifications.public_announcement_message(task))
+                await audit.log_event(
+                    event_name=f"任務公開通知｜{task.name}",
+                    action_type="建立",
+                    operator="System",
+                    target_db="Tasks",
+                    target_url=task.url,
+                    after=f"公告頻道 {announce_channel.id}",
+                )
+            except Exception:
+                logger.exception("任務公開公告發送失敗：%s", task.name)
+    try:
+        await repositories.mark_task_discord_notified(task.page_id)
+    except Exception:
+        logger.exception("任務通知時間寫入 Notion 失敗：%s", task.page_id)
 
 
 class TaskResendSelect(discord.ui.Select):

@@ -248,12 +248,13 @@ class RemindersCog(commands.Cog):
         )
         self._task_dispatch_state = next_state
         task_notifications.save_state(next_state)
-        from cogs.tasks_artist import send_task_notification
+        from cogs.tasks_artist import send_task_notifications
 
-        for task in unseen:
-            if not task.discord_visible:
-                continue
-            outcome = await send_task_notification(self.bot, task)
+        dispatchable = [task for task in unseen if task.discord_visible]
+        # 整輪一起送：同一位藝人這一輪有好幾筆就合併成一則（M3-27）
+        outcomes = await send_task_notifications(self.bot, dispatchable) if dispatchable else {}
+        for task in dispatchable:
+            outcome = outcomes.get(task.page_id)
             if outcome is None:
                 if task.page_id not in self._dispatch_warning_sent:
                     admin_channel = channel_guard.ops_channel(self.bot)
@@ -309,23 +310,19 @@ class RemindersCog(commands.Cog):
                 task.page_id, self._assignment_notification_state
             )
         ]
+        if not tasks_to_notify:
+            return
+        from cogs.tasks_artist import send_task_notifications
+        from services import task_bundle
+
+        # 同一位藝人這一輪開放了好幾筆，就合併成一則「📚 課後作業通知」（M3-27）
+        outcomes = await send_task_notifications(self.bot, tasks_to_notify, kind=task_bundle.KIND_ASSIGNMENT)
         for task in tasks_to_notify:
-            artists = await repositories.get_artists_by_ids(task.artist_page_ids)
-            notifyable_artists = [artist for artist in artists if artist.discord_user_id]
-            if not notifyable_artists:
+            outcome = outcomes.get(task.page_id)
+            if outcome is None or not outcome.notifyable_artists:
                 continue
-            sent = 0
-            for artist in notifyable_artists:
-                try:
-                    user = await self.bot.fetch_user(int(artist.discord_user_id))
-                    from cogs.tasks_artist import send_task_dm
-                    await send_task_dm(
-                        user, task.page_id, task_notifications.assignment_notification_message(task)
-                    )
-                    sent += 1
-                except Exception:
-                    logger.exception("課後作業通知失敗：%s／%s", task.name, artist.name)
-            if sent == len(notifyable_artists):
+            sent = outcome.sent
+            if sent == len(outcome.notifyable_artists):
                 self._assignment_notification_state = task_notifications.mark_assignment_notified(
                     task.page_id, self._assignment_notification_state
                 )
@@ -409,9 +406,10 @@ class RemindersCog(commands.Cog):
         flagged = await repositories.get_tasks_flagged_for_resend()
         if not flagged:
             return  # None＝欄位還沒建；空清單＝沒人勾
-        from cogs.tasks_artist import send_task_notification
+        from cogs.tasks_artist import send_task_notifications
 
         results: list[str] = []
+        ready: list[repositories.TaskItem] = []
         for task in flagged:
             try:
                 await repositories.clear_task_resend_flag(task.page_id)
@@ -423,11 +421,21 @@ class RemindersCog(commands.Cog):
                 continue
             try:
                 await repositories.reset_task_discord_notification(task.page_id)
-                outcome = await send_task_notification(self.bot, task)
             except Exception:
                 logger.exception("批次重送失敗：%s", task.name)
                 results.append(f"❌ {task.name}：重送失敗，請稍後再勾一次")
                 continue
+            ready.append(task)
+        # 一起送：同一位藝人重送好幾筆就合併成一則，舊卡先刪掉（M3-27）
+        try:
+            outcomes = await send_task_notifications(self.bot, ready) if ready else {}
+        except Exception:
+            logger.exception("批次重送失敗")
+            outcomes = {}
+            results += [f"❌ {task.name}：重送失敗，請稍後再勾一次" for task in ready]
+            ready = []
+        for task in ready:
+            outcome = outcomes.get(task.page_id)
             if outcome is None:
                 results.append(f"❌ {task.name}：找不到有效的關聯藝人或 Discord User ID")
                 continue
