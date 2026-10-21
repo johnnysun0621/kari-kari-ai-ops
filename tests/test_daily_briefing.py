@@ -522,3 +522,90 @@ def test_有人送失敗_重跑只補發那個人_快到期佇列保留到最後
     assert second["failed"] == 0 and [u for u, _ in sent_to] == ["2", "1"], "月夜不重複收到"
     assert "任務soon" in sent_to[-1][1], "補發的早報仍有快到期的任務"
     assert daily_briefing.queued_task_ids(state) == set()
+
+
+# ---------- M3-28：早報裡回報問題後，那一行標已回報，剩下的一鍵看完 ----------
+
+class BriefMessage:
+    def __init__(self, content):
+        self.id, self.content = 1, content
+        self.channel = SimpleNamespace(id=900)
+        detail = SimpleNamespace(custom_id="briefing_detail:20261020", options=[
+            SimpleNamespace(label="任務late", value="late", description="已逾期"),
+            SimpleNamespace(label="任務soon", value="soon", description="快到期"),
+        ])
+        ack = SimpleNamespace(custom_id="briefing_ack:20261020")
+        self.components = [SimpleNamespace(children=[detail]), SimpleNamespace(children=[ack])]
+        self.edits = []
+
+    async def edit(self, **kw):
+        self.edits.append(kw)
+        if "content" in kw:
+            self.content = kw["content"]
+
+
+@pytest.fixture
+def reported_env(send_env, monkeypatch):
+    state = notification_log.shared()
+    daily_briefing.remember_briefing(state, "1", {
+        "day": "20261020", "channel_id": 900, "message_id": 1,
+        "task_ids": ["late", "soon"], "artist_page_id": "a1", "artist_name": "方晨",
+    })
+
+    async def noop(**kwargs):
+        return None
+
+    monkeypatch.setattr(briefing.audit, "log_event", noop)
+    monkeypatch.setattr(briefing, "datetime", SimpleNamespace(now=lambda tz=None: NOW.replace(minute=12),
+                                                              strptime=datetime.strptime))
+    sent = []
+
+    async def followup_send(content, **kw):
+        sent.append(content)
+
+    async def defer():
+        return None
+
+    interaction = SimpleNamespace(user=SimpleNamespace(id=1), followup=SimpleNamespace(send=followup_send),
+                                  response=SimpleNamespace(defer=defer))
+    text = "☀️ **10/20（二）今天的任務提醒**\n\n🔴 已逾期（1）\n・任務late｜截止 10/19\n\n⏰ 快到期（1）\n・任務soon｜截止 10/25"
+    return SimpleNamespace(state=state, interaction=interaction, message=BriefMessage(text), lines=send_env.lines)
+
+
+def test_早報回報一筆_那行劃掉_其他照舊(reported_env):
+    env = reported_env
+    remaining = asyncio.run(briefing.mark_reported(env.interaction, env.message, task("late")))
+    assert remaining == 1
+    content = env.message.edits[-1]["content"]
+    assert "・~~任務late~~｜⚠️ 已回報問題" in content and "・任務soon｜截止 10/25" in content
+    ids = [child.custom_id for child in env.message.edits[-1]["view"].children]
+    assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"]
+
+
+def test_早報回報後其他我都看到了_回報那筆不記看過(reported_env):
+    env = reported_env
+    asyncio.run(briefing.mark_reported(env.interaction, env.message, task("late")))
+    assert asyncio.run(briefing.ack_briefing(env.interaction, "20261020", env.message, edit_via_response=False))
+    assert "✅ 已讀（09:12）" in env.message.edits[-1]["content"] and "已回報 1 筆" in env.message.edits[-1]["content"]
+    assert [page for page, _ in env.lines] == ["soon"]
+
+
+def test_早報每一筆都回報_直接算已讀收合(reported_env):
+    env = reported_env
+    asyncio.run(briefing.mark_reported(env.interaction, env.message, task("late")))
+    assert asyncio.run(briefing.mark_reported(env.interaction, env.message, task("soon"))) == 0
+    assert env.message.edits[-1]["view"] is None and "已回報 2 筆" in env.message.edits[-1]["content"]
+    assert env.lines == []
+
+
+def test_早報上回報問題_確認訊息附其他我都看到了(reported_env):
+    env = reported_env
+    replies = []
+
+    async def followup_send(content, **kw):
+        replies.append((content, kw.get("view")))
+
+    interaction = SimpleNamespace(user=SimpleNamespace(id=1), followup=SimpleNamespace(send=followup_send))
+    asyncio.run(tasks_artist.after_concern_reported(interaction, task("late"), env.message, None))
+    content, view = replies[0]
+    assert "早報裡其他的" in content and view.children[0].label == "其他我都看到了"

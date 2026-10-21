@@ -298,3 +298,170 @@ def test_回報問題退回的那筆_全部收到時不會被記成收到(repos,
                                   response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
     asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
     assert acked == ["t1"]
+
+
+# ---------- M3-28：回報問題後原地收尾，剩下的一鍵收完 ----------
+
+class EditableMessage:
+    def __init__(self, mid=1001, content="", components=()):
+        self.id, self.content, self.components = mid, content, list(components)
+        self.channel = SimpleNamespace(id=9)
+        self.edits: list[dict] = []
+
+    async def edit(self, **kw):
+        self.edits.append(kw)
+        if "content" in kw:
+            self.content = kw["content"]
+
+
+def _patch_tasks(monkeypatch, tasks, acked=None):
+    async def brief(tid):
+        return tasks[tid]
+
+    async def find_artist(_uid):
+        return ARTISTS["a1"]
+
+    async def ack(tid, at):
+        if acked is not None:
+            acked.append(tid)
+        return True
+
+    monkeypatch.setattr(repositories, "get_task_brief", brief)
+    monkeypatch.setattr(repositories, "find_artist_by_discord_id", find_artist)
+    monkeypatch.setattr(repositories, "acknowledge_task", ack)
+
+
+def _returned(page_id):
+    return repositories.TaskItem(**{**task(page_id).__dict__, "discord_visible": False})
+
+
+def _bundle(bot):
+    send(bot, [task("t1"), task("t2")])
+    return ids(bot.sent[0][2])[0].split(":")[1]
+
+
+def test_合併通知回報一筆_原地劃掉_按鈕變其餘收到(repos, monkeypatch):
+    bot = FakeBot()
+    bundle_id = _bundle(bot)
+    _patch_tasks(monkeypatch, {"t1": task("t1"), "t2": _returned("t2")})
+    message = EditableMessage()
+    pending = asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t2"))
+    assert pending == 1
+    edit = message.edits[-1]
+    assert "~~任務t2~~" in edit["content"] and "已回報問題" in edit["content"]
+    assert "其餘 1 筆收到" in edit["content"]
+    children = edit["view"].children
+    assert children[1].item.label == "其餘 1 筆收到"
+    assert [o.value for o in children[2].options] == ["t1"], "回報過的那筆不再出現在「某一筆有問題」"
+
+
+def test_合併通知每一筆都回報_整則收合不留按鈕(repos, monkeypatch):
+    bot = FakeBot()
+    bundle_id = _bundle(bot)
+    _patch_tasks(monkeypatch, {"t1": _returned("t1"), "t2": _returned("t2")})
+    message = EditableMessage()
+    asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t2"))
+    assert asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t1")) == 0
+    assert message.edits[-1]["view"] is None
+    assert "已回報 2 筆" in message.edits[-1]["content"]
+
+
+def test_回報後其餘收到_只記沒回報的那筆(repos, monkeypatch):
+    bot = FakeBot()
+    bundle_id = _bundle(bot)
+    acked = []
+    # 狀態檔記了 t2 已回報，就算 Notion 還沒同步（Discord 顯示還勾著）也不能記成收到
+    _patch_tasks(monkeypatch, {"t1": task("t1"), "t2": task("t2")}, acked)
+    message = EditableMessage()
+    asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t2"))
+
+    async def defer():
+        return None
+
+    interaction = SimpleNamespace(user=SimpleNamespace(id=100), client=bot, message=None,
+                                  response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
+    assert asyncio.run(tasks_artist.receive_bundle(interaction, bundle_id, message)) == 1
+    assert acked == ["t1"]
+    content = message.edits[-1]["content"]
+    assert "已收到 1 筆任務" in content and "已回報 1 筆" in content
+
+
+def test_收到之後才回報_移到已回報_沒有可回報的就不留選單(repos, monkeypatch):
+    bot = FakeBot()
+    bundle_id = _bundle(bot)
+    _patch_tasks(monkeypatch, {"t1": task("t1"), "t2": task("t2")}, [])
+
+    async def defer():
+        return None
+
+    message = EditableMessage()
+    interaction = SimpleNamespace(user=SimpleNamespace(id=100), client=bot, message=message,
+                                  response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
+    asyncio.run(tasks_artist.receive_bundle(interaction, bundle_id, message))
+    assert asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t1")) == 0
+    edit = message.edits[-1]
+    assert "已收到 1 筆任務" in edit["content"] and "~~任務t1~~" in edit["content"]
+    assert [o.value for o in edit["view"].children[0].options] == ["t2"]
+    asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t2"))
+    assert message.edits[-1]["view"] is None
+
+
+def _modal_interaction(sent):
+    async def followup_send(content, **kw):
+        sent.append((content, kw.get("view")))
+
+    return SimpleNamespace(user=SimpleNamespace(id=100), client=None, followup=SimpleNamespace(send=followup_send))
+
+
+def test_單筆卡回報後收成一行_不留按鈕():
+    message = EditableMessage(content="📌 新任務通知")
+    sent = []
+    asyncio.run(tasks_artist.after_concern_reported(_modal_interaction(sent), task("t1"), message, None))
+    assert message.edits[-1]["view"] is None
+    assert message.edits[-1]["content"].startswith("⚠️ 已回報問題｜任務t1｜等控方調整")
+    assert sent[0][1] is None
+
+
+def test_合併通知回報後_確認訊息附其餘收到(repos, monkeypatch):
+    bot = FakeBot()
+    bundle_id = _bundle(bot)
+    _patch_tasks(monkeypatch, {"t1": task("t1"), "t2": _returned("t2")})
+    sent = []
+    asyncio.run(tasks_artist.after_concern_reported(_modal_interaction(sent), task("t2"), EditableMessage(), bundle_id))
+    content, view = sent[0]
+    assert "其他 1 筆" in content and view.children[0].label == "其餘 1 筆收到"
+
+
+def test_已退回的任務按收到任務_不會改回進行中(monkeypatch):
+    acked = []
+    _patch_tasks(monkeypatch, {"t1": _returned("t1")}, acked)
+
+    async def get_task(tid):
+        return _returned(tid)
+
+    monkeypatch.setattr(repositories, "get_task", get_task)
+    sent = []
+
+    async def defer():
+        return None
+
+    async def followup_send(content, **kw):
+        sent.append(content)
+
+    message = EditableMessage(content="📌 新任務通知")
+    interaction = SimpleNamespace(user=SimpleNamespace(id=100), client=None, message=message,
+                                  response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=followup_send))
+    asyncio.run(tasks_artist.TaskReceiptButton("t1").callback(interaction))
+    assert acked == []
+    assert sent == [task_bundle.ALREADY_REPORTED_REPLY]
+    assert message.edits[-1]["view"] is None
+
+
+def test_已回報過的任務再按回報_直接說已回報(monkeypatch):
+    async def brief(tid):
+        return _returned(tid)
+
+    monkeypatch.setattr(repositories, "get_task_brief", brief)
+    interaction, calls = _concern_interaction()
+    asyncio.run(tasks_artist.open_concern_modal(interaction, "t1"))
+    assert "modal" not in calls and calls["message"] == task_bundle.ALREADY_REPORTED_REPLY

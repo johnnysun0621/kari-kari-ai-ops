@@ -74,7 +74,7 @@ class BriefingDetailSelect(
         if artist_briefing:
             view.add_item(BriefingAckButton(self.day))
             # 收到之後仍可回報問題（M3-27）：藝人每天看早報，展開某一筆時就能說這筆不行
-            if task_bundle.can_report_concern(task):
+            if task.discord_visible and task_bundle.can_report_concern(task):
                 from cogs.tasks_artist import TaskConcernButton
 
                 view.add_item(TaskConcernButton(task.page_id, "這筆有問題"))
@@ -122,46 +122,136 @@ class BriefingAckButton(
         return cls(match.group("day"))
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        state = notification_log.shared()
-        now = datetime.now(config.get_tenant().tz)
-        if self.day != _day_code(now.date()):
-            await interaction.response.send_message("ℹ️ 這是之前的早報，請看最新的那一則。", ephemeral=True)
-            return
-        entry = daily_briefing.briefing_for(state, interaction.user.id)
-        if not entry or entry.get("day") != self.day:
-            # 狀態檔沒有這則（例如狀態遺失、或是手動補發的早報）：任務清單直接從訊息的選單讀
-            entry = await _entry_from_message(interaction, self.day)
-            if entry is None:
-                await interaction.response.send_message("❌ 讀不到這則早報的任務，請用 `/我的任務`。", ephemeral=True)
-                return
-            daily_briefing.remember_briefing(state, interaction.user.id, entry)
-        day = datetime.strptime(self.day, "%Y%m%d").date()
-        task_ids = list(entry.get("task_ids") or [])
-        # 先改訊息（Discord 3 秒內要回應），再寫 Notion。編輯訊息不會跳通知。
-        await interaction.response.edit_message(
-            content=daily_briefing.collapsed_text(day, len(task_ids), now), view=None, embed=None,
-        )
-        artist_page_id = entry.get("artist_page_id", "")
-        artist_name = entry.get("artist_name", "")
-        daily_briefing.record_ack(state, task_ids, artist_page_id, day)
-        entry["acked_at"] = now.isoformat()
-        notification_log.persist()
-        line = task_notifications.format_reminder_ack_line(daily_briefing.ACK_STAGE, now, artist_name)
-        for task_id in task_ids:
-            try:
-                await repositories.append_reminder_ack_line(task_id, line)
-            except Exception:
-                logger.exception("早報確認寫入 Notion 失敗：%s", task_id)
-        await audit.log_event(
-            event_name=f"藝人確認每日早報｜{artist_name}",
-            action_type="更新", operator=artist_name, discord_user_id=str(interaction.user.id),
-            target_db="Tasks", after=f"{day:%m/%d} 早報｜{len(task_ids)} 筆",
-        )
+        await ack_briefing(interaction, self.day, getattr(interaction, "message", None), edit_via_response=True)
 
 
-async def _entry_from_message(interaction: discord.Interaction, day: str) -> dict | None:
+async def ack_briefing(interaction: discord.Interaction, day_code: str, message, *, edit_via_response: bool) -> bool:
+    """「我都看到了」：早報收成一行，每筆任務的「提醒確認」各寫一行。
+
+    早報上的按鈕走 edit_via_response（Discord 3 秒內要回應，直接改這則）；回報問題後確認訊息上的
+    「其他我都看到了」（M3-28）已經 defer 過，改的是早報本身（message）。回報過問題的那幾筆不記看過。
+    """
+    state = notification_log.shared()
+    now = datetime.now(config.get_tenant().tz)
+
+    async def say(text: str) -> None:
+        if edit_via_response:
+            await interaction.response.send_message(text, ephemeral=True)
+        else:
+            await interaction.followup.send(text, ephemeral=True)
+
+    if day_code != _day_code(now.date()):
+        await say("ℹ️ 這是之前的早報，請看最新的那一則。")
+        return False
+    entry = daily_briefing.briefing_for(state, interaction.user.id)
+    if not entry or entry.get("day") != day_code:
+        # 狀態檔沒有這則（例如狀態遺失、或是手動補發的早報）：任務清單直接從訊息的選單讀
+        entry = await _entry_from_message(interaction, day_code, message)
+        if entry is None:
+            await say("❌ 讀不到這則早報的任務，請用 `/我的任務`。")
+            return False
+        daily_briefing.remember_briefing(state, interaction.user.id, entry)
+    day = datetime.strptime(day_code, "%Y%m%d").date()
+    reported = set(entry.get("reported") or [])
+    all_ids = list(entry.get("task_ids") or [])
+    task_ids = [tid for tid in all_ids if tid not in reported]
+    # 先改訊息（Discord 3 秒內要回應），再寫 Notion。編輯訊息不會跳通知。
+    content = daily_briefing.collapsed_text(day, len(all_ids), now, reported=len(all_ids) - len(task_ids))
+    if edit_via_response:
+        await interaction.response.edit_message(content=content, view=None, embed=None)
+    else:
+        try:
+            await message.edit(content=content, view=None, embed=None)
+        except Exception:
+            logger.warning("早報無法收合：%s", day_code)
+    artist_page_id = entry.get("artist_page_id", "")
+    artist_name = entry.get("artist_name", "")
+    daily_briefing.record_ack(state, task_ids, artist_page_id, day)
+    entry["acked_at"] = now.isoformat()
+    notification_log.persist()
+    line = task_notifications.format_reminder_ack_line(daily_briefing.ACK_STAGE, now, artist_name)
+    for task_id in task_ids:
+        try:
+            await repositories.append_reminder_ack_line(task_id, line)
+        except Exception:
+            logger.exception("早報確認寫入 Notion 失敗：%s", task_id)
+    await audit.log_event(
+        event_name=f"藝人確認每日早報｜{artist_name}",
+        action_type="更新", operator=artist_name, discord_user_id=str(interaction.user.id),
+        target_db="Tasks", after=f"{day:%m/%d} 早報｜{len(task_ids)} 筆",
+    )
+    return True
+
+
+def _briefing_day(message) -> str | None:
+    """這則是藝人早報的話，回傳 custom_id 裡的日期（有「我都看到了」才算；同仁早報沒有）。"""
+    for row in getattr(message, "components", None) or []:
+        for component in getattr(row, "children", None) or []:
+            custom_id = str(getattr(component, "custom_id", "") or "")
+            if custom_id.startswith("briefing_ack:"):
+                return custom_id.split(":", 1)[1]
+    return None
+
+
+def is_briefing_message(message) -> bool:
+    return _briefing_day(message) is not None
+
+
+async def mark_reported(interaction: discord.Interaction, message, task: repositories.TaskItem) -> int:
+    """早報裡某一筆回報了問題：那一行劃掉標「已回報」（M3-28）。回傳早報裡還有幾筆沒回報。
+
+    每一筆都回報了就直接算已讀收合，回 0。
+    """
+    day_code = _briefing_day(message)
+    state = notification_log.shared()
+    entry = daily_briefing.briefing_for(state, interaction.user.id)
+    if not entry or entry.get("day") != day_code:
+        entry = await _entry_from_message(interaction, day_code, message)
+        if entry is None:
+            return 0
+        daily_briefing.remember_briefing(state, interaction.user.id, entry)
+    reported = list(entry.get("reported") or [])
+    if task.page_id not in reported:
+        reported.append(task.page_id)
+    entry["reported"] = reported
+    notification_log.persist()
+    remaining = [tid for tid in entry.get("task_ids") or [] if tid not in reported]
+    if not remaining:
+        await ack_briefing(interaction, day_code, message, edit_via_response=False)
+        return 0
+    options = []
+    for row in getattr(message, "components", None) or []:
+        for component in getattr(row, "children", None) or []:
+            if getattr(component, "custom_id", "") == f"briefing_detail:{day_code}":
+                options = [discord.SelectOption(label=o.label, value=o.value, description=o.description)
+                           for o in component.options]
+    view = discord.ui.View(timeout=None)
+    view.add_item(BriefingDetailSelect(day_code, options))
+    view.add_item(BriefingAckButton(day_code))
+    await message.edit(content=daily_briefing.mark_reported_line(message.content, task.name), embed=None, view=view)
+    return len(remaining)
+
+
+def ack_rest_view(message) -> discord.ui.View:
+    """回報後確認訊息上的「其他我都看到了」：只有藝人看得到，按了等於在早報上按「我都看到了」。"""
+    day_code = _briefing_day(message)
+    view = discord.ui.View(timeout=900)
+    button = discord.ui.Button(label="其他我都看到了", emoji="👌", style=discord.ButtonStyle.success)
+
+    async def callback(interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        if await ack_briefing(interaction, day_code, message, edit_via_response=False):
+            await interaction.edit_original_response(content="👌 早報已讀。", view=None)
+
+    button.callback = callback
+    view.add_item(button)
+    return view
+
+
+async def _entry_from_message(interaction: discord.Interaction, day: str, message=None) -> dict | None:
     """從早報訊息的「看某一筆的詳細」選單撈出任務 ID；選單選項就是這則早報列的任務。"""
-    message = getattr(interaction, "message", None)
+    if message is None:
+        message = getattr(interaction, "message", None)
     task_ids: list[str] = []
     for row in getattr(message, "components", None) or []:
         for component in getattr(row, "children", None) or []:

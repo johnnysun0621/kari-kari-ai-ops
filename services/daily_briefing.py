@@ -161,8 +161,21 @@ def briefing_text(
     return text
 
 
-def collapsed_text(day: date, count: int, acked_at: datetime) -> str:
-    return f"☀️ {day.month}/{day.day} 今天的任務提醒（{count} 筆）\n✅ 已讀（{acked_at:%H:%M}）"
+def collapsed_text(day: date, count: int, acked_at: datetime, reported: int = 0) -> str:
+    text = f"☀️ {day.month}/{day.day} 今天的任務提醒（{count} 筆）\n✅ 已讀（{acked_at:%H:%M}）"
+    if reported:
+        text += f"　⚠️ 已回報 {reported} 筆"
+    return text
+
+
+def mark_reported_line(text: str, task_name: str) -> str:
+    """早報裡回報了問題的那一筆：劃掉並標「已回報」，其他行不動（M3-28）。"""
+    name = strip_notion_links(task_name)
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith(f"・{name}｜"):
+            lines[i] = f"・~~{name}~~｜⚠️ 已回報問題，等控方調整"
+    return "\n".join(lines)
 
 
 def option_description(item: BriefingItem, deadline_text) -> str:

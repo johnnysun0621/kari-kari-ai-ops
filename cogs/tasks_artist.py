@@ -84,13 +84,23 @@ def bundle_options(tasks: list[repositories.TaskItem], selected: str | None = No
     ]
 
 
-def bundle_view(bundle_id: str, options: list[discord.SelectOption], *, received: bool = False) -> discord.ui.View:
-    """合併訊息的元件。收到之後只留「某一筆有問題」。"""
+def bundle_view(
+    bundle_id: str, options: list[discord.SelectOption], *, received: bool = False,
+    reported: set[str] | frozenset = frozenset(),
+) -> discord.ui.View | None:
+    """合併訊息的元件。收到之後只留「某一筆有問題」。
+
+    回報過問題的那幾筆（M3-28）：不再出現在「某一筆有問題」，收到按鈕改成「其餘 N 筆收到」。
+    每一筆都處理完、沒有東西可以按了，回 None。
+    """
+    open_options = [o for o in options if o.value not in reported]
+    if not open_options:
+        return None
     view = discord.ui.View(timeout=None)
     if not received:
         view.add_item(BundleDetailSelect(bundle_id, options))
-        view.add_item(BundleReceiveButton(bundle_id))
-    plain = [discord.SelectOption(label=o.label, value=o.value, description=o.description) for o in options]
+        view.add_item(BundleReceiveButton(bundle_id, task_bundle.receive_label(len(open_options), len(reported))))
+    plain = [discord.SelectOption(label=o.label, value=o.value, description=o.description) for o in open_options]
     view.add_item(BundleConcernSelect(bundle_id, plain))
     return view
 
@@ -232,6 +242,16 @@ class TaskReceiptButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
         if task is None or artist is None or artist.page_id not in task.artist_page_ids:
             await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
             return
+        if not task.discord_visible:
+            # 回報問題退回控方了（Discord 顯示被取消）：不能再記成收到，不然剛退回的任務又變進行中（M3-28）
+            try:
+                await interaction.message.edit(
+                    content=task_bundle.reported_card_line(task, datetime.now(config.get_tenant().tz)), view=None,
+                )
+            except Exception:
+                logger.warning("已退回任務的卡片無法收合：%s", self.task_id)
+            await interaction.followup.send(task_bundle.ALREADY_REPORTED_REPLY, ephemeral=True)
+            return
         if not task_notifications.can_acknowledge(task):
             # 已經收到過（或已進入後續狀態）：直接收合，不再多跳一則說明。
             received = task.discord_acknowledged_at or datetime.now(config.get_tenant().tz)
@@ -369,23 +389,86 @@ class TaskConcernButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
         await open_concern_modal(interaction, self.task_id)
 
 
-async def open_concern_modal(interaction: discord.Interaction, task_id: str) -> None:
-    """已交件、修改中的任務不能用按鈕回報（M3-27）；其他跳出填原因的視窗。只讀欄位，趕在 3 秒內回應。"""
+async def open_concern_modal(interaction: discord.Interaction, task_id: str, bundle_id: str | None = None) -> None:
+    """已交件、修改中的任務不能用按鈕回報（M3-27）；其他跳出填原因的視窗。只讀欄位，趕在 3 秒內回應。
+
+    記下是從哪則訊息按的（單筆卡、合併通知、早報），送出後那則才能原地收尾（M3-28）。
+    """
     try:
         task = await repositories.get_task_brief(task_id)
     except Exception:
         logger.exception("回報問題前讀取任務失敗：%s", task_id)
         task = None
+    if task is not None and not task.discord_visible:
+        await interaction.response.send_message(task_bundle.ALREADY_REPORTED_REPLY, ephemeral=True)
+        return
     if task is not None and not task_bundle.can_report_concern(task):
         await interaction.response.send_message(task_bundle.CONCERN_BLOCKED_REPLY, ephemeral=True)
         return
-    await interaction.response.send_modal(TaskConcernModal(task_id))
+    origin = getattr(interaction, "message", None)
+    await interaction.response.send_modal(TaskConcernModal(task_id, origin=origin, bundle_id=bundle_id))
+
+
+CONCERN_SENT_REPLY = "✅ 已將問題回報給控方，任務已暫停。控方調整後會重新通知你。"
+
+
+async def after_concern_reported(
+    interaction: discord.Interaction, task: repositories.TaskItem, origin, bundle_id: str | None,
+) -> None:
+    """回報送出後：按的那則原地收尾，剩下沒問題的一鍵收完（M3-28）。
+
+    - 合併通知：劃掉這筆，按鈕變「其餘 N 筆收到」；確認訊息也附同一顆。每一筆都回報了就整則收合。
+    - 早報：那一行標「已回報」，確認訊息附「其他我都看到了」；每一筆都回報了就直接算已讀。
+    - 單筆卡：收成一行「⚠️ 已回報問題」，不留按鈕。
+    """
+    from cogs import briefing
+
+    now = datetime.now(config.get_tenant().tz)
+    view: discord.ui.View | None = None
+    reply = CONCERN_SENT_REPLY
+    try:
+        if bundle_id:
+            pending = await refresh_bundle_after_concern(origin, bundle_id, task.page_id)
+            if pending:
+                reply += f"\n其他 {pending} 筆沒問題的話，直接按下面就好："
+                view = _receive_rest_view(bundle_id, origin, pending)
+        elif origin is not None and briefing.is_briefing_message(origin):
+            pending = await briefing.mark_reported(interaction, origin, task)
+            if pending:
+                reply += "\n早報裡其他的看過了，直接按下面就好："
+                view = briefing.ack_rest_view(origin)
+        elif origin is not None:
+            await origin.edit(content=task_bundle.reported_card_line(task, now), embed=None, view=None)
+    except Exception:
+        logger.exception("回報問題後收尾訊息失敗：%s", task.page_id)
+    if view is not None:
+        await interaction.followup.send(reply, view=view, ephemeral=True)
+    else:
+        await interaction.followup.send(reply, ephemeral=True)
+
+
+def _receive_rest_view(bundle_id: str, bundle_message, pending: int) -> discord.ui.View:
+    """確認訊息上的「其餘 N 筆收到」：只有藝人看得到，按了等於在合併通知上按收到。"""
+    view = discord.ui.View(timeout=900)
+    button = discord.ui.Button(label=f"其餘 {pending} 筆收到", emoji="✅", style=discord.ButtonStyle.success)
+
+    async def callback(interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        count = await receive_bundle(interaction, bundle_id, bundle_message)
+        if count:
+            await interaction.edit_original_response(content=f"✅ 已收到其餘 {count} 筆。", view=None)
+
+    button.callback = callback
+    view.add_item(button)
+    return view
 
 
 class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
-    def __init__(self, task_id: str):
+    def __init__(self, task_id: str, *, origin=None, bundle_id: str | None = None):
         super().__init__()
         self.task_id = task_id
+        self.origin = origin
+        self.bundle_id = bundle_id
         self.reason = discord.ui.TextInput(
             label="請說明原因或需要調整的地方",
             placeholder="例如：時間無法配合、任務內容不清楚、需要延期…",
@@ -445,18 +528,13 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
             f"{link}",
             view=ops_action_view(),
         )
-        await interaction.followup.send(
-            "✅ 已將問題回報給控方，任務已暫停。控方調整後會重新通知你。",
-            ephemeral=True,
-        )
+        await after_concern_reported(interaction, task, self.origin, self.bundle_id)
 
-def _bundle_task_ids(interaction: discord.Interaction, bundle_id: str) -> list[str]:
-    """合併訊息裡有哪幾筆：先看狀態檔，沒有就從訊息上的選單讀（狀態檔被清掉也按得動）。"""
-    entry = task_bundle.bundle_for(notification_log.shared(), bundle_id)
-    if entry and entry.get("task_ids"):
-        return list(entry["task_ids"])
+
+def _bundle_ids_from_message(message) -> list[str]:
+    """合併訊息裡有哪幾筆：狀態檔被清掉時從訊息上的選單讀，照樣按得動。"""
     ids: list[str] = []
-    for row in getattr(interaction.message, "components", []) or []:
+    for row in getattr(message, "components", []) or []:
         for child in getattr(row, "children", []) or []:
             if str(getattr(child, "custom_id", "")).startswith(("bundle_detail:", "bundle_concern:")):
                 ids += [o.value for o in getattr(child, "options", []) if o.value not in ids]
@@ -502,7 +580,8 @@ class BundleDetailSelect(
             discord.SelectOption(label=o.label, value=o.value, description=o.description, default=o.value == task_id)
             for o in self.options
         ]
-        await interaction.edit_original_response(embed=embed, view=bundle_view(self.bundle_id, options))
+        reported = set(entry.get("reported") or [])
+        await interaction.edit_original_response(embed=embed, view=bundle_view(self.bundle_id, options, reported=reported))
 
 
 class BundleReceiveButton(
@@ -511,65 +590,127 @@ class BundleReceiveButton(
 ):
     """合併訊息的「✅ 全部收到」：每一筆都記成收到任務，整則收成一行，留「某一筆有問題」（M3-27）。"""
 
-    def __init__(self, bundle_id: str):
+    def __init__(self, bundle_id: str, label: str = "全部收到"):
         super().__init__(discord.ui.Button(
-            label="全部收到", style=discord.ButtonStyle.success, emoji="✅",
+            label=label, style=discord.ButtonStyle.success, emoji="✅",
             custom_id=f"bundle_receive:{bundle_id}",
         ))
         self.bundle_id = bundle_id
 
     @classmethod
     async def from_custom_id(cls, interaction, item, match):
-        return cls(match.group("bundle_id"))
+        return cls(match.group("bundle_id"), item.label or "全部收到")
 
     async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        artist = await repositories.find_artist_by_discord_id(interaction.user.id)
-        if artist is None:
-            await interaction.followup.send("❌ 找不到你的藝人資料，請聯絡控方。", ephemeral=True)
-            return
-        now = datetime.now(config.get_tenant().tz)
-        here = (interaction.message.channel.id, interaction.message.id) if interaction.message else None
-        mine: list[repositories.TaskItem] = []
-        for task_id in _bundle_task_ids(interaction, self.bundle_id):
-            try:
-                task = await repositories.get_task_brief(task_id)
-            except Exception:
-                logger.exception("全部收到：讀取任務失敗：%s", task_id)
-                continue
-            if task is None or artist.page_id not in task.artist_page_ids:
-                continue
-            if not task.discord_visible:
-                continue  # 這筆已經回報問題退回控方（Discord 顯示被取消），不能再記成收到
-            if task_notifications.can_acknowledge(task):
-                try:
-                    stored = await repositories.acknowledge_task(task_id, now)
-                    await audit.log_event(
-                        event_name=f"藝人收到任務｜{task.name}", action_type="更新", operator=artist.name,
-                        discord_user_id=str(interaction.user.id), target_db="Tasks", target_url=task.url,
-                        after=f"狀態：進行中｜收到時間：{now.isoformat()}｜合併通知全部收到"
-                        + ("" if stored else "｜收到時間欄位尚未建立"),
-                    )
-                except Exception:
-                    logger.exception("全部收到：寫入失敗：%s", task_id)
-                    await interaction.followup.send("❌ 收到確認寫入失敗，請稍後再試。", ephemeral=True)
-                    return
-            mine.append(task)
-            await clear_old_notifications(interaction.client, {task_id}, interaction.user.id, keep=here)
-        if not mine:
-            await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
-            return
-        lines = [task_bundle.received_bundle_line(len(mine), now)]
-        lines += [f"・{task.name}（{ui_text.deadline_text(task, now)}）" for task in mine]
-        lines.append("收到之後才發現不行，用下方「⚠️ 某一筆有問題」回報。")
+        await receive_bundle(interaction, self.bundle_id, interaction.message)
+
+
+async def receive_bundle(interaction: discord.Interaction, bundle_id: str, message) -> int:
+    """合併訊息裡還沒回報問題的每一筆都記成收到，整則收成一行（M3-27）。
+
+    合併訊息上的「全部收到／其餘 N 筆收到」和回報後確認訊息上的「其餘 N 筆收到」（M3-28）共用這裡，
+    `message` 一律是合併訊息本身。回傳這次收到幾筆。
+    """
+    artist = await repositories.find_artist_by_discord_id(interaction.user.id)
+    if artist is None:
+        await interaction.followup.send("❌ 找不到你的藝人資料，請聯絡控方。", ephemeral=True)
+        return 0
+    now = datetime.now(config.get_tenant().tz)
+    state = notification_log.shared()
+    entry = task_bundle.bundle_for(state, bundle_id)
+    reported_ids = set((entry or {}).get("reported") or [])
+    here = (message.channel.id, message.id) if message is not None else None
+    task_ids = list(entry["task_ids"]) if entry and entry.get("task_ids") else _bundle_ids_from_message(message)
+    mine: list[repositories.TaskItem] = []
+    reported: list[repositories.TaskItem] = []
+    for task_id in task_ids:
         try:
-            await interaction.message.edit(
-                content="\n".join(lines)[:2000], embed=None,
-                view=bundle_view(self.bundle_id, bundle_options(mine), received=True),
-            )
+            task = await repositories.get_task_brief(task_id)
         except Exception:
-            logger.warning("合併通知無法收合：%s", self.bundle_id)
-        logger.info("全部收到：%s 筆（%s）", len(mine), artist.name)
+            logger.exception("全部收到：讀取任務失敗：%s", task_id)
+            continue
+        if task is None or artist.page_id not in task.artist_page_ids:
+            continue
+        if task_id in reported_ids or not task.discord_visible:
+            reported.append(task)  # 這筆已經回報問題退回控方（Discord 顯示被取消），不能再記成收到
+            continue
+        if task_notifications.can_acknowledge(task):
+            try:
+                stored = await repositories.acknowledge_task(task_id, now)
+                await audit.log_event(
+                    event_name=f"藝人收到任務｜{task.name}", action_type="更新", operator=artist.name,
+                    discord_user_id=str(interaction.user.id), target_db="Tasks", target_url=task.url,
+                    after=f"狀態：進行中｜收到時間：{now.isoformat()}｜合併通知全部收到"
+                    + ("" if stored else "｜收到時間欄位尚未建立"),
+                )
+            except Exception:
+                logger.exception("全部收到：寫入失敗：%s", task_id)
+                await interaction.followup.send("❌ 收到確認寫入失敗，請稍後再試。", ephemeral=True)
+                return 0
+        mine.append(task)
+        await clear_old_notifications(interaction.client, {task_id}, interaction.user.id, keep=here)
+    if not mine:
+        await interaction.followup.send(
+            task_bundle.ALREADY_REPORTED_REPLY if reported else "❌ 這不是分派給你的任務。", ephemeral=True,
+        )
+        return 0
+    if entry is not None:
+        entry["received"] = [task.page_id for task in mine]
+        entry["reported"] = [task.page_id for task in reported]
+        notification_log.persist()
+    try:
+        await message.edit(
+            content=task_bundle.done_text(mine, reported, now, _deadline_fn()), embed=None,
+            view=bundle_view(bundle_id, bundle_options(mine), received=True),
+        )
+    except Exception:
+        logger.warning("合併通知無法收合：%s", bundle_id)
+    logger.info("全部收到：%s 筆（%s）", len(mine), artist.name)
+    return len(mine)
+
+
+async def refresh_bundle_after_concern(message, bundle_id: str, task_id: str) -> int:
+    """合併訊息裡有一筆回報了問題：原地重畫，劃掉那筆（M3-28）。回傳還有幾筆等著按收到。
+
+    狀態檔沒有這則合併訊息（例如被清掉）就不動訊息，回 0。
+    """
+    state = notification_log.shared()
+    entry = task_bundle.mark_reported(state, bundle_id, task_id)
+    notification_log.persist()
+    if entry is None or message is None:
+        return 0
+    tasks: list[repositories.TaskItem] = []
+    for tid in entry.get("task_ids") or []:
+        try:
+            task = await repositories.get_task_brief(tid)
+        except Exception:
+            logger.exception("回報後重畫合併通知：讀取任務失敗：%s", tid)
+            task = None
+        if task is not None:
+            tasks.append(task)
+    reported_ids = set(entry.get("reported") or [])
+    reported = [task for task in tasks if task.page_id in reported_ids]
+    now = datetime.now(config.get_tenant().tz)
+    received_ids = entry.get("received")
+    if received_ids is not None:
+        # 已經按過收到：只剩「某一筆有問題」，把這筆從收到清單移到已回報
+        received = [task for task in tasks if task.page_id in received_ids and task.page_id not in reported_ids]
+        await message.edit(
+            content=task_bundle.done_text(received, reported, now, _deadline_fn()), embed=None,
+            view=bundle_view(bundle_id, bundle_options(received), received=True) if received else None,
+        )
+        return 0
+    pending = [task for task in tasks if task.page_id not in reported_ids]
+    if not pending:
+        await message.edit(content=task_bundle.done_text([], reported, now, _deadline_fn()), embed=None, view=None)
+        return 0
+    await message.edit(
+        content=task_bundle.bundle_text(entry.get("kind", task_bundle.KIND_DISPATCH), tasks, _deadline_fn(), reported_ids),
+        embed=None,
+        view=bundle_view(bundle_id, bundle_options(tasks), reported=reported_ids),
+    )
+    return len(pending)
 
 
 class BundleConcernSelect(
@@ -595,7 +736,7 @@ class BundleConcernSelect(
         if not values or values[0] == "none":
             await interaction.response.defer()
             return
-        await open_concern_modal(interaction, values[0])
+        await open_concern_modal(interaction, values[0], bundle_id=self.bundle_id)
 
 # 顯示順序：藝人要行動的在前，資訊性的在後
 SECTION_ORDER = [
