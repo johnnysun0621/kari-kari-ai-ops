@@ -41,6 +41,12 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
                 b.still_overdue_counts[name] = b.still_overdue_counts.get(name, 0) + 1
 
     for task in tasks:
+        if repositories.task_awaits_ops_confirmation(task, now):
+            b.awaiting_confirmation.append(ops_briefing.task_line(
+                task.page_id, _names(task, artist_map), task.name, ui_text.deadline_text(task, now),
+                "已過截止，等你確認結案", task.url))
+
+    for task in tasks:
         if task.status == "需修改" and task.revision_deadline and task.revision_deadline < now:
             b.revision_passed.append(ops_briefing.task_line(
                 task.page_id, _names(task, artist_map), task.name,

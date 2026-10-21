@@ -340,6 +340,7 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
 SECTION_ORDER = [
     ("overdue", "🔴 已逾期"),
     ("needs_fix", "🛠 需修改"),
+    ("awaiting", "⏳ 已過截止，等公司確認"),
     ("due_soon", "⏰ 三天內截止"),
     ("open", "📋 進行中／待提交"),
     ("in_review", "📮 待審核（已提交，等公司確認）"),

@@ -226,7 +226,7 @@ def test_逾期不再即時一筆一則_改記進早報(monkeypatch):
             raise AssertionError("早報模式不私訊藝人")
 
     async def get_active_tasks():
-        return [task("t1", end=datetime(2026, 10, 1, tzinfo=TZ))]
+        return [task("t1", end=datetime(2026, 10, 1, tzinfo=TZ), open_for_submission=True)]
 
     async def get_artist_map():
         return ARTISTS
@@ -319,3 +319,18 @@ def test_briefing_drops_links_when_too_long():
     text = ops_briefing.briefing_text(date(2026, 10, 21), b)
     assert len(text) <= ops_briefing.MESSAGE_LIMIT
     assert "(<" not in text
+
+
+def test_已過截止等你確認結案():
+    """M2-14：不用交件的任務過了截止，營運早報列「等你確認結案」，附 Notion 連結。"""
+    from datetime import date
+
+    line = ops_briefing.task_line("t1", ["SOMA"], "發布：吃宵夜 POV", "截止 10/20（已過 1 天）",
+                                  "已過截止，等你確認結案", "https://www.notion.so/t1")
+    b = ops_briefing.OpsBriefing(awaiting_confirmation=[line])
+
+    text = ops_briefing.briefing_text(date(2026, 10, 21), b)
+
+    assert "⏳ **已過截止，等你確認結案**" in text
+    assert "[發布：吃宵夜 POV](<https://www.notion.so/t1>)" in text
+    assert [o.task_id for o in b.option_lines()] == ["t1"]

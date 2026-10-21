@@ -1106,6 +1106,25 @@ def task_skips_overdue(task: TaskItem) -> bool:
     return any(t in NO_OVERDUE_PROJECT_TYPES for t in task.project_types)
 
 
+# M2-14（Johnny 2026-10-21）：不用交件的任務（沒勾「是否開放提交」）有沒有做完是控方判斷的。
+# 藝人可能已經做完（例如發文已經發了），控方隔天才到 Notion 結案；中間系統若自動改「已逾期」，
+# 藝人做完了還被當成逾期。所以這類任務過了截止，系統不判逾期，狀態維持原樣，
+# 藝人早報列「⏳ 已過截止，等公司確認」、營運早報列「等你確認結案」。
+# 控方確認做完了就結案；確認真的沒做，可以延後截止日，或自己改成「已逾期」（藝人早報才出現 🔴）。
+# 要交件的任務不受影響：截止後照舊自動判逾期，藝人交件後變「待審核」。
+AWAITING_CONFIRMATION_STATUSES = {"尚未開始", "進行中", None, ""}
+
+
+def task_awaits_ops_confirmation(task: TaskItem, now: datetime) -> bool:
+    """不用交件的任務過了截止、控方還沒結案（也還沒手動改成已逾期）。"""
+    return (
+        not task.open_for_submission
+        and task.status in AWAITING_CONFIRMATION_STATUSES
+        and not task_skips_overdue(task)
+        and task_deadline_passed(task, now)
+    )
+
+
 def _is_active_task(task: TaskItem) -> bool:
     if task.status in INACTIVE_TASK_STATUSES:
         return False
@@ -1524,11 +1543,11 @@ def task_due_within(task: TaskItem, now: datetime, days: int = TASK_DUE_SOON_DAY
 def classify_tasks_for_display(tasks: list[TaskItem], now: datetime) -> dict[str, list[TaskItem]]:
     """把任務分到互斥顯示區，各區依截止日排序（無截止日排最後）。
 
-    分區優先序：待審核（已交出、球在公司）→ 逾期 → 需修改 → 即將到期 → 未完成。
+    分區優先序：待審核（已交出、球在公司）→ 已過截止等公司確認（M2-14）→ 逾期 → 需修改 → 即將到期 → 未完成。
     已完成/已取消/已封存不顯示。
     """
     buckets: dict[str, list[TaskItem]] = {
-        "overdue": [], "needs_fix": [], "due_soon": [], "in_review": [], "open": [],
+        "overdue": [], "needs_fix": [], "awaiting": [], "due_soon": [], "in_review": [], "open": [],
     }
     for task in tasks:
         if task.status in INACTIVE_TASK_STATUSES:
@@ -1540,6 +1559,8 @@ def classify_tasks_for_display(tasks: list[TaskItem], now: datetime) -> dict[str
         )
         if task.status == "待審核":
             buckets["in_review"].append(task)
+        elif task_awaits_ops_confirmation(task, now):
+            buckets["awaiting"].append(task)
         elif is_overdue:
             buckets["overdue"].append(task)
         elif task.status == "需修改":
@@ -1597,7 +1618,10 @@ def compute_due_reminder_stages(
     if task.status in INACTIVE_TASK_STATUSES or task.status == "待審核" or not deadline:
         return []
     if task_deadline_passed(task, now):
-        return [] if task_skips_overdue(task) else [OVERDUE_STAGE]
+        # 課程任務（M5-03）與不用交件的任務（M2-14）過了截止都不判逾期：不改狀態、不升級
+        if task_skips_overdue(task) or task_awaits_ops_confirmation(task, now):
+            return []
+        return [OVERDUE_STAGE]
     if default_rules is None:
         default_rules = config.get_tenant().default_reminder_rules
     active_rules = set(task.reminder_rules) | set(default_rules)

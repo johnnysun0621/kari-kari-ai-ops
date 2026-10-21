@@ -203,10 +203,12 @@ def task(
     end: datetime | None = None,
     start_has_time: bool = True,
     end_has_time: bool = True,
+    open_for_submission: bool = True,
 ):
     return repositories.TaskItem(
         page_id=page_id,
         name="辰葳錄音",
+        open_for_submission=open_for_submission,
         status=status,
         task_type=task_type,
         course_category=course_category,
@@ -1283,9 +1285,11 @@ def display_task(
     end_has_time: bool = False,
     task_type: str | None = None,
     project_types: list[str] | None = None,
+    open_for_submission: bool = True,
 ):
     return repositories.TaskItem(
         page_id=f"task-{name}",
+        open_for_submission=open_for_submission,
         name=name,
         status=status,
         task_type=task_type,
@@ -1365,6 +1369,21 @@ class TestClassifyTasksForDisplay:
         assert [t.name for t in buckets["needs_fix"]] == ["要修"]
         assert [t.name for t in buckets["due_soon"]] == ["快到"]
         assert [t.name for t in buckets["open"]] == ["普通"]
+
+    def test_non_submission_task_past_deadline_awaits_confirmation(self):
+        """M2-14：不用交件的任務過了截止，不當逾期，列「已過截止，等公司確認」。"""
+        tasks = [
+            display_task("發文", status="進行中", end=datetime(2026, 7, 1, tzinfo=config.TZ), open_for_submission=False),
+            display_task("要交件", status="進行中", end=datetime(2026, 7, 1, tzinfo=config.TZ)),
+            display_task("控方改成逾期", status="已逾期", open_for_submission=False),
+            display_task("還沒到", status="進行中", end=datetime(2026, 8, 1, tzinfo=config.TZ), open_for_submission=False),
+        ]
+
+        buckets = repositories.classify_tasks_for_display(tasks, NOW)
+
+        assert [t.name for t in buckets["awaiting"]] == ["發文"]
+        assert {t.name for t in buckets["overdue"]} == {"要交件", "控方改成逾期"}
+        assert [t.name for t in buckets["open"]] == ["還沒到"]
 
     def test_sorts_by_deadline_with_none_last(self):
         tasks = [

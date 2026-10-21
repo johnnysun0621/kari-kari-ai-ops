@@ -209,7 +209,7 @@ async def send_daily_briefings(client: discord.Client, now: datetime) -> dict:
         if not artist.discord_user_id:
             continue
         previous = daily_briefing.briefing_for(state, artist.discord_user_id)
-        items = daily_briefing.build_items(artist.page_id, tasks, queued, acks)
+        items = daily_briefing.build_items(artist.page_id, tasks, queued, acks, now)
         if previous and previous.get("day") == _day_code(day):
             continue  # 今天已發過（重啟後同一天不重發）
         if (previous and previous.get("day") and not previous.get("acked_at") and previous.get("task_ids")
@@ -274,7 +274,7 @@ async def _send_staff_briefings(client, state: dict, tasks, queued: set[str], da
         if previous and previous.get("day") == _day_code(day):
             continue
         await _delete_previous(client, previous)
-        items = daily_briefing.build_staff_items(person.page_id, tasks, queued)
+        items = daily_briefing.build_staff_items(person.page_id, tasks, queued, now)
         if not items:
             if previous:
                 state.get("briefings", {}).pop(str(person.discord_user_id), None)

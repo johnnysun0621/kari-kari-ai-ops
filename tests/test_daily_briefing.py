@@ -28,11 +28,11 @@ def isolated(tmp_path, monkeypatch):
 
 
 def task(page_id, status="進行中", *, end=datetime(2026, 10, 25, tzinfo=TZ), artists=("a1",), visible=True,
-         acknowledged=True, name=None):
+         acknowledged=True, name=None, open_for_submission=False):
     return repositories.TaskItem(
         page_id=page_id, name=name or f"任務{page_id}", status=status, task_type=None,
         artist_page_ids=list(artists), discord_visible=visible, end=end,
-        discord_acknowledged_at=NOW if acknowledged else None,
+        discord_acknowledged_at=NOW if acknowledged else None, open_for_submission=open_for_submission,
     )
 
 
@@ -157,12 +157,36 @@ def test_事前提醒排進早報_不私訊藝人(monkeypatch):
 def test_逾期仍改狀態_但不私訊藝人(monkeypatch):
     state = notification_log.shared()
     state["reminders_baseline_done"] = True
-    h = LoopHarness(monkeypatch, [task("t1", end=datetime(2026, 10, 1, tzinfo=TZ))])
+    h = LoopHarness(monkeypatch, [task("t1", end=datetime(2026, 10, 1, tzinfo=TZ), open_for_submission=True)])
 
     h.run()
 
     assert h.status_updates == [("t1", "已逾期")]
     assert h.dms == []
+
+
+def test_不用交件的任務過截止_不改狀態_早報列等公司確認(monkeypatch):
+    """M2-14：藝人可能已經做完（例如發文），控方還沒結案；系統不自動改已逾期。"""
+    state = notification_log.shared()
+    state["reminders_baseline_done"] = True
+    late = task("t1", end=datetime(2026, 10, 1, tzinfo=TZ))
+    h = LoopHarness(monkeypatch, [late])
+
+    h.run()
+
+    assert h.status_updates == []
+    assert h.dms == []
+    items = daily_briefing.build_items("a1", [late], set(), {}, NOW)
+    assert [i.section for i in items] == [daily_briefing.SECTION_AWAITING]
+    text = daily_briefing.briefing_text(NOW.date(), items, lambda t: "截止 10/1（已過 20 天）")
+    assert "⏳ **已過截止，等公司確認**（1）" in text
+    assert daily_briefing.AWAITING_NOTE in text
+    assert "已逾期" not in text
+
+
+def test_控方手動改成已逾期_早報才列紅色():
+    items = daily_briefing.build_items("a1", [task("t1", "已逾期", end=datetime(2026, 10, 1, tzinfo=TZ))], set(), {}, NOW)
+    assert [i.section for i in items] == [daily_briefing.SECTION_OVERDUE]
 
 
 # ---------- 發早報 ----------

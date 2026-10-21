@@ -48,6 +48,7 @@ class OpsLine:
 @dataclass
 class OpsBriefing:
     new_overdue: list[OpsLine] = field(default_factory=list)
+    awaiting_confirmation: list[OpsLine] = field(default_factory=list)  # M2-14
     still_overdue_counts: dict[str, int] = field(default_factory=dict)
     revision_passed: list[OpsLine] = field(default_factory=list)
     review_unassigned: list[OpsLine] = field(default_factory=list)
@@ -59,13 +60,13 @@ class OpsBriefing:
 
     def is_empty(self) -> bool:
         return not any([
-            self.new_overdue, self.still_overdue_counts, self.revision_passed, self.review_unassigned,
-            self.unreceived, self.unread_artists, self.teacher_notes, self.pools, self.publish_waiting,
+            self.new_overdue, self.awaiting_confirmation, self.still_overdue_counts, self.revision_passed,
+            self.review_unassigned, self.unreceived, self.unread_artists, self.teacher_notes, self.pools, self.publish_waiting,
         ])
 
     def option_lines(self) -> list[OpsLine]:
         seen, picked = set(), []
-        for line in [*self.new_overdue, *self.revision_passed, *self.review_unassigned, *self.unreceived, *self.publish_waiting]:
+        for line in [*self.awaiting_confirmation, *self.new_overdue, *self.revision_passed, *self.review_unassigned, *self.unreceived, *self.publish_waiting]:
             if line.task_id in seen:
                 continue
             seen.add(line.task_id)
@@ -115,6 +116,9 @@ def _briefing_text(day: date, b: OpsBriefing) -> str:
     if b.is_empty():
         lines.append("✅ 今天沒有需要注意的事。")
         return "\n".join(lines)
+    if b.awaiting_confirmation:
+        lines += _section("⏳ **已過截止，等你確認結案**（做完了就結案；沒做可以延期限或改成「已逾期」）",
+                          [line.linked for line in b.awaiting_confirmation])
     if b.new_overdue:
         lines += _section("🔴 **新逾期**", [line.linked for line in b.new_overdue])
     if b.still_overdue_counts:

@@ -14,6 +14,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
+import config
 from services import repositories, task_notifications
 from services.notion_links import strip_notion_links
 
@@ -21,15 +22,18 @@ SECTION_OVERDUE = "overdue"
 SECTION_NEEDS_FIX = "needs_fix"
 SECTION_DUE_SOON = "due_soon"
 SECTION_UNRECEIVED = "unreceived"
+SECTION_AWAITING = "awaiting"  # M2-14：不用交件的任務過了截止，等公司確認
+AWAITING_NOTE = "還沒做完請盡快完成；已經做完不用理會，公司會確認。"
 SECTION_TITLES = {
     SECTION_OVERDUE: "🔴 **已逾期**",
     SECTION_NEEDS_FIX: "🛠 **需修改**",
+    SECTION_AWAITING: "⏳ **已過截止，等公司確認**",
     SECTION_DUE_SOON: "⏰ **快到期**",
     SECTION_UNRECEIVED: "📌 **還沒按收到**",
 }
-SECTION_ORDER = (SECTION_OVERDUE, SECTION_NEEDS_FIX, SECTION_DUE_SOON, SECTION_UNRECEIVED)
+SECTION_ORDER = (SECTION_OVERDUE, SECTION_NEEDS_FIX, SECTION_AWAITING, SECTION_DUE_SOON, SECTION_UNRECEIVED)
 SECTION_SHORT = {
-    SECTION_OVERDUE: "已逾期", SECTION_NEEDS_FIX: "需修改",
+    SECTION_OVERDUE: "已逾期", SECTION_NEEDS_FIX: "需修改", SECTION_AWAITING: "已過截止，等公司確認",
     SECTION_DUE_SOON: "快到期", SECTION_UNRECEIVED: "還沒按收到",
 }
 MAX_ITEMS = 25  # Discord 下拉選單最多 25 個選項
@@ -48,13 +52,15 @@ def briefing_due(now: datetime, last_date: str | None, hour: int) -> bool:
     return now.hour >= hour and last_date != now.date().isoformat()
 
 
-def _section_for(task: repositories.TaskItem, queued: set[str]) -> str | None:
+def _section_for(task: repositories.TaskItem, queued: set[str], now: datetime) -> str | None:
     if task.status in repositories.INACTIVE_TASK_STATUSES or task.status == "待審核":
         return None
     if task.status == "已逾期":
         return SECTION_OVERDUE
     if task.status == "需修改":
         return SECTION_NEEDS_FIX
+    if repositories.task_awaits_ops_confirmation(task, now):
+        return SECTION_AWAITING
     if task.page_id in queued:
         return SECTION_DUE_SOON
     if task.discord_acknowledged_at is None and task_notifications.can_acknowledge(task):
@@ -67,13 +73,15 @@ def build_items(
     tasks: list[repositories.TaskItem],
     queued_task_ids: set[str],
     acks: dict,
+    now: datetime | None = None,
 ) -> list[BriefingItem]:
     """這位藝人今天早報要列的任務，依區塊排序、每筆只出現一次，最多 MAX_ITEMS 筆。"""
+    now = now or datetime.now(config.TZ)
     items: list[BriefingItem] = []
     for task in tasks:
         if not task.discord_visible or artist_page_id not in task.artist_page_ids:
             continue
-        section = _section_for(task, queued_task_ids)
+        section = _section_for(task, queued_task_ids, now)
         if section is None:
             continue
         acked_on = (acks.get(task.page_id) or {}).get(artist_page_id)
@@ -90,13 +98,15 @@ def build_staff_items(
     person_page_id: str,
     tasks: list[repositories.TaskItem],
     queued_task_ids: set[str],
+    now: datetime | None = None,
 ) -> list[BriefingItem]:
-    """相關同仁（M6-05）的早報：跟自己有關的已逾期、需修改、快到期；同仁不用按收到，所以沒有那一區。"""
+    """相關同仁（M6-05）的早報：跟自己有關的已逾期、需修改、已過截止等確認、快到期；同仁不用按收到，所以沒有那一區。"""
+    now = now or datetime.now(config.TZ)
     items = []
     for task in tasks:
         if not task.discord_visible or person_page_id not in task.staff_page_ids:
             continue
-        section = _section_for(task, queued_task_ids)
+        section = _section_for(task, queued_task_ids, now)
         if section in (None, SECTION_UNRECEIVED):
             continue
         items.append(BriefingItem(task, section))
@@ -140,6 +150,8 @@ def briefing_text(
         for item in section_items:
             name = strip_notion_links(item.task.name)
             lines.append(f"・{name}｜{deadline_text(item.task)}{_acked_tag(item.acked_on, day)}")
+        if section == SECTION_AWAITING:
+            lines.append(AWAITING_NOTE)
     if extra_count:
         lines.append(f"\n（另有 {extra_count} 筆，完整清單請用 `/我的任務`）")
     lines.append("\n" + (footer or "想看某一筆的內容，用下方選單；看完按「👌 我都看到了」。要交件請用 `/我的任務`。"))

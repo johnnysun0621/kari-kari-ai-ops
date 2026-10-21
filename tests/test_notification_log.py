@@ -187,6 +187,7 @@ def reminder_task(page_id="t1", end=datetime(2026, 10, 13, tzinfo=TZ), status="�
     return repositories.TaskItem(
         page_id=page_id, name="任務", status=status, task_type=None,
         artist_page_ids=["a1"], discord_visible=True, end=end,
+        open_for_submission=True,  # 要交件的任務才會自動判逾期（M2-14）
     )
 
 
