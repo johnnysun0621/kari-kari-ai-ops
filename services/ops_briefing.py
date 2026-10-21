@@ -26,6 +26,7 @@ MESSAGE_LIMIT = 1900
 SECTION_LINES = 8  # 每區最多列幾筆，其餘寫「另有 N 筆」
 MAX_OPTIONS = 25
 UNRECEIVED_DAYS = 3
+AWAITING_HINT = "做完了就結案；沒做可以延期限或改成「已逾期」。"
 
 
 @dataclass
@@ -117,8 +118,9 @@ def _briefing_text(day: date, b: OpsBriefing) -> str:
         lines.append("✅ 今天沒有需要注意的事。")
         return "\n".join(lines)
     if b.awaiting_confirmation:
-        lines += _section("⏳ **已過截止，等你確認結案**（做完了就結案；沒做可以延期限或改成「已逾期」）",
-                          [line.linked for line in b.awaiting_confirmation])
+        section = _section("⏳ **已過截止，等你確認結案**", [line.linked for line in b.awaiting_confirmation])
+        section.insert(2, AWAITING_HINT)  # 標題下面一行說明怎麼處理
+        lines += section
     if b.new_overdue:
         lines += _section("🔴 **新逾期**", [line.linked for line in b.new_overdue])
     if b.still_overdue_counts:

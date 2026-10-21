@@ -331,6 +331,6 @@ def test_已過截止等你確認結案():
 
     text = ops_briefing.briefing_text(date(2026, 10, 21), b)
 
-    assert "⏳ **已過截止，等你確認結案**" in text
+    assert "⏳ **已過截止，等你確認結案**（1）\n" + ops_briefing.AWAITING_HINT + "\n・SOMA｜" in text
     assert "[發布：吃宵夜 POV](<https://www.notion.so/t1>)" in text
     assert [o.task_id for o in b.option_lines()] == ["t1"]
