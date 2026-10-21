@@ -27,6 +27,7 @@ Discord 排課／營運 bot（Python + discord.py + Notion API）。KariKari 是
 |---|---|
 | [ADMIN_SOP.md](docs/sop/ADMIN_SOP.md) | 控方操作順序＋Notion 任務欄位對照表 |
 | [ARTIST_SOP.md](docs/sop/ARTIST_SOP.md) | 藝人四件事：回報時間、確認任務、交作業、問小律 |
+| [docs/sop/README.md](docs/sop/README.md) | SOP 分頁怎麼寫：一頁一主題放 `ops/`、`artist/`，完整版由 `scripts/build_sop.py` 產生，不要直接改 |
 
 **`docs/operations/`**（描述系統目前實際行為，改功能要同步更新）：
 

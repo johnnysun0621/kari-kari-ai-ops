@@ -1,7 +1,7 @@
 # 工程架構
 
 這份文件給工程師與 AI 協作者理解程式切分方式。  
-操作 SOP 看 [OPERATIONS_PLAYBOOK.md](../operations/OPERATIONS_PLAYBOOK.md)，Discord 指令看 [DISCORD_COMMANDS.md](../operations/DISCORD_COMMANDS.md)，Notion 欄位看 [NOTION_SCHEMA.md](NOTION_SCHEMA.md)。
+操作 SOP 看 [控方 SOP](../sop/ADMIN_SOP.md)（分頁在 `docs/sop/ops/`），工程設定看 [SETTINGS.md](../operations/SETTINGS.md)，Discord 指令看 [DISCORD_COMMANDS.md](../operations/DISCORD_COMMANDS.md)，Notion 欄位看 [NOTION_SCHEMA.md](NOTION_SCHEMA.md)。
 
 ## 系統定位
 

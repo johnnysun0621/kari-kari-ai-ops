@@ -96,7 +96,7 @@ pgrep -fl "python.*bot.py"
 - 改 slash command 時，同步更新 [DISCORD_COMMANDS.md](../operations/DISCORD_COMMANDS.md)。
 - 改頻道分流時，同步更新 [DISCORD_CHANNELS.md](../operations/DISCORD_CHANNELS.md)。
 - 改 Notion 讀寫欄位時，同步更新 [NOTION_SCHEMA.md](NOTION_SCHEMA.md)。
-- 改營運流程時，同步更新 [OPERATIONS_PLAYBOOK.md](../operations/OPERATIONS_PLAYBOOK.md)。
+- 改營運流程時，改 `docs/sop/ops/`、`docs/sop/artist/` 的分頁，再執行 `scripts/build_sop.py` 產生完整版（格式見 [docs/sop/README.md](../sop/README.md)）。
 - 改架構或模組責任時，同步更新 [ARCHITECTURE.md](ARCHITECTURE.md)。
 - 改驗收流程時，同步更新 [TESTING.md](../operations/TESTING.md)。
 - 改產品方向或平轉原則時，同步更新 [PROJECT_PRINCIPLES.md](PROJECT_PRINCIPLES.md)。
@@ -131,11 +131,11 @@ pgrep -fl "python.*bot.py"
 | 變更類型 | 必改文件 |
 |---|---|
 | 新增 / 修改 slash command | `DISCORD_COMMANDS.md` |
-| 調整 Discord 頻道或權限 | `DISCORD_CHANNELS.md`、`OPERATIONS_PLAYBOOK.md` |
+| 調整 Discord 頻道或權限 | `DISCORD_CHANNELS.md`、`SETTINGS.md`、`sop/ops/01-開始之前.md` |
 | 改 Notion 欄位或資料庫用途 | `NOTION_SCHEMA.md` |
-| 改交件流程 / 檔案大小分界 | `SUBMISSION_FLOW.md`、`DISCORD_COMMANDS.md`、`OPERATIONS_PLAYBOOK.md` |
-| 改營運流程 | `OPERATIONS_PLAYBOOK.md`、`sop/ADMIN_SOP.md`、`sop/ARTIST_SOP.md` |
-| 改提醒／催辦時間或對象 | `sop/ADMIN_SOP.md`（系統會自己做的事、時間設定一覽）、`sop/ARTIST_SOP.md`、`DISCORD_COMMANDS.md`、`DISCORD_CHANNELS.md` |
+| 改交件流程 / 檔案大小分界 | `SUBMISSION_FLOW.md`、`DISCORD_COMMANDS.md`、`sop/ops/09-收件與審核.md`、`sop/artist/05-交作業.md` |
+| 改營運流程 | `sop/ops/`、`sop/artist/` 分頁，再跑 `scripts/build_sop.py` |
+| 改提醒／催辦時間或對象 | `sop/ops/14-系統自動排程.md`、`sop/ops/18-時間與期限一覽.md`、`sop/artist/04-每日早報.md`、`SETTINGS.md`、`DISCORD_COMMANDS.md` |
 | 改工程架構 | `ARCHITECTURE.md` |
 | 改測試方式或驗收情境 | `TESTING.md` |
 | 改產品方向 / 平轉原則 | `PROJECT_PRINCIPLES.md` |

@@ -38,6 +38,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 |---|---|
 | [ADMIN_SOP.md](docs/sop/ADMIN_SOP.md) | 控方操作 SOP（含 Notion 任務欄位對照表）|
 | [ARTIST_SOP.md](docs/sop/ARTIST_SOP.md) | 藝人操作 SOP |
+| [docs/sop/README.md](docs/sop/README.md) | SOP 分頁怎麼寫：一頁一主題放 `ops/`、`artist/`，完整版由 `scripts/build_sop.py` 產生，不要直接改 |
 
 **[docs/operations/](docs/operations/)**
 
@@ -45,7 +46,7 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 |---|---|
 | [DISCORD_COMMANDS.md](docs/operations/DISCORD_COMMANDS.md) | Discord slash command 使用手冊（指令行為的權威來源） |
 | [DISCORD_CHANNELS.md](docs/operations/DISCORD_CHANNELS.md) | Discord 頻道組成與 slash command 對應 |
-| [OPERATIONS_PLAYBOOK.md](docs/operations/OPERATIONS_PLAYBOOK.md) | 控方營運 SOP（完整版，含流程背景與判斷原則）|
+| [SETTINGS.md](docs/operations/SETTINGS.md) | 設定與技術細節（`.env`、頻道設定、排查記錄檔）|
 | [SERVER_MIGRATION.md](docs/operations/SERVER_MIGRATION.md) | Discord 正式伺服器初始化與平轉 SOP |
 | [CLIENT_SETUP_REQUIREMENTS.md](docs/operations/CLIENT_SETUP_REQUIREMENTS.md) | 導入時客戶需要準備的帳號與權限 |
 | [SUBMISSION_FLOW.md](docs/operations/SUBMISSION_FLOW.md) | 任務提交（一律上傳公司 Drive）、Drive 資料夾、審核通知 |
@@ -117,7 +118,7 @@ KariKari 的 Data Source ID 已內建在 `config.py`；Notion 端重建資料庫
 | `PUBLISH_CONFIRM_DIGEST_WEEKDAY`／`_HOUR`／`_AFTER_DAYS` | 發文待確認發布彙整：星期幾（0＝週一，`daily`）、幾點、截止日過幾天 |
 | `HARD_BLOCK_TASK_TYPES`／`NO_OVERDUE_PROJECT_TYPES` | 硬擋藝人時段的任務類型、不判逾期的專案類型 |
 
-完整時間設定與預設值見 [ADMIN_SOP.md](docs/sop/ADMIN_SOP.md) 的「所有時間設定一覽」。
+完整時間設定與預設值見 [SETTINGS.md](docs/operations/SETTINGS.md)。
 
 ## Discord / Notion 前置設定
 
