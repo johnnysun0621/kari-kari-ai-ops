@@ -251,3 +251,50 @@ def test_合併文案與看詳細拿掉單筆卡的按鈕提示():
 
     detail = task_notifications.strip_artist_prompts(task_notifications.notification_message(task("t1")))
     assert "請先按" not in detail and "任務t1" in detail
+
+
+def test_單筆卡按收到_不刪還有其他任務的舊合併訊息(repos):
+    bot = FakeBot()
+    send(bot, [task("t1"), task("t2")])  # 合併訊息 1001
+    send(bot, [task("t1")])  # 重送 t1：單筆卡 1002；1001 因為還有 t2 先留著
+
+    async def edit(**kw):
+        return None
+
+    current = SimpleNamespace(id=1002, channel=SimpleNamespace(id=9), content="卡", edit=edit)
+    asyncio.run(tasks_artist.mark_previous_notifications_received(bot, "t1", 100, datetime(2026, 10, 21, tzinfo=TZ), current, "✅"))
+    assert 1001 not in bot.deleted, "合併訊息裡還有 t2，不能整則刪掉"
+
+
+def test_回報問題退回的那筆_全部收到時不會被記成收到(repos, monkeypatch):
+    bot = FakeBot()
+    send(bot, [task("t1"), task("t2")])
+    bundle_id = ids(bot.sent[0][2])[0].split(":")[1]
+    returned = repositories.TaskItem(**{**task("t2").__dict__, "discord_visible": False})
+    tasks = {"t1": task("t1"), "t2": returned}
+    acked = []
+
+    async def brief(tid):
+        return tasks[tid]
+
+    async def find_artist(_uid):
+        return ARTISTS["a1"]
+
+    async def ack(tid, at):
+        acked.append(tid)
+        return True
+
+    async def edit(**kw):
+        return None
+
+    async def defer():
+        return None
+
+    monkeypatch.setattr(repositories, "get_task_brief", brief)
+    monkeypatch.setattr(repositories, "find_artist_by_discord_id", find_artist)
+    monkeypatch.setattr(repositories, "acknowledge_task", ack)
+    message = SimpleNamespace(id=1001, channel=SimpleNamespace(id=9), components=[], edit=edit)
+    interaction = SimpleNamespace(user=SimpleNamespace(id=100), client=bot, message=message,
+                                  response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
+    asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
+    assert acked == ["t1"]

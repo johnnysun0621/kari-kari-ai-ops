@@ -179,11 +179,7 @@ async def mark_previous_notifications_received(
     2026-10-20（M3-24）：原本每則舊通知各加一行「✅ 已收到」，私訊裡會疊成一排，改成只留一行。
     只動這位藝人自己的訊息，不影響其他任務、其他藝人。訊息被刪或拿不到時略過，回傳處理了幾則。
     """
-    state = notification_log.shared()
-    targets = {(m["channel_id"], m["message_id"]) for m in notification_log.messages_for(state, task_id, user_id)}
     current_key = (current_message.channel.id, current_message.id) if current_message is not None else None
-    if current_key:
-        targets.discard(current_key)
     handled = 0
     if current_message is not None:
         try:
@@ -192,16 +188,8 @@ async def mark_previous_notifications_received(
             handled += 1
         except Exception:
             logger.warning("任務通知無法收合：%s／%s", task_id, current_message.id)
-    for channel_id, message_id in targets:
-        try:
-            await client.get_partial_messageable(channel_id).get_partial_message(message_id).delete()
-            handled += 1
-        except discord.NotFound:
-            pass
-        except Exception:
-            logger.warning("舊任務通知無法刪除：%s／%s", task_id, message_id)
-    notification_log.forget_messages(state, task_id, user_id)
-    notification_log.persist()
+    # 舊通知刪掉；但包含這筆的舊合併訊息裡還有別的任務沒處理，就保留（M3-27）
+    handled += await clear_old_notifications(client, {task_id}, user_id, keep=current_key)
     return handled
 
 
@@ -551,6 +539,8 @@ class BundleReceiveButton(
                 continue
             if task is None or artist.page_id not in task.artist_page_ids:
                 continue
+            if not task.discord_visible:
+                continue  # 這筆已經回報問題退回控方（Discord 顯示被取消），不能再記成收到
             if task_notifications.can_acknowledge(task):
                 try:
                     stored = await repositories.acknowledge_task(task_id, now)
