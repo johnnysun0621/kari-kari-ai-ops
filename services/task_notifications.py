@@ -12,12 +12,16 @@ ASSIGNMENT_STATE_PATH = Path(".state/task_assignment_notifications.json")
 # 提交方式已全部停用（M4-03）：所有交件一律上傳到 Bot 提供的公司 Drive 資料夾。
 SUBMIT_GUIDE = "需要交件時，請用 `/我的任務` → 提交任務，檔案上傳到 Bot 提供的公司 Drive 資料夾。"
 STAFF_HEADER = "👥 同仁知會：你是這個任務的相關同仁，這則僅供通知，不需要按收到。"
+# 只對藝人有意義的按鈕提示：同仁沒有按鈕，留著會跟上面那行矛盾
+_ARTIST_ONLY_PROMPTS = re.compile(
+    r"請先按「收到任務」確認你已看到這項(?:任務|作業)。|\n?看到這則提醒請按下方「收到通知」，讓控方知道你已掌握進度。"
+)
 
 
 def staff_message(artist_content: str) -> str:
     """M6-05：發給相關同仁的版本。沿用藝人那份內容（同樣不含 Notion 網址），
-    拿掉只對藝人有意義的交件指引——同仁不在 Artists，/我的任務 查不到這筆。"""
-    body = artist_content.replace(SUBMIT_GUIDE, "").strip()
+    拿掉只對藝人有意義的交件指引與按鈕提示——同仁不在 Artists，/我的任務 查不到這筆，也沒有按鈕。"""
+    body = _ARTIST_ONLY_PROMPTS.sub("", artist_content.replace(SUBMIT_GUIDE, "")).strip()
     return f"{STAFF_HEADER}\n\n{body}"[:2000]
 
 

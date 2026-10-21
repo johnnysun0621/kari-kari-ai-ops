@@ -154,3 +154,18 @@ def test_non_notion_links_survive_for_artists():
 
     assert "https://drive.google.com/file/xyz" in text
     assert "https://youtu.be/abc123" in text
+
+
+def test_staff_message_has_no_button_prompts():
+    """同仁沒有按鈕：派發與提醒訊息裡「請先按收到任務／收到通知」要拿掉，不然會跟開頭的「不需要按收到」矛盾。"""
+    task = _task()
+    for artist_text in (
+        task_notifications.notification_message(task),
+        task_notifications.assignment_notification_message(task),
+        task_notifications.reminder_message(task, "3 天前", "10/25"),
+    ):
+        staff_text = task_notifications.staff_message(artist_text)
+        assert "不需要按收到" in staff_text
+        assert "請先按" not in staff_text
+        assert "收到通知" not in staff_text
+        assert task.name in staff_text
