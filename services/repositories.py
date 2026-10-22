@@ -67,7 +67,8 @@ def _relation(page_ids: list[str]) -> dict:
 
 def _read_title(page: dict, name: str) -> str:
     items = page["properties"].get(name, {}).get("title", [])
-    return "".join(i.get("plain_text", "") for i in items)
+    # 標題前後的空白、換行一律拿掉：Notion 標題尾巴多按一個 Enter，通知裡就會被切成兩行（2026-10-22 UAT）
+    return "".join(i.get("plain_text", "") for i in items).strip()
 
 
 def _read_rich_text(page: dict, name: str) -> str:
