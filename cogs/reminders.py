@@ -70,10 +70,12 @@ class RemindersCog(commands.Cog):
         try:
             await self._check_monthly_pool_deadlines()
             await self._check_scheduling_sla()
+            # 批次重送排在派發前面：同一筆剛勾 Discord 顯示又勾重送通知時，只送一次（2026-10-22 UAT），
+            # 重送送完會寫 Discord 通知時間，派發那步就會略過它
+            await self._check_batch_resend()
             await self._check_task_dispatch_notifications()
             await self._check_task_assignment_notifications()
             await self._check_unacknowledged_task_notifications()
-            await self._check_batch_resend()
             await self._check_drive_health()
             await self._check_daily_briefing()
             await self._check_ops_briefing()
@@ -250,7 +252,9 @@ class RemindersCog(commands.Cog):
         task_notifications.save_state(next_state)
         from cogs.tasks_artist import send_task_notifications
 
-        dispatchable = [task for task in unseen if task.discord_visible]
+        # 這一輪批次重送剛送過的不再送（Notion 查詢可能還沒反映剛寫的 Discord 通知時間）
+        resent = getattr(self, "_resent_this_round", set())
+        dispatchable = [task for task in unseen if task.discord_visible and task.page_id not in resent]
         # 整輪一起送：同一位藝人這一輪有好幾筆就合併成一則（M3-27）
         outcomes = await send_task_notifications(self.bot, dispatchable) if dispatchable else {}
         for task in dispatchable:
@@ -403,6 +407,7 @@ class RemindersCog(commands.Cog):
 
         先取消勾選再送：送到一半出錯時也不會每輪無限重送。已結案或沒開 Discord 顯示的略過。
         """
+        self._resent_this_round = set()
         flagged = await repositories.get_tasks_flagged_for_resend()
         if not flagged:
             return  # None＝欄位還沒建；空清單＝沒人勾
@@ -439,6 +444,7 @@ class RemindersCog(commands.Cog):
             if outcome is None:
                 results.append(f"❌ {task.name}：找不到有效的關聯藝人或 Discord User ID")
                 continue
+            self._resent_this_round.add(task.page_id)
             results.append(f"✅ {task.name}：已重送 {outcome.sent}／{len(outcome.notifyable_artists)} 位")
             await audit.log_event(
                 event_name=f"批次重送任務通知｜{task.name}",

@@ -87,3 +87,15 @@ def test_查詢時欄位不存在回None(monkeypatch):
 
     monkeypatch.setattr(notion_api, "query_data_source", missing)
     assert asyncio.run(repositories.get_tasks_flagged_for_resend()) is None
+
+
+def test_剛重送的記下來_同一輪派發不再送一次(monkeypatch):
+    import inspect
+
+    h = Harness(monkeypatch, [task("1"), task("2", visible=False)])
+    cog = SimpleNamespace(bot=None, _admin_channel=lambda: "admin")
+    asyncio.run(reminders_cog.RemindersCog._check_batch_resend(cog))
+    assert cog._resent_this_round == {"1"}
+    # 批次重送排在派發前面（2026-10-22 UAT：同時勾 Discord 顯示和重送通知，A1 被送了兩次）
+    source = inspect.getsource(reminders_cog.RemindersCog.check_loop.coro)
+    assert source.index("_check_batch_resend") < source.index("_check_task_dispatch_notifications")
