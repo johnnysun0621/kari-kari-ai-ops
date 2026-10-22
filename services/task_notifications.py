@@ -444,4 +444,5 @@ def acknowledgement_props(acknowledged_at: datetime) -> dict:
 
 
 def can_acknowledge(task: TaskItem) -> bool:
-    return task.status in {"尚未開始", "待提交", "進行中"}
+    # 任務狀態留空＝控方建任務時沒選，當作尚未開始（2026-10-22 UAT：空白的按收到沒寫進 Notion）
+    return task.status in {"尚未開始", "待提交", "進行中", None, ""}

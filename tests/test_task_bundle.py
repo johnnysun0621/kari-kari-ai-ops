@@ -465,3 +465,11 @@ def test_已回報過的任務再按回報_直接說已回報(monkeypatch):
     interaction, calls = _concern_interaction()
     asyncio.run(tasks_artist.open_concern_modal(interaction, "t1"))
     assert "modal" not in calls and calls["message"] == task_bundle.ALREADY_REPORTED_REPLY
+
+
+def test_任務狀態空白_按收到也會寫入Notion():
+    from services import task_notifications
+
+    assert task_notifications.can_acknowledge(task("t1", status=None))
+    assert task_notifications.can_acknowledge(task("t1", status=""))
+    assert not task_notifications.can_acknowledge(task("t1", status="待審核"))
