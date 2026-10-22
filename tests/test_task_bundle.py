@@ -473,3 +473,17 @@ def test_任務狀態空白_按收到也會寫入Notion():
     assert task_notifications.can_acknowledge(task("t1", status=None))
     assert task_notifications.can_acknowledge(task("t1", status=""))
     assert not task_notifications.can_acknowledge(task("t1", status="待審核"))
+
+
+def test_收合的那則仍被記著_之後重送會刪掉(repos):
+    bot = FakeBot()
+    send(bot, [task("t1")])  # 單筆卡 1001
+
+    async def edit(**kw):
+        return None
+
+    current = SimpleNamespace(id=1001, channel=SimpleNamespace(id=9), content="卡", edit=edit)
+    asyncio.run(tasks_artist.mark_previous_notifications_received(bot, "t1", 100, datetime(2026, 10, 22, tzinfo=TZ), current, "✅"))
+    assert 1001 not in bot.deleted
+    send(bot, [task("t1")])  # 控方重送：收合的舊卡也要清掉
+    assert 1001 in bot.deleted

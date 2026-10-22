@@ -132,7 +132,8 @@ class TestMarkReceived:
         assert [c.custom_id for c in current.edits[-1]["view"].children] == ["task_concern:t1"]
         assert old1.deleted and old2.deleted and not current.deleted
         assert not other_task.deleted and other_task.edits == []  # 別的任務不受影響
-        assert notification_log.messages_for(state, "t1", 100) == []
+        # 收成一行的那則繼續記著，控方之後重送時才刪得掉（2026-10-22 UAT）
+        assert [m["message_id"] for m in notification_log.messages_for(state, "t1", 100)] == [1]
 
     def test_按的那一則就算沒被紀錄也會處理(self):
         current = FakeMessage(9, 7)

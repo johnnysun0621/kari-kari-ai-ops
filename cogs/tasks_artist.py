@@ -27,9 +27,13 @@ async def clear_old_notifications(
     seen: set[tuple[int, int]] = set()
     deleted = 0
     for task_id in task_ids:
+        kept = None
         for record in notification_log.messages_for(state, task_id, user_id):
             key = (record["channel_id"], record["message_id"])
-            if key in seen or key == keep:
+            if key == keep:
+                kept = record
+                continue
+            if key in seen:
                 continue
             seen.add(key)
             bundle_id = record.get("bundle")
@@ -43,6 +47,9 @@ async def clear_old_notifications(
             except Exception:
                 logger.warning("舊任務通知無法刪除：%s／%s", task_id, key[1])
         notification_log.forget_messages(state, task_id, user_id)
+        if kept is not None:
+            # 留下的那則（例如剛收成一行的）繼續記著：之後重送時才刪得掉，私訊不會留一排舊的收合訊息
+            state["messages"].setdefault(str(task_id), {}).setdefault(str(user_id), []).append(kept)
     notification_log.persist()
     return deleted
 
