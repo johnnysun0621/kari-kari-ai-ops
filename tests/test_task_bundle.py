@@ -348,10 +348,10 @@ def test_合併通知回報一筆_原地劃掉_按鈕變其餘收到(repos, monk
     pending = asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t2"))
     assert pending == 1
     edit = message.edits[-1]
-    assert "~~任務t2~~" in edit["content"] and "已回報問題" in edit["content"]
-    assert "其餘 1 筆收到" in edit["content"]
+    assert "~~任務t2~~" in edit["content"] and "小律已轉告公司" in edit["content"]
+    assert "收下剩下 1 筆" in edit["content"]
     children = edit["view"].children
-    assert children[1].item.label == "其餘 1 筆收到"
+    assert children[1].item.label == "收下剩下 1 筆"
     assert [o.value for o in children[2].options] == ["t1"], "回報過的那筆不再出現在「某一筆有問題」"
 
 
@@ -418,7 +418,7 @@ def test_單筆卡回報後收成一行_不留按鈕():
     sent = []
     asyncio.run(tasks_artist.after_concern_reported(_modal_interaction(sent), task("t1"), message, None))
     assert message.edits[-1]["view"] is None
-    assert message.edits[-1]["content"].startswith("⚠️ 已回報問題｜任務t1｜等公司調整")
+    assert message.edits[-1]["content"].startswith("⚠️ 小律已轉告公司｜任務t1｜等調整")
     assert sent[0][1] is None
 
 
@@ -429,7 +429,7 @@ def test_合併通知回報後_確認訊息附其餘收到(repos, monkeypatch):
     sent = []
     asyncio.run(tasks_artist.after_concern_reported(_modal_interaction(sent), task("t2"), EditableMessage(), bundle_id))
     content, view = sent[0]
-    assert "其他 1 筆" in content and view.children[0].label == "其餘 1 筆收到"
+    assert "剩下 1 筆" in content and view.children[0].label == "收下剩下 1 筆"
 
 
 def test_已退回的任務按收到任務_不會改回進行中(monkeypatch):

@@ -11,6 +11,7 @@ import config
 from cogs import channel_guard, paging, ui_text
 from services.permissions import is_admin
 from services import audit, notification_log, ops_notice, repositories, task_bundle, task_notifications
+from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
 
@@ -418,8 +419,13 @@ async def open_concern_modal(interaction: discord.Interaction, task_id: str, bun
     await interaction.response.send_modal(TaskConcernModal(task_id, origin=origin, bundle_id=bundle_id))
 
 
-CONCERN_SENT_REPLY = "✅ 已將問題回報給公司，任務已暫停。公司調整後會重新通知你。"
-CONCERN_KEPT_REPLY = "✅ 已將問題回報給公司。這筆已經過了期限，會先維持「已逾期」，公司會跟你確認要延期還是怎麼處理。"
+def concern_sent_reply(task: repositories.TaskItem) -> str:
+    """回報送出後只有藝人看得到的確認（M3-30 小律的口吻）。點名是哪一筆，比較安心。"""
+    name = strip_notion_links(task.name or "這筆任務").strip()
+    if task_bundle.concern_keeps_status(task):
+        return (f"收到，小律已經把「{name}」的狀況轉告公司了。這筆已經過了期限，會先維持「已逾期」，"
+                "公司會再跟你確認要延期還是怎麼處理。")
+    return f"收到！小律已經把「{name}」的狀況轉告公司了，這筆先暫停，公司調整好會再通知你。"
 
 
 async def after_concern_reported(
@@ -435,18 +441,18 @@ async def after_concern_reported(
 
     now = datetime.now(config.get_tenant().tz)
     view: discord.ui.View | None = None
-    reply = CONCERN_KEPT_REPLY if task_bundle.concern_keeps_status(task) else CONCERN_SENT_REPLY
+    reply = concern_sent_reply(task)
     try:
         if bundle_id:
             pending = await refresh_bundle_after_concern(origin, bundle_id, task.page_id)
             if pending:
-                reply += f"\n其他 {pending} 筆沒問題的話，直接按下面就好："
+                reply += f"\n剩下 {pending} 筆沒問題的話，在這裡收下就好："
                 view = _receive_rest_view(bundle_id, origin, pending)
         elif origin is not None and briefing.is_briefing_message(origin):
             pending = await briefing.mark_reported(interaction, origin, task)
             if pending:
                 # 不附「其他我都看到了」：回報完馬上推一顆按鈕，像在催藝人把其他的也認了（2026-10-23 Johnny）
-                reply += "\n早報裡其他筆如果也有問題，一樣用「看某一筆的詳細」展開後回報；都看過了再按「👌 我都看到了」。"
+                reply += "\n其他筆如果也不行，一樣展開後按「⚠️ 這筆不行」；都看過了再按「👌 我看完了」。"
         elif origin is not None:
             await origin.edit(content=task_bundle.reported_card_line(task, now), embed=None, view=None)
     except Exception:
@@ -460,28 +466,28 @@ async def after_concern_reported(
 def _receive_rest_view(bundle_id: str, bundle_message, pending: int) -> discord.ui.View:
     """確認訊息上的「其餘 N 筆收到」：只有藝人看得到，按了等於在合併通知上按收到。"""
     view = discord.ui.View(timeout=900)
-    button = discord.ui.Button(label=f"其餘 {pending} 筆收到", emoji="✅", style=discord.ButtonStyle.success)
+    button = discord.ui.Button(label=f"收下剩下 {pending} 筆", emoji="✅", style=discord.ButtonStyle.success)
 
     async def callback(interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         count = await receive_bundle(interaction, bundle_id, bundle_message)
         if count:
-            await interaction.edit_original_response(content=f"✅ 已收到其餘 {count} 筆。", view=None)
+            await interaction.edit_original_response(content=f"✅ 剩下 {count} 筆收好了，謝謝！", view=None)
 
     button.callback = callback
     view.add_item(button)
     return view
 
 
-class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
+class TaskConcernModal(discord.ui.Modal, title="這筆任務哪裡不行呢？"):
     def __init__(self, task_id: str, *, origin=None, bundle_id: str | None = None):
         super().__init__()
         self.task_id = task_id
         self.origin = origin
         self.bundle_id = bundle_id
         self.reason = discord.ui.TextInput(
-            label="請說明原因或需要調整的地方",
-            placeholder="例如：時間無法配合、任務內容不清楚、需要延期…",
+            label="跟小律說說原因",
+            placeholder="例如：那天有課沒辦法、內容看不太懂、想延到 11/2",
             style=discord.TextStyle.paragraph,
             max_length=1000,
         )
@@ -569,7 +575,7 @@ class BundleDetailSelect(
     def __init__(self, bundle_id: str, options: list[discord.SelectOption] | None = None):
         self.options = options or [discord.SelectOption(label="（沒有任務）", value="none")]
         super().__init__(discord.ui.Select(
-            placeholder="看某一筆的詳細…", options=self.options,
+            placeholder="看任務內容…", options=self.options,
             custom_id=f"bundle_detail:{bundle_id}", min_values=1, max_values=1,
         ))
         self.bundle_id = bundle_id
@@ -594,7 +600,7 @@ class BundleDetailSelect(
             text = task_notifications.notification_message(task)
         text = task_notifications.strip_artist_prompts(text)
         embed = discord.Embed(description=text[:4000], color=0x5865F2)
-        embed.set_footer(text="再選別筆會換成那一筆；看完按「全部收到」")
+        embed.set_footer(text="選別筆會換成那一筆；看完按「全部收到」")
         options = [
             discord.SelectOption(label=o.label, value=o.value, description=o.description, default=o.value == task_id)
             for o in self.options
@@ -738,7 +744,10 @@ async def refresh_bundle_after_concern(message, bundle_id: str, task_id: str) ->
         await message.edit(content=task_bundle.done_text([], reported, now, _deadline_fn()), embed=None, view=None)
         return 0
     await message.edit(
-        content=task_bundle.bundle_text(entry.get("kind", task_bundle.KIND_DISPATCH), tasks, _deadline_fn(), reported_ids),
+        content=task_bundle.bundle_text(
+            entry.get("kind", task_bundle.KIND_DISPATCH), tasks, _deadline_fn(), reported_ids,
+            greeting=entry.get("greeting"),
+        ),
         embed=None,
         view=bundle_view(bundle_id, bundle_options(tasks), reported=reported_ids),
     )
@@ -754,7 +763,7 @@ class BundleConcernSelect(
     def __init__(self, bundle_id: str, options: list[discord.SelectOption] | None = None):
         self.options = options or [discord.SelectOption(label="（沒有任務）", value="none")]
         super().__init__(discord.ui.Select(
-            placeholder="⚠️ 某一筆有問題…", options=self.options,
+            placeholder="⚠️ 哪一筆不行？", options=self.options,
             custom_id=f"bundle_concern:{bundle_id}", min_values=1, max_values=1,
         ))
         self.bundle_id = bundle_id

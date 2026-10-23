@@ -22,6 +22,9 @@
 | `DEFAULT_REMINDER_RULES` | 5 天前、3 天前 | 每個任務一律套用的提醒，勾選再往上加（2026-10-03 起） |
 | `APPROVAL_LEAD_DAYS` | 5 | 提前交件任務沒填提交期限時，截止日往前推幾天當交件死線 |
 | `MEETING_QA_ENABLED` | false | 小律會議查詢（M6-06，2026-10-18 起封存）。改回 true 並重開即恢復 |
+| `RITSU_VOICE_DAILY_TOKEN_LIMIT` | 30000 | 早報上小律每天依藝人狀況寫的問候（M3-30），每天最多用多少 token；用完改用固定範本句。0＝不限。跟小律問答的 `LLM_DAILY_TOKEN_LIMIT` 分開算。實測每位藝人一次約 760 token |
+
+> 💡 **小律的說話方式**在 `prompts/ritsu_persona.md`：人設、語氣原則、範例句。改完存檔，**隔天早報就照新的寫，不用重開 bot**。只放怎麼說話，不要放藝人或任務的資料（這份檔案會送給 OpenAI，repo 也是公開的）。送給 OpenAI 的只有狀況統計（幾筆逾期、快到期…），不含藝人名字和任務名稱。
 
 ## 頻道設定
 

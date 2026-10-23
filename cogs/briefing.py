@@ -10,7 +10,10 @@ import discord
 
 import config
 from cogs import ui_text
-from services import audit, daily_briefing, notification_log, ops_briefing, repositories, task_bundle, task_notifications, task_query
+from services import (
+    audit, daily_briefing, notification_log, ops_briefing, repositories, ritsu_voice, task_bundle,
+    task_notifications, task_query,
+)
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -34,7 +37,7 @@ class BriefingDetailSelect(
         self.options = options or [discord.SelectOption(label="（沒有任務）", value="none")]
         super().__init__(
             discord.ui.Select(
-                placeholder="看某一筆的詳細…",
+                placeholder="看任務內容…",
                 options=self.options,
                 custom_id=f"briefing_detail:{day}",
                 min_values=1,
@@ -61,7 +64,7 @@ class BriefingDetailSelect(
         now = datetime.now(config.get_tenant().tz)
         detail = task_query.task_detail_text(task, deadline_text=ui_text.deadline_text(task, now), body=body)
         embed = discord.Embed(description=detail[:4000], color=0x5865F2)
-        embed.set_footer(text="再選別筆會換成那一筆；看完按「我都看到了」")
+        embed.set_footer(text="選別筆會換成那一筆；看完按「我看完了」")
         options = [
             discord.SelectOption(label=o.label, value=o.value, description=o.description, default=o.value == task_id)
             for o in self.options
@@ -79,7 +82,7 @@ class BriefingDetailSelect(
             if task.page_id not in (entry.get("reported") or []):
                 from cogs.tasks_artist import TaskConcernButton
 
-                view.add_item(TaskConcernButton(task.page_id, "這筆有問題"))
+                view.add_item(TaskConcernButton(task.page_id, "這筆不行"))
         await interaction.edit_original_response(embed=embed, view=view)
 
 
@@ -111,7 +114,7 @@ class BriefingAckButton(
     def __init__(self, day: str):
         super().__init__(
             discord.ui.Button(
-                label="我都看到了",
+                label="我看完了",
                 emoji="👌",
                 style=discord.ButtonStyle.success,
                 custom_id=f"briefing_ack:{day}",
@@ -158,7 +161,9 @@ async def ack_briefing(interaction: discord.Interaction, day_code: str, message,
     all_ids = list(entry.get("task_ids") or [])
     task_ids = [tid for tid in all_ids if tid not in reported]
     # 先改訊息（Discord 3 秒內要回應），再寫 Notion。編輯訊息不會跳通知。
-    content = daily_briefing.collapsed_text(day, len(all_ids), now, reported=len(all_ids) - len(task_ids))
+    content = daily_briefing.collapsed_text(
+        day, len(all_ids), now, reported=len(all_ids) - len(task_ids), closing=entry.get("closing") or "",
+    )
     if edit_via_response:
         await interaction.response.edit_message(content=content, view=None, embed=None)
     else:
@@ -327,14 +332,15 @@ async def show_reminders(message, user_id, bundle_id: str, received: list, repor
     if not entry or entry.get("bundle_id") != bundle_id:
         return False
     now = datetime.now(config.get_tenant().tz)
-    head = daily_briefing.handled_line(len(received), len(reported))
+    head = daily_briefing.handled_line(len(received), len(reported), entry.get("call_name") or "")
     entry["stage"] = 2
     if not entry.get("reminder_text"):
         # 今天沒有提醒：原地收合就好，也不用再按「我都看到了」
         day = datetime.strptime(entry["day"], "%Y%m%d").date()
         entry["acked_at"] = now.isoformat()
         notification_log.persist()
-        await message.edit(content=f"☀️ {day.month}/{day.day} 今天的任務提醒\n{head}", embed=None, view=None)
+        closing = entry.get("closing") or "今天也一起加油！"
+        await message.edit(content=f"{daily_briefing.title_line(day)}\n{head}\n{closing}", embed=None, view=None)
         return True
     lines = entry["reminder_text"].split("\n")
     content = "\n".join([lines[0], head, *lines[1:]])[:2000]
@@ -360,7 +366,7 @@ async def show_reminders(message, user_id, bundle_id: str, received: list, repor
             # 兩邊都刪不掉時，至少拿掉舊訊息的按鈕，避免兩則都能操作。
             logger.warning("早報第二段回收失敗，停用第一段按鈕：%s", getattr(new_message, "id", None))
             try:
-                await message.edit(content="↪️ 今天的任務提醒已移到下方。", embed=None, view=None)
+                await message.edit(content="↪️ 今天要注意的事已經移到下面囉。", embed=None, view=None)
             except Exception:
                 logger.warning("早報第一段停用失敗：%s", getattr(message, "id", None))
             entry["channel_id"] = new_message.channel.id
@@ -377,6 +383,24 @@ async def show_reminders(message, user_id, bundle_id: str, received: list, repor
     entry["message_id"] = new_message.id
     notification_log.persist()
     return True
+
+
+def _voice_counts(items, unreceived, previous) -> ritsu_voice.Counts:
+    """給小律寫語氣用的狀況統計：只有數字，不含任務名稱。"""
+    def count(section):
+        return sum(1 for item in items if item.section == section)
+
+    yesterday_read = None
+    if previous and previous.get("task_ids") and previous.get("role") != "staff":
+        yesterday_read = bool(previous.get("acked_at"))
+    return ritsu_voice.Counts(
+        unreceived=len(unreceived),
+        overdue=count(daily_briefing.SECTION_OVERDUE),
+        needs_fix=count(daily_briefing.SECTION_NEEDS_FIX),
+        awaiting=count(daily_briefing.SECTION_AWAITING),
+        due_soon=count(daily_briefing.SECTION_DUE_SOON),
+        yesterday_read=yesterday_read,
+    )
 
 
 async def send_daily_briefings(client: discord.Client, now: datetime, *, final: bool = True) -> dict:
@@ -420,7 +444,14 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
                 cleared += 1
             continue
         await _clear_old_task_messages(client, uid)
-        reminder_text = daily_briefing.briefing_text(day, items, _deadline_fn(now)) if items else ""
+        # 小律今天對這位藝人的開頭和結尾一句（M3-30）：只送狀況統計，名字由程式補
+        name = ritsu_voice.call_name(artist.name)
+        voice = await ritsu_voice.daily_voice(_voice_counts(items, unreceived, previous), state=state, now=now)
+        greeting = {"name": name, "opening": voice.opening}
+        reminder_text = daily_briefing.briefing_text(
+            day, items, _deadline_fn(now),
+            greeting="" if unreceived else task_bundle.greeting_line(greeting),
+        ) if items else ""
         options = _options_from_items(items, now)
         bundle_id = None
         try:
@@ -428,7 +459,7 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
             if unreceived:
                 bundle_id = task_bundle.new_bundle_id()
                 message = await user.send(
-                    task_bundle.bundle_text(task_bundle.KIND_BRIEFING, unreceived, _deadline_fn(now)),
+                    task_bundle.bundle_text(task_bundle.KIND_BRIEFING, unreceived, _deadline_fn(now), greeting=greeting),
                     view=bundle_view(bundle_id, bundle_options(unreceived)),
                 )
             else:
@@ -440,6 +471,7 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
         if bundle_id:
             ids = [task.page_id for task in unreceived]
             task_bundle.remember_bundle(state, bundle_id, uid, task_bundle.KIND_BRIEFING, ids, now)
+            state["bundles"][bundle_id]["greeting"] = greeting
             for task_id in ids:
                 notification_log.record_message(state, task_id, uid, message.channel.id, message.id, now, bundle_id=bundle_id)
         daily_briefing.remember_briefing(state, uid, {
@@ -453,6 +485,8 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
             "stage": 1 if bundle_id else 2,
             "reminder_text": reminder_text,
             "options": options,
+            "call_name": name,
+            "closing": voice.closing,
         })
         sent += 1
         for item in items:

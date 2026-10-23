@@ -93,8 +93,8 @@ def test_早報文字有區塊標題_不帶_Notion_網址():
     items = daily_briefing.build_items("a1", tasks, {"soon"}, {})
     text = daily_briefing.briefing_text(date(2026, 10, 20), items, lambda t: "截止 10/25（剩 5 天）")
 
-    assert "10/20（二）今天的任務提醒" in text
-    assert "已逾期" in text and "快到期" in text and "/我的任務" in text
+    assert "今天要注意的事（10/20 二）" in text
+    assert "已經過期限" in text and "快到期" in text and "/我的任務" in text
     assert not notion_links.contains_notion_link(text)
 
 
@@ -308,7 +308,7 @@ def test_我都看到了_收成一行並逐筆寫入提醒確認(send_env, monke
 
     asyncio.run(briefing.BriefingAckButton("20261020").callback(interaction))
 
-    assert "✅ 已讀（09:12）" in edits[0]["content"] and edits[0]["view"] is None
+    assert "✅ 09:12 看完了" in edits[0]["content"] and edits[0]["view"] is None
     assert [(p, l) for p, l in send_env.lines] == [("late", "早報｜10/20 09:12｜方晨"), ("soon", "早報｜10/20 09:12｜方晨")]
     assert state["briefing_acks"]["late"]["a1"] == "2026-10-20"
 
@@ -417,7 +417,7 @@ def test_狀態檔沒有這則早報時_從訊息的選單讀任務(send_env, mo
 
     asyncio.run(briefing.BriefingAckButton("20261020").callback(interaction))
 
-    assert edits and "已讀" in edits[0]["content"]
+    assert edits and "看完了" in edits[0]["content"]
     assert {p for p, _ in send_env.lines} == {"late", "soon"}
 
 
@@ -577,7 +577,7 @@ def test_早報回報一筆_那行劃掉_其他照舊(reported_env):
     remaining = asyncio.run(briefing.mark_reported(env.interaction, env.message, task("late")))
     assert remaining == 1
     content = env.message.edits[-1]["content"]
-    assert "・~~任務late~~｜⚠️ 已回報問題" in content and "・任務soon｜截止 10/25" in content
+    assert "・~~任務late~~｜⚠️ 小律已轉告公司" in content and "・任務soon｜截止 10/25" in content
     ids = [child.custom_id for child in env.message.edits[-1]["view"].children]
     assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"]
 
@@ -586,7 +586,7 @@ def test_早報回報後其他我都看到了_回報那筆不記看過(reported_
     env = reported_env
     asyncio.run(briefing.mark_reported(env.interaction, env.message, task("late")))
     assert asyncio.run(briefing.ack_briefing(env.interaction, "20261020", env.message, edit_via_response=False))
-    assert "✅ 已讀（09:12）" in env.message.edits[-1]["content"] and "已回報 1 筆" in env.message.edits[-1]["content"]
+    assert "✅ 09:12 看完了" in env.message.edits[-1]["content"] and "1 筆小律已轉告公司" in env.message.edits[-1]["content"]
     assert [page for page, _ in env.lines] == ["soon"]
 
 
@@ -594,7 +594,7 @@ def test_早報每一筆都回報_直接算已讀收合(reported_env):
     env = reported_env
     asyncio.run(briefing.mark_reported(env.interaction, env.message, task("late")))
     assert asyncio.run(briefing.mark_reported(env.interaction, env.message, task("soon"))) == 0
-    assert env.message.edits[-1]["view"] is None and "已回報 2 筆" in env.message.edits[-1]["content"]
+    assert env.message.edits[-1]["view"] is None and "2 筆小律已轉告公司" in env.message.edits[-1]["content"]
     assert env.lines == []
 
 
@@ -609,7 +609,7 @@ def test_早報上回報問題_確認訊息不推看完按鈕_只提醒其他也
     asyncio.run(tasks_artist.after_concern_reported(interaction, task("late"), env.message, None))
     content, view = replies[0]
     # 2026-10-23 Johnny：回報完就推「其他我都看到了」，等於逼藝人把其他的也認了
-    assert view is None and "其他筆如果也有問題" in content
+    assert view is None and "其他筆如果也不行" in content
     # 早報上照樣留「看某一筆的詳細」和「我都看到了」，要不要按由藝人自己決定
     ids = [child.custom_id for child in env.message.edits[-1]["view"].children]
     assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"]
@@ -641,7 +641,8 @@ def test_有還沒收的任務_早上只有一則_先只問收到(send_env, card
     asyncio.run(briefing.send_daily_briefings(card_env, NOW))
     assert len(card_env.sent) == 1, "早上只有一則"
     content, view = card_env.sent[0]
-    assert "先確認：還沒收到的任務（1）" in content and "10/19 派發" in content
+    assert "有 1 筆任務還在等你按收到喔" in content and "都是 10/19 派發的" in content
+    assert "方晨同學，早安！我是小律。" in content
     assert "新任務" not in content and "任務late" not in content, "提醒要等收完才出現"
     assert _ids(view) == ["bundle_detail", "bundle_receive", "bundle_concern"], "第一段沒有「我都看到了」"
 
@@ -711,8 +712,8 @@ def test_全部收到後_同一則換成今天的提醒_才出現我都看到了
     # 第一段刪掉、提醒以新訊息出現在最下面（2026-10-23：原地換的話「我都看到了」會被推到畫面外）
     assert message.deleted and message.edits == []
     new = message.channel.sent[-1]
-    assert "今天的任務提醒" in new.content and "任務late" in new.content
-    assert "✅ 已收到 1 筆任務" in new.content
+    assert "今天要注意的事" in new.content and "任務late" in new.content
+    assert "✅ 1 筆任務收好了，謝謝方晨同學！" in new.content
     assert _ids(new.view) == ["briefing_detail", "briefing_ack"]
     assert notification_log.shared()["briefings"]["1"]["message_id"] == 2001, "之後按我都看到了、隔天刪除都找得到新的那則"
 
@@ -726,7 +727,7 @@ def test_每一筆都回報_也換成提醒(send_env, card_env, monkeypatch):
     message = EditMsg(1001)
     assert asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "new")) == 0
     new = message.channel.sent[-1]
-    assert message.deleted and "⚠️ 已回報 1 筆" in new.content and "任務late" in new.content
+    assert message.deleted and "⚠️ 1 筆小律已轉告公司" in new.content and "任務late" in new.content
     assert _ids(new.view) == ["briefing_detail", "briefing_ack"]
 
 
@@ -751,7 +752,7 @@ def test_第一段刪除失敗_回收新訊息並在原訊息顯示提醒(send_e
 
     sent = message.channel.sent[-1]
     assert sent.deleted, "刪不掉第一段時要回收剛送出的第二段，避免留下兩則"
-    assert "今天的任務提醒" in message.edits[-1]["content"]
+    assert "今天要注意的事" in message.edits[-1]["content"]
     assert _ids(message.edits[-1]["view"]) == ["briefing_detail", "briefing_ack"]
     assert notification_log.shared()["briefings"]["1"]["message_id"] == 1001
 
@@ -787,7 +788,7 @@ def test_兩則都刪不掉_停用第一段按鈕並以新訊息為準(send_env,
                                   response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
     asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
 
-    assert message.edits[-1]["content"] == "↪️ 今天的任務提醒已移到下方。"
+    assert message.edits[-1]["content"] == "↪️ 今天要注意的事已經移到下面囉。"
     assert message.edits[-1]["view"] is None, "舊訊息即使留著也不能再操作"
     assert notification_log.shared()["briefings"]["1"]["message_id"] == 2001
 
@@ -806,7 +807,7 @@ def test_沒有提醒只有還沒收的_收完就收合不用再按(send_env, ca
     interaction = SimpleNamespace(user=SimpleNamespace(id=1), client=card_env, message=message,
                                   response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
     asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
-    assert message.edits[-1]["view"] is None and "✅ 已收到 1 筆任務" in message.edits[-1]["content"]
+    assert message.edits[-1]["view"] is None and "✅ 1 筆任務收好了" in message.edits[-1]["content"]
     assert notification_log.shared()["briefings"]["1"].get("acked_at"), "沒有提醒可看，不算沒看早報"
 
 

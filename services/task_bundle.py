@@ -27,13 +27,13 @@ KIND_BRIEFING = "briefing"  # 早報第一段：先確認還沒收到的任務�
 CONCERN_STATUSES = {"尚未開始", "進行中", "待提交", "已逾期", None, ""}
 # 已逾期的任務可以回報，但不退回、不取消 Discord 顯示：保留逾期紀錄，由控方決定延期或結案（2026-10-23 Johnny 選 A）
 KEEP_STATUS_ON_CONCERN = {"已逾期"}
-CONCERN_BLOCKED_REPLY = "這筆已經交件或正在修改中，不能用按鈕回報。有問題請直接聯絡公司。"
-ALREADY_REPORTED_REPLY = "這筆已經回報過問題，公司調整後會重新通知你。"
+CONCERN_BLOCKED_REPLY = "這筆你已經交了（或正在修改），小律沒辦法用按鈕幫你轉達。有問題請直接找公司喔。"
+ALREADY_REPORTED_REPLY = "這筆你已經跟小律說過了，公司調整好會再通知你。"
 
 _TITLES = {KIND_DISPATCH: "📌 **任務通知**", KIND_ASSIGNMENT: "📚 **課後作業通知**"}
 _FOOTERS = {
-    KIND_DISPATCH: "想看某一筆的完整內容，用下方選單；看過後按「✅ 全部收到」。某一筆不行就用「⚠️ 某一筆有問題」。",
-    KIND_ASSIGNMENT: "這幾筆現在可以交了。想看作業要求，用下方選單；看過後按「✅ 全部收到」。交件請用 `/我的任務` → 提交任務。",
+    KIND_DISPATCH: "沒問題的話按「✅ 全部收到」，小律會幫你告訴公司。哪一筆不行，從「⚠️ 哪一筆不行？」選出來，小律幫你轉達。想看內容用「看任務內容」。",
+    KIND_ASSIGNMENT: "這幾筆現在可以交了！想看作業要求用「看任務內容」；看過後按「✅ 全部收到」。交件請用 `/我的任務` → 提交任務。",
 }
 
 
@@ -57,41 +57,53 @@ def _limit(text: str) -> str:
 
 
 def reported_item_line(task: TaskItem) -> str:
-    return f"・~~{strip_notion_links(task.name)}~~｜⚠️ 已回報問題，等公司調整"
+    return f"・~~{strip_notion_links(task.name)}~~｜⚠️ 小律已轉告公司，等調整"
 
 
 def receive_label(pending: int, reported: int) -> str:
-    """沒人回報問題時是「全部收到」；有回報過就改成「其餘 N 筆收到」（M3-28）。"""
-    return "全部收到" if not reported else f"其餘 {pending} 筆收到"
+    """沒人回報問題時是「全部收到」；有回報過就改成「收下剩下 N 筆」（M3-28／M3-30）。"""
+    return "全部收到" if not reported else f"收下剩下 {pending} 筆"
 
 
-def _briefing_first_text(tasks: list[TaskItem], deadline_text, reported) -> str:
-    """早報第一段（M3-29 第五版）：只問還沒收到的任務。不寫「新任務」，註明哪天派發。"""
-    today = datetime.now(_tz())
-    weekdays = "一二三四五六日"
-    lines = [f"☀️ **{today.month}/{today.day}（{weekdays[today.weekday()]}）早安**", "",
-             f"📌 **先確認：還沒收到的任務（{len(tasks)}）**"]
+def greeting_line(greeting: dict | None) -> str:
+    """「方晨同學，早安！我是小律。」＋小律今天的一句（M3-30）。沒有名字就只說早安。"""
+    greeting = greeting or {}
+    name = greeting.get("name") or ""
+    head = f"☀️ **{name}同學，早安！我是小律。**" if name else "☀️ **早安！我是小律。**"
+    opening = greeting.get("opening") or ""
+    return f"{head}\n{opening}" if opening else head
+
+
+def _briefing_first_text(tasks: list[TaskItem], deadline_text, reported, greeting: dict | None = None) -> str:
+    """早報第一段（M3-29 第五版、M3-30 小律的口吻）：只問還沒收到的任務，不寫「新任務」。"""
+    lines = [greeting_line(greeting), "", f"📌 **有 {len(tasks)} 筆任務還在等你按收到喔**"]
     for task in tasks:
         if task.page_id in reported:
             lines.append(reported_item_line(task))
             continue
-        sent = f"{task.discord_notified_at.month}/{task.discord_notified_at.day} 派發｜" if task.discord_notified_at else ""
-        lines.append(f"・{strip_notion_links(task.name)}｜{sent}{deadline_text(task)}")
+        lines.append(f"・{strip_notion_links(task.name)}｜{deadline_text(task)}")
+    sent_days = sorted({(t.discord_notified_at.month, t.discord_notified_at.day) for t in tasks if t.discord_notified_at})
+    if len(sent_days) == 1:
+        lines.append(f"（都是 {sent_days[0][0]}/{sent_days[0][1]} 派發的）")
+    elif sent_days:
+        lines.append(f"（{sent_days[0][0]}/{sent_days[0][1]}～{sent_days[-1][0]}/{sent_days[-1][1]} 派發的）")
     pending = sum(1 for task in tasks if task.page_id not in reported)
-    lines += ["", f"看過後按「✅ {receive_label(pending, len(reported))}」；某一筆不行就用「⚠️ 某一筆有問題」。",
-              "收完後，這則會接著顯示今天的提醒。"]
+    lines.append("")
+    if reported:
+        lines.append(f"剩下 {pending} 筆沒問題的話，按「✅ {receive_label(pending, len(reported))}」就好。")
+    else:
+        lines.append("沒問題的話按「✅ 全部收到」，小律會幫你告訴公司 ✨")
+        lines.append("哪一筆不行，從「⚠️ 哪一筆不行？」選出來，小律幫你轉達。")
+    lines.append("收好之後，今天要注意的事會出現在下面。")
     return _limit("\n".join(lines))
 
 
-def _tz():
-    import config
-
-    return config.get_tenant().tz
-
-
-def bundle_text(kind: str, tasks: list[TaskItem], deadline_text, reported: set[str] | frozenset = frozenset()) -> str:
+def bundle_text(
+    kind: str, tasks: list[TaskItem], deadline_text, reported: set[str] | frozenset = frozenset(),
+    greeting: dict | None = None,
+) -> str:
     if kind == KIND_BRIEFING:
-        return _briefing_first_text(tasks, deadline_text, reported)
+        return _briefing_first_text(tasks, deadline_text, reported, greeting)
     lines = [f"{_TITLES[kind]}（{len(tasks)}）"]
     for task in tasks:
         if task.page_id in reported:
@@ -100,7 +112,7 @@ def bundle_text(kind: str, tasks: list[TaskItem], deadline_text, reported: set[s
             lines.append(f"・{strip_notion_links(task.name)}｜{deadline_text(task)}")
     pending = sum(1 for task in tasks if task.page_id not in reported)
     if reported and pending:
-        footer = f"其他的看過後按「✅ {receive_label(pending, len(reported))}」；某一筆不行就用「⚠️ 某一筆有問題」。"
+        footer = f"剩下 {pending} 筆沒問題的話，按「✅ {receive_label(pending, len(reported))}」就好。哪一筆也不行，一樣從「⚠️ 哪一筆不行？」選。"
     else:
         footer = _FOOTERS[kind]
     lines += ["", footer]
@@ -118,13 +130,13 @@ def done_text(received: list[TaskItem], reported: list[TaskItem], at: datetime, 
     lines += [f"・{strip_notion_links(task.name)}（{deadline_text(task)}）" for task in received]
     lines += [reported_item_line(task) for task in reported]
     if received:
-        lines.append("收到之後才發現不行，用下方「⚠️ 某一筆有問題」回報。")
+        lines.append("收好之後才發現哪一筆不行，一樣從下面「⚠️ 哪一筆不行？」告訴小律。")
     return _limit("\n".join(lines))
 
 
 def reported_card_line(task: TaskItem, at: datetime) -> str:
     """單筆卡回報問題後收成的那一行（M3-28）。"""
-    return f"⚠️ 已回報問題｜{strip_notion_links(task.name)}｜等公司調整｜{at:%m/%d %H:%M}"
+    return f"⚠️ 小律已轉告公司｜{strip_notion_links(task.name)}｜等調整｜{at:%m/%d %H:%M}"
 
 
 def staff_bundle_text(tasks: list[TaskItem], artist_names, deadline_text) -> str:

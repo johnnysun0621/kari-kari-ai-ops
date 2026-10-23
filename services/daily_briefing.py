@@ -26,7 +26,7 @@ SECTION_UNRECEIVED = "unreceived"
 SECTION_AWAITING = "awaiting"  # M2-14：不用交件的任務過了截止，等公司確認
 AWAITING_NOTE = "還沒做完請盡快完成；已經做完不用理會，公司會確認。"
 SECTION_TITLES = {
-    SECTION_OVERDUE: "🔴 **已逾期**",
+    SECTION_OVERDUE: "🔴 **已經過期限**",
     SECTION_NEEDS_FIX: "🛠 **需修改**",
     SECTION_AWAITING: "⏳ **已過截止，等公司確認**",
     SECTION_DUE_SOON: "⏰ **快到期**",
@@ -107,14 +107,26 @@ def split_unreceived(items: list[BriefingItem]) -> tuple[list[BriefingItem], lis
     return keep, unreceived
 
 
-def handled_line(received: int, reported: int) -> str:
-    """早報第一段處理完、換成提醒時，最上面那行：剛剛做了什麼（M3-29 第五版）。"""
+def handled_line(received: int, reported: int, name: str = "") -> str:
+    """早報第一段處理完、換成提醒時，最上面那行：剛剛做了什麼（M3-29 第五版、M3-30 小律的口吻）。"""
     parts = []
     if received:
-        parts.append(f"✅ 已收到 {received} 筆任務")
+        thanks = f"，謝謝{name}同學！" if name else "，謝謝你！"
+        parts.append(f"✅ {received} 筆任務收好了{thanks}")
     if reported:
-        parts.append(f"⚠️ 已回報 {reported} 筆")
+        parts.append(f"⚠️ {reported} 筆小律已轉告公司")
     return "　".join(parts)
+
+
+DEFAULT_FOOTER = (
+    "看完按「👌 我看完了」，小律就幫你記下來。\n"
+    "想看內容用下方選單；哪一筆不行，展開後按「⚠️ 這筆不行」。要交件請用 `/我的任務`。"
+)
+
+
+def title_line(day: date) -> str:
+    weekdays = "一二三四五六日"
+    return f"☀️ **今天要注意的事（{day.month}/{day.day} {weekdays[day.weekday()]}）**"
 
 
 def build_staff_items(
@@ -160,10 +172,15 @@ def briefing_text(
     deadline_text,
     extra_count: int = 0,
     footer: str | None = None,
+    greeting: str = "",
 ) -> str:
-    """早報內文。deadline_text 由呼叫端傳入（cogs/ui_text.deadline_text），這裡不 import cogs。"""
-    weekdays = "一二三四五六日"
-    lines = [f"☀️ **{day.month}/{day.day}（{weekdays[day.weekday()]}）今天的任務提醒**"]
+    """早報內文。deadline_text 由呼叫端傳入（cogs/ui_text.deadline_text），這裡不 import cogs。
+
+    greeting：小律的問候（沒有第一段時才放，M3-30）。
+    """
+    lines = [title_line(day)]
+    if greeting:
+        lines.append(greeting)
     for section in SECTION_ORDER:
         section_items = [item for item in items if item.section == section]
         if not section_items:
@@ -177,17 +194,20 @@ def briefing_text(
             lines.append(AWAITING_NOTE)
     if extra_count:
         lines.append(f"\n（另有 {extra_count} 筆，完整清單請用 `/我的任務`）")
-    lines.append("\n" + (footer or "想看某一筆的內容，用下方選單；看完按「👌 我都看到了」。要交件請用 `/我的任務`。"))
+    lines.append("\n" + (footer or DEFAULT_FOOTER))
     text = "\n".join(lines)
     if len(text) > MESSAGE_LIMIT:
         text = text[: MESSAGE_LIMIT - 30].rstrip() + "\n…（太長了，完整清單請用 `/我的任務`）"
     return text
 
 
-def collapsed_text(day: date, count: int, acked_at: datetime, reported: int = 0) -> str:
-    text = f"☀️ {day.month}/{day.day} 今天的任務提醒（{count} 筆）\n✅ 已讀（{acked_at:%H:%M}）"
+def collapsed_text(day: date, count: int, acked_at: datetime, reported: int = 0, closing: str = "") -> str:
+    """按「我看完了」後收成的那一行（M3-30：結尾一句是小律今天的話）。"""
+    weekdays = "一二三四五六日"
+    text = (f"☀️ 今天要注意的事（{day.month}/{day.day} {weekdays[day.weekday()]}，{count} 筆）\n"
+            f"✅ {acked_at:%H:%M} 看完了，小律記下來囉。{closing or '今天也一起加油！'}")
     if reported:
-        text += f"　⚠️ 已回報 {reported} 筆"
+        text += f"\n⚠️ {reported} 筆小律已轉告公司"
     return text
 
 
@@ -197,7 +217,7 @@ def mark_reported_line(text: str, task_name: str) -> str:
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if line.startswith(f"・{name}｜"):
-            lines[i] = f"・~~{name}~~｜⚠️ 已回報問題，等公司調整"
+            lines[i] = f"・~~{name}~~｜⚠️ 小律已轉告公司，等調整"
     return "\n".join(lines)
 
 
