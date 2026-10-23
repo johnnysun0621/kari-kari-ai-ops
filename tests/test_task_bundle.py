@@ -230,7 +230,7 @@ def _concern_interaction():
     return SimpleNamespace(response=SimpleNamespace(send_message=send_message, send_modal=send_modal)), calls
 
 
-@pytest.mark.parametrize("status,allowed", [("尚未開始", True), ("進行中", True), ("待提交", True),
+@pytest.mark.parametrize("status,allowed", [("尚未開始", True), ("進行中", True), ("待提交", True), ("已逾期", True),
                                             ("待審核", False), ("需修改", False)])
 def test_已交件或修改中不能用按鈕回報(monkeypatch, status, allowed):
     async def brief(tid):
@@ -487,3 +487,54 @@ def test_收合的那則仍被記著_之後重送會刪掉(repos):
     assert 1001 not in bot.deleted
     send(bot, [task("t1")])  # 控方重送：收合的舊卡也要清掉
     assert 1001 in bot.deleted
+
+
+def test_已逾期回報問題_不退回_控方通知寫維持逾期(monkeypatch):
+    from cogs import channel_guard
+
+    overdue = task("t1", status="已逾期")
+    calls = {"returned": False, "feedback": None, "ops": None, "after": None}
+
+    async def get_task(tid):
+        return overdue
+
+    async def find_artist(_uid):
+        return ARTISTS["a1"]
+
+    async def feedback(tid, entry):
+        calls["feedback"] = entry
+
+    async def returned(tid):
+        calls["returned"] = True
+
+    async def try_send(channel, **kw):
+        calls["ops"] = kw["content"]
+
+    async def after(interaction, t, origin, bundle_id):
+        calls["after"] = t.page_id
+
+    monkeypatch.setattr(repositories, "get_task", get_task)
+    monkeypatch.setattr(repositories, "find_artist_by_discord_id", find_artist)
+    monkeypatch.setattr(repositories, "append_task_feedback", feedback)
+    monkeypatch.setattr(repositories, "return_task_after_artist_concern", returned)
+    monkeypatch.setattr(channel_guard, "try_send", try_send)
+    monkeypatch.setattr(channel_guard, "ops_channel", lambda client: None)
+    monkeypatch.setattr(tasks_artist, "after_concern_reported", after)
+
+    async def defer(**kw):
+        return None
+
+    modal = tasks_artist.TaskConcernModal("t1")
+    modal.reason._value = "需要延期"
+    interaction = SimpleNamespace(user=SimpleNamespace(id=100), client=None, response=SimpleNamespace(defer=defer),
+                                  followup=SimpleNamespace(send=None))
+    asyncio.run(modal.on_submit(interaction))
+    assert calls["returned"] is False, "已逾期不退回尚未開始，保留逾期紀錄"
+    assert "需要延期" in calls["feedback"]
+    assert "維持「已逾期」" in calls["ops"] and calls["after"] == "t1"
+
+
+def test_已逾期回報後_藝人看到的說明不說暫停():
+    sent = []
+    asyncio.run(tasks_artist.after_concern_reported(_modal_interaction(sent), task("t1", status="已逾期"), None, None))
+    assert "維持「已逾期」" in sent[0][0] and "暫停" not in sent[0][0]

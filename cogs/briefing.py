@@ -10,7 +10,7 @@ import discord
 
 import config
 from cogs import ui_text
-from services import audit, daily_briefing, notification_log, ops_briefing, repositories, task_bundle, task_notifications, task_query
+from services import audit, daily_briefing, notification_log, ops_briefing, repositories, task_notifications, task_query
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -73,8 +73,10 @@ class BriefingDetailSelect(
         view.add_item(BriefingDetailSelect(self.day, options))
         if artist_briefing:
             view.add_item(BriefingAckButton(self.day))
-            # 收到之後仍可回報問題（M3-27）：藝人每天看早報，展開某一筆時就能說這筆不行
-            if task.discord_visible and task_bundle.can_report_concern(task):
+            # 收到之後仍可回報問題（M3-27）：藝人每天看早報，展開某一筆時就能說這筆不行。
+            # 一律顯示（2026-10-23 UAT）：已交件、已回報的按了會說明原因，不再讓按鈕無聲消失
+            entry = daily_briefing.briefing_for(notification_log.shared(), interaction.user.id) or {}
+            if task.page_id not in (entry.get("reported") or []):
                 from cogs.tasks_artist import TaskConcernButton
 
                 view.add_item(TaskConcernButton(task.page_id, "這筆有問題"))

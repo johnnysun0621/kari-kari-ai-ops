@@ -23,7 +23,9 @@ RETENTION_DAYS = 45
 KIND_DISPATCH = "dispatch"
 KIND_ASSIGNMENT = "assignment"
 # 已交件（待審核）或修改中（需修改）的任務退回「尚未開始」會打亂審核流程，請藝人直接聯絡控方
-CONCERN_STATUSES = {"尚未開始", "進行中", "待提交", None, ""}
+CONCERN_STATUSES = {"尚未開始", "進行中", "待提交", "已逾期", None, ""}
+# 已逾期的任務可以回報，但不退回、不取消 Discord 顯示：保留逾期紀錄，由控方決定延期或結案（2026-10-23 Johnny 選 A）
+KEEP_STATUS_ON_CONCERN = {"已逾期"}
 CONCERN_BLOCKED_REPLY = "這筆已經交件或正在修改中，不能用按鈕回報。有問題請直接聯絡控方。"
 ALREADY_REPORTED_REPLY = "這筆已經回報過問題，控方調整後會重新通知你。"
 
@@ -36,6 +38,11 @@ _FOOTERS = {
 
 def can_report_concern(task: TaskItem) -> bool:
     return task.status in CONCERN_STATUSES
+
+
+def concern_keeps_status(task: TaskItem) -> bool:
+    """回報問題後任務維持原狀態（不退回尚未開始）。"""
+    return task.status in KEEP_STATUS_ON_CONCERN
 
 
 def chunks(tasks: list[TaskItem]) -> list[list[TaskItem]]:

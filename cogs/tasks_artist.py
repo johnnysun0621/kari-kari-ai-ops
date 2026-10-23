@@ -417,6 +417,7 @@ async def open_concern_modal(interaction: discord.Interaction, task_id: str, bun
 
 
 CONCERN_SENT_REPLY = "✅ 已將問題回報給控方，任務已暫停。控方調整後會重新通知你。"
+CONCERN_KEPT_REPLY = "✅ 已將問題回報給控方。這筆已經過了期限，會先維持「已逾期」，控方會跟你確認要延期還是怎麼處理。"
 
 
 async def after_concern_reported(
@@ -432,7 +433,7 @@ async def after_concern_reported(
 
     now = datetime.now(config.get_tenant().tz)
     view: discord.ui.View | None = None
-    reply = CONCERN_SENT_REPLY
+    reply = CONCERN_KEPT_REPLY if task_bundle.concern_keeps_status(task) else CONCERN_SENT_REPLY
     try:
         if bundle_id:
             pending = await refresh_bundle_after_concern(origin, bundle_id, task.page_id)
@@ -504,10 +505,13 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
             f"藝人：{artist.name}\n"
             f"回饋：{reason}"
         )
+        keep = task_bundle.concern_keeps_status(task)
         try:
             # 先保存原因，再將任務退回未發布狀態供控方調整。
+            # 已逾期的不退回（2026-10-23）：保留逾期紀錄，控方決定延期或結案
             await repositories.append_task_feedback(self.task_id, entry)
-            await repositories.return_task_after_artist_concern(self.task_id)
+            if not keep:
+                await repositories.return_task_after_artist_concern(self.task_id)
             await audit.log_event(
                 event_name=f"藝人回報任務問題｜{task.name}",
                 action_type="更新",
@@ -515,7 +519,8 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
                 discord_user_id=str(interaction.user.id),
                 target_db="Tasks",
                 target_url=task.url,
-                after=f"退回尚未開始並暫停 Discord 顯示｜{reason}",
+                after=(f"維持{task.status}，未退回｜{reason}" if keep
+                       else f"退回尚未開始並暫停 Discord 顯示｜{reason}"),
             )
         except Exception:
             logger.exception("任務問題回饋寫入失敗：%s", self.task_id)
@@ -530,9 +535,14 @@ class TaskConcernModal(discord.ui.Modal, title="回報任務問題"):
             content=ops_notice.action_title(f"藝人回報任務問題：{task.name}") + "\n"
             f"藝人：{artist.name}\n"
             f"回饋：{reason}\n"
-            "狀態：已退回「尚未開始」，並取消 Discord 顯示。\n"
-            "請修改任務後重新勾選「Discord 顯示」，Bot 會重新通知藝人。"
-            f"{link}",
+            + (
+                f"狀態：維持「{task.status}」，沒有退回（保留逾期紀錄）。\n"
+                "請決定要延期（改截止日或提交期限）還是結案。"
+                if keep else
+                "狀態：已退回「尚未開始」，並取消 Discord 顯示。\n"
+                "請修改任務後重新勾選「Discord 顯示」，Bot 會重新通知藝人。"
+            )
+            + link,
             view=ops_action_view(),
         )
         await after_concern_reported(interaction, task, self.origin, self.bundle_id)
