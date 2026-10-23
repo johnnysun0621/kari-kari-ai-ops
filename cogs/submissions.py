@@ -14,7 +14,7 @@ from discord.ext import commands, tasks
 import config
 from cogs import channel_guard, ui_text
 from services.permissions import is_admin
-from services import audit, drive_api, drive_archive, ops_notice, repositories, task_notifications
+from services import audit, drive_api, drive_archive, notification_log, ops_notice, repositories, ritsu_voice, task_notifications
 from services.notion_api import NotionAPIError
 
 logger = logging.getLogger(__name__)
@@ -528,20 +528,55 @@ def review_dm_text(
     result: str,
     feedback: str = "",
     reviewer: str = "",
+    name: str = "",
+    ritsu_line: str = "",
 ) -> str:
+    """審核結果私訊（M4-16 小律的口吻）。ritsu_line 是小律依最近表現說的一句（AI 或範本句）。"""
+    who = f"{name}同學，" if name else ""
+    task = task_name or submission.name
     header = {
-        "通過": "✅ 你的提交已通過",
-        "需修改": "🛠 你的提交需要修改",
-        "退回": "↩️ 你的提交已退回",
-    }.get(result, f"審核結果：{result}")
-    lines = [f"{header}：**{task_name or submission.name}**"]
-    if reviewer:
-        lines.append(f"審核者：{reviewer}")
+        "通過": f"🎉 **{who}「{task}」通過了！**",
+        "需修改": f"🛠 **{who}「{task}」公司給了一些修改建議**",
+        "退回": f"↩️ **{who}「{task}」這次先退回了**",
+    }.get(result, f"審核結果：{result}｜**{task}**")
+    lines = [header]
+    if ritsu_line:
+        lines.append(ritsu_line)
     if feedback:
-        lines.append(f"回饋：{feedback}")
+        lines.append(f"\n**回饋**\n{feedback}")
+    if reviewer:
+        lines.append(f"審核：{reviewer}")
     if result in ("需修改", "退回"):
-        lines.append("請依回饋修改後，到 `/我的任務` 按「提交任務」重新提交。")
+        lines.append("\n照回饋改好之後，到 `/我的任務` 按「提交任務」重新交就好，小律等你～")
     return "\n".join(lines)
+
+
+def review_facts(result: str, submission: repositories.SubmissionItem, artist_page_id: str,
+                 all_submissions: list[repositories.SubmissionItem], now: datetime) -> ritsu_voice.ReviewFacts:
+    """給小律寫審核結果那一句用的數字：第幾次交、最近連續一次就過幾件、近 60 天通過／修改幾次。"""
+    mine = [s for s in all_submissions if artist_page_id in s.artist_page_ids]
+    tasks = set(submission.task_page_ids)
+    attempt = max(1, sum(1 for s in mine if tasks & set(s.task_page_ids)))
+    per_task: dict[str, int] = {}
+    for s in mine:
+        for tid in s.task_page_ids:
+            per_task[tid] = per_task.get(tid, 0) + 1
+    cutoff = now - timedelta(days=60)
+    recent = [s for s in mine if s.created_at and s.created_at >= cutoff]
+    streak = 1 if result == "通過" and attempt == 1 else 0
+    if streak:
+        reviewed = sorted((s for s in mine if s.page_id != submission.page_id and s.status in REVIEW_RESULTS),
+                          key=lambda s: s.created_at or now, reverse=True)
+        for s in reviewed:
+            first_try = all(per_task.get(tid, 0) == 1 for tid in s.task_page_ids)
+            if s.status != "通過" or not first_try:
+                break
+            streak += 1
+    return ritsu_voice.ReviewFacts(
+        result=result, attempt=attempt, pass_streak=streak,
+        recent_passed=sum(1 for s in recent if s.status == "通過"),
+        recent_fixed=sum(1 for s in recent if s.status in ("需修改", "退回")),
+    )
 
 
 def review_feedback_file_dm_text(
@@ -1670,11 +1705,21 @@ class SubmissionsCog(commands.Cog):
         artist_map = await repositories.get_artist_map()
         sent = 0
         task_name = submission.name
+        now = datetime.now(config.get_tenant().tz)
+        try:
+            history = await repositories.get_all_submissions()
+        except Exception:
+            logger.exception("讀取提交紀錄失敗，小律的那一句改用範本")
+            history = []
         for artist_page_id in submission.artist_page_ids:
             artist = artist_map.get(artist_page_id)
             if not artist or not artist.discord_user_id:
                 continue
             try:
+                # 小律依這位藝人最近的表現說一句（M4-16）：只送數字，失敗回範本句
+                facts = review_facts(result, submission, artist_page_id, history, now)
+                line = await ritsu_voice.review_line(facts, state=notification_log.shared(), now=now)
+                notification_log.persist()
                 user = await self.bot.fetch_user(int(artist.discord_user_id))
                 await user.send(
                     review_dm_text(
@@ -1683,6 +1728,8 @@ class SubmissionsCog(commands.Cog):
                         result=result,
                         feedback=feedback,
                         reviewer=reviewer,
+                        name=ritsu_voice.call_name(artist.name),
+                        ritsu_line=line,
                     )
                 )
                 sent += 1

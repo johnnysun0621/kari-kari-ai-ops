@@ -95,3 +95,29 @@ def test_沒有_API_key_直接用範本句(monkeypatch):
 def test_稱呼拿掉括號():
     assert ritsu_voice.call_name("Johnny (測試）") == "Johnny"
     assert ritsu_voice.call_name("方晨") == "方晨"
+
+
+# ---------- M4-16：審核結果 ----------
+
+def test_審核結果一句_只送數字():
+    seen = {}
+
+    def handler(request):
+        seen.update(json.loads(request.content))
+        body = {"choices": [{"message": {"content": json.dumps({"line": "連續三次一次就過，好厲害！"}, ensure_ascii=False)}}],
+                "usage": {"total_tokens": 300}}
+        return httpx.Response(200, json=body)
+
+    facts = ritsu_voice.ReviewFacts(result="通過", attempt=1, pass_streak=3, recent_passed=5, recent_fixed=1)
+    line = asyncio.run(ritsu_voice.review_line(facts, state={}, now=NOW, client=fake_client(handler)))
+    assert line == "連續三次一次就過，好厲害！"
+    user = seen["messages"][1]["content"]
+    assert "審核結果：通過" in user and "連續一次就通過：3 件" in user
+
+
+def test_審核結果_AI_失敗用範本句():
+    def boom(request):
+        raise httpx.ConnectError("down")
+
+    facts = ritsu_voice.ReviewFacts(result="需修改", attempt=2)
+    assert asyncio.run(ritsu_voice.review_line(facts, state={}, now=NOW, client=fake_client(boom))) == "再調整一下就好，小律陪你一起改。"

@@ -135,22 +135,22 @@ def _add_usage(state: dict, today: str, tokens: int) -> None:
     state["ritsu_voice"] = {"day": today, "tokens": _used_today(state, today) + tokens}
 
 
-async def daily_voice(counts: Counts, *, state: dict, now: datetime, client: httpx.AsyncClient | None = None) -> Voice:
-    """這位藝人今天的開頭和結尾。任何失敗都回固定範本句，不丟例外。"""
-    fallback = template_voice(counts)
+async def _ask_json(system_extra: str, user_text: str, *, state: dict, now: datetime,
+                    client: httpx.AsyncClient | None = None) -> dict | None:
+    """送一次 chat completion，要求回 JSON。沒有 key、額度用完、任何失敗都回 None（呼叫端用範本句）。"""
     tenant = config.get_tenant()
     today = now.date().isoformat()
     if not tenant.llm_api_key:
-        return fallback
+        return None
     limit = daily_limit()
     if limit > 0 and _used_today(state, today) >= limit:
-        logger.info("小律問候今天的 token 額度用完，改用範本句")
-        return fallback
+        logger.info("小律的語氣今天的 token 額度用完，改用範本句")
+        return None
     payload = {
         "model": tenant.llm_model,
         "messages": [
-            {"role": "system", "content": _persona() + "\n\n" + _RULES},
-            {"role": "user", "content": status_text(counts, now)},
+            {"role": "system", "content": _persona() + "\n\n" + system_extra},
+            {"role": "user", "content": user_text},
         ],
         "response_format": {"type": "json_object"},
     }
@@ -174,13 +174,81 @@ async def daily_voice(counts: Counts, *, state: dict, now: datetime, client: htt
         tokens = int((data.get("usage") or {}).get("total_tokens") or 0)
         _add_usage(state, today, tokens)
         parsed = json.loads(llm_response.extract_text(data) or "{}")
-    except Exception as exc:  # 網路、HTTP、JSON、供應商設定：一律後備，早報不能因為這個發不出去
-        logger.warning("小律問候生成失敗，改用範本句：%s", exc)
+    except Exception as exc:  # 網路、HTTP、JSON、供應商設定：一律後備，訊息不能因為這個發不出去
+        logger.warning("小律的語氣生成失敗，改用範本句：%s", exc)
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    parsed["_tokens"] = tokens
+    return parsed
+
+
+async def daily_voice(counts: Counts, *, state: dict, now: datetime, client: httpx.AsyncClient | None = None) -> Voice:
+    """這位藝人今天的開頭和結尾。任何失敗都回固定範本句，不丟例外。"""
+    fallback = template_voice(counts)
+    parsed = await _ask_json(_RULES, status_text(counts, now), state=state, now=now, client=client)
+    if parsed is None:
         return fallback
-    opening = _clean(parsed.get("opening"), MAX_OPENING) if isinstance(parsed, dict) else None
-    closing = _clean(parsed.get("closing"), MAX_CLOSING) if isinstance(parsed, dict) else None
+    tokens = parsed.get("_tokens", 0)
+    opening = _clean(parsed.get("opening"), MAX_OPENING)
+    closing = _clean(parsed.get("closing"), MAX_CLOSING)
     voice = Voice(opening=opening or fallback.opening, closing=closing or fallback.closing,
                   source="ai" if opening and closing else "partial" if opening or closing else "template",
                   tokens=tokens)
     logger.info("小律問候（%s，%s token）：%s｜%s", voice.source, tokens, voice.opening, voice.closing)
     return voice
+
+
+# ---------- 審核結果（M4-16） ----------
+
+MAX_REVIEW_LINE = 45
+
+
+@dataclass
+class ReviewFacts:
+    result: str  # 通過／需修改／退回
+    attempt: int = 1  # 這筆任務第幾次交
+    pass_streak: int = 0  # 最近連續一次就通過的任務數（含這次）
+    recent_passed: int = 0  # 最近 60 天通過幾件
+    recent_fixed: int = 0  # 最近 60 天被要求修改／退回幾次
+
+
+def review_template(facts: ReviewFacts) -> str:
+    if facts.result == "通過":
+        if facts.pass_streak >= 2:
+            return f"連續 {facts.pass_streak} 次一次就過，小律好佩服！"
+        if facts.attempt >= 2:
+            return "改了之後順利過關，辛苦了！"
+        return "辛苦了，這份做得很好！"
+    if facts.result == "需修改":
+        if facts.attempt >= 2:
+            return "再調整一下就好，小律陪你一起改。"
+        return "別擔心，照著回饋調整就好，小律陪你。"
+    return "這次先退回沒關係，看看回饋，小律陪你重新來過。"
+
+
+def review_text(facts: ReviewFacts) -> str:
+    return "\n".join([
+        f"審核結果：{facts.result}",
+        f"- 這是這筆任務第 {facts.attempt} 次交件",
+        f"- 最近連續一次就通過：{facts.pass_streak} 件",
+        f"- 最近 60 天通過 {facts.recent_passed} 件、被要求修改或退回 {facts.recent_fixed} 次",
+    ])
+
+
+_REVIEW_RULES = (
+    "藝人剛收到審核結果。請依照上面的人設，用繁體中文寫一句話，只輸出 JSON：{\"line\": \"...\"}。\n"
+    f"- 最多 {MAX_REVIEW_LINE - 5} 個字\n"
+    "- 通過：真心稱讚；需修改或退回：不責備，給陪伴和打氣\n"
+    "- 不要稱呼名字、不要提任務名稱或回饋內容、不要編造狀況裡沒有的事\n"
+    "- 不要網址、不要 @、不要 markdown"
+)
+
+
+async def review_line(facts: ReviewFacts, *, state: dict, now: datetime, client: httpx.AsyncClient | None = None) -> str:
+    """審核結果通知上小律的一句。只送數字，不送名字、任務名稱、回饋內容。失敗回範本句。"""
+    fallback = review_template(facts)
+    parsed = await _ask_json(_REVIEW_RULES, review_text(facts), state=state, now=now, client=client)
+    line = _clean(parsed.get("line"), MAX_REVIEW_LINE) if parsed else None
+    logger.info("小律審核結果（%s）：%s", "ai" if line else "template", line or fallback)
+    return line or fallback

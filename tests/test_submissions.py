@@ -759,3 +759,33 @@ class TestSubmitAlwaysUsesDrive:
         asyncio.run(select.callback(interaction))
 
         assert calls == [("task-1", True)]
+
+
+def test_審核結果私訊用小律的口吻_含小律那一句():
+    from datetime import datetime as dt
+
+    sub = repositories.SubmissionItem(page_id="s3", name="編曲作業", status="通過", artist_page_ids=["a"], task_page_ids=["t1"],
+                                      created_at=dt(2026, 10, 22, tzinfo=config.TZ))
+    text = review_dm_text(sub, task_name="編曲作業", result="通過", feedback="很好", reviewer="老師", name="方晨", ritsu_line="辛苦了！")
+    assert text.startswith("🎉 **方晨同學，「編曲作業」通過了！**") and "辛苦了！" in text and "很好" in text
+    fix = review_dm_text(sub, task_name="編曲作業", result="需修改", feedback="再改", name="方晨")
+    assert "公司給了一些修改建議" in fix and "小律等你" in fix
+
+
+def test_審核結果的數字_第幾次交與連續一次就過():
+    from datetime import datetime as dt
+    from cogs.submissions import review_facts
+
+    now = dt(2026, 10, 23, tzinfo=config.TZ)
+
+    def s(pid, task, status, day):
+        return repositories.SubmissionItem(page_id=pid, name=pid, status=status, artist_page_ids=["a"], task_page_ids=[task],
+                                           created_at=dt(2026, 10, day, tzinfo=config.TZ))
+
+    history = [s("p1", "t1", "通過", 10), s("p2", "t2", "通過", 15), s("p3", "t3", "通過", 23)]
+    facts = review_facts("通過", history[-1], "a", history, now)
+    assert facts.attempt == 1 and facts.pass_streak == 3 and facts.recent_passed == 3
+    history.append(s("p4", "t4", "需修改", 20))
+    history.append(s("p5", "t4", "需修改", 23))
+    facts = review_facts("需修改", history[-1], "a", history, now)
+    assert facts.attempt == 2 and facts.pass_streak == 0 and facts.recent_fixed == 2
