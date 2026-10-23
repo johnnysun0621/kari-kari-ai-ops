@@ -171,7 +171,7 @@ def test_assignment_notification_requires_open_submission_and_has_assignment_cop
     task.open_for_submission = True
     assert task_notifications.is_assignment_dispatchable(task)
     message = task_notifications.assignment_notification_message(task)
-    assert "課後作業通知" in message
+    assert "作業開放囉，可以開始交了" in message
     assert "請上傳課後練習錄影。" in message
     assert "公司 Drive 資料夾" in message
     assert "提交方式" not in message
@@ -600,3 +600,17 @@ class TestReminderAckButton:
         assert view.children[0].custom_id == "reminder_ack:task-1:d0"
 
         assert reminder_view("task-1", repositories.OVERDUE_STAGE) is None
+
+
+def test_派發卡用小律的口吻_看內容時不寫新任務():
+    task = make_task()
+    sent = task_notifications.notification_message(task, name="方晨")
+    assert sent.startswith("📌 **方晨同學，有一筆新任務來囉！**")
+    assert "小律會幫你告訴公司" in sent
+    detail = task_notifications.notification_message(task, detail=True)
+    assert detail.startswith("📌 **任務內容**") and "新任務" not in detail
+
+
+def test_同仁版本濾掉藝人才有的按鈕提示():
+    staff = task_notifications.staff_message(task_notifications.notification_message(make_task(), name="方晨"))
+    assert task_notifications.DISPATCH_PROMPT not in staff and task_notifications.SUBMIT_GUIDE not in staff

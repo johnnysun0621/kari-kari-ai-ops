@@ -10,12 +10,17 @@ from services.repositories import TaskItem
 STATE_PATH = Path(".state/task_dispatch_notifications.json")
 ASSIGNMENT_STATE_PATH = Path(".state/task_assignment_notifications.json")
 # 提交方式已全部停用（M4-03）：所有交件一律上傳到 Bot 提供的公司 Drive 資料夾。
-SUBMIT_GUIDE = "需要交件時，請用 `/我的任務` → 提交任務，檔案上傳到 Bot 提供的公司 Drive 資料夾。"
+SUBMIT_GUIDE = "要交件的時候，用 `/我的任務` → 提交任務，檔案上傳到小律給你的公司 Drive 資料夾就好。"
 STAFF_HEADER = "👥 同仁知會：你是這個任務的相關同仁，這則僅供通知，不需要按收到。"
-# 只對藝人有意義的按鈕提示：同仁沒有按鈕，留著會跟上面那行矛盾
+# M3-30 小律的口吻：派發卡、課後作業卡的按鈕提示
+DISPATCH_PROMPT = "看完沒問題就按「收到任務」，小律會幫你告訴公司；不行的話按「有問題・無法配合」跟小律說。"
+ASSIGNMENT_PROMPT = "看過作業要求就按「收到任務」，小律會幫你告訴公司。"
+# 只對藝人有意義的按鈕提示：同仁沒有按鈕，留著會跟上面那行矛盾（新舊文案都認）
 _ARTIST_ONLY_PROMPTS = re.compile(
-    r"請先按「收到任務」確認你已看到這項(?:任務|作業)。|\n?看到這則提醒請按下方「收到通知」，讓(?:控方|公司)知道你已掌握進度。"
+    r"請先按「收到任務」確認你已看到這項(?:任務|作業)。|\n?看到這則提醒請按下方「收到通知」，讓(?:控方|公司)知道你已掌握進度。|"
+    + re.escape(DISPATCH_PROMPT) + "|" + re.escape(ASSIGNMENT_PROMPT)
 )
+_OLD_SUBMIT_GUIDE = "需要交件時，請用 `/我的任務` → 提交任務，檔案上傳到 Bot 提供的公司 Drive 資料夾。"
 
 
 def strip_artist_prompts(text: str) -> str:
@@ -26,7 +31,9 @@ def strip_artist_prompts(text: str) -> str:
 def staff_message(artist_content: str) -> str:
     """M6-05：發給相關同仁的版本。沿用藝人那份內容（同樣不含 Notion 網址），
     拿掉只對藝人有意義的交件指引與按鈕提示——同仁不在 Artists，/我的任務 查不到這筆，也沒有按鈕。"""
-    body = _ARTIST_ONLY_PROMPTS.sub("", artist_content.replace(SUBMIT_GUIDE, "")).strip()
+    body = _ARTIST_ONLY_PROMPTS.sub(
+        "", artist_content.replace(SUBMIT_GUIDE, "").replace(_OLD_SUBMIT_GUIDE, ""),
+    ).strip()
     return f"{STAFF_HEADER}\n\n{body}"[:2000]
 
 
@@ -37,7 +44,14 @@ def format_reminder_interval(minutes: float) -> str:
     return f"{minutes:g} 分鐘"
 
 
-def notification_message(task: TaskItem) -> str:
+def dispatch_title(name: str = "", *, detail: bool = False) -> str:
+    """派發卡第一行（M3-30 小律的口吻）。看內容（detail）時不寫「新任務」——任務可能是好幾天前派的。"""
+    if detail:
+        return "📌 **任務內容**"
+    return f"📌 **{name}同學，有一筆新任務來囉！**" if name else "📌 **有一筆新任務來囉！**"
+
+
+def notification_message(task: TaskItem, *, name: str = "", detail: bool = False) -> str:
     is_formal_event = bool(
         task.start and task.end and task.start_has_time and task.end_has_time
     )
@@ -63,13 +77,13 @@ def notification_message(task: TaskItem) -> str:
             extra_lines.append(f"{label}：{value}")
     extra_text = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
     return (
-        f"📌 **新任務通知**\n"
+        f"{dispatch_title(name, detail=detail)}\n"
         f"任務：**{task.name}**\n"
         f"類型：{task.task_type or '任務'}\n"
         f"{deadline_line}"
         f"{extra_text}\n\n"
         f"**任務內容**\n{description}\n\n"
-        f"請先按「收到任務」確認你已看到這項任務。{SUBMIT_GUIDE}"
+        f"{DISPATCH_PROMPT}\n{SUBMIT_GUIDE}"
     )
 
 
@@ -83,7 +97,7 @@ def is_assignment_dispatchable(task: TaskItem) -> bool:
     )
 
 
-def assignment_notification_message(task: TaskItem) -> str:
+def assignment_notification_message(task: TaskItem, *, name: str = "", detail: bool = False) -> str:
     """課後作業通知；只呈現作業要求，不呈現課程排程候選。"""
     description = _artist_facing_description(task.description) or "Notion 尚未填寫作業要求。"
     if len(description) > 900:
@@ -100,11 +114,12 @@ def assignment_notification_message(task: TaskItem) -> str:
             "%m/%d %H:%M" if assignment_has_time else "%m/%d"
         )
     return (
-        f"📚 **課後作業通知**\n"
-        f"任務：**{task.name}**\n"
+        ("📚 **作業要求**\n" if detail else
+           f"📚 **{name + '同學，' if name else ''}老師的作業開放囉，可以開始交了！**\n")
+        + f"任務：**{task.name}**\n"
         f"截止：{deadline}\n\n"
         f"**作業要求**\n{description}\n\n"
-        f"請先按「收到任務」確認你已看到這項作業。{SUBMIT_GUIDE}"
+        f"{ASSIGNMENT_PROMPT}\n{SUBMIT_GUIDE}"
     )
 
 

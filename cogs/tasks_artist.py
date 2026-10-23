@@ -10,7 +10,7 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, paging, ui_text
 from services.permissions import is_admin
-from services import audit, notification_log, ops_notice, repositories, task_bundle, task_notifications
+from services import audit, notification_log, ops_notice, repositories, ritsu_voice, task_bundle, task_notifications
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -595,9 +595,9 @@ class BundleDetailSelect(
             return
         entry = task_bundle.bundle_for(notification_log.shared(), self.bundle_id) or {}
         if entry.get("kind") == task_bundle.KIND_ASSIGNMENT:
-            text = task_notifications.assignment_notification_message(task)
+            text = task_notifications.assignment_notification_message(task, detail=True)
         else:
-            text = task_notifications.notification_message(task)
+            text = task_notifications.notification_message(task, detail=True)
         text = task_notifications.strip_artist_prompts(text)
         embed = discord.Embed(description=text[:4000], color=0x5865F2)
         embed.set_footer(text="選別筆會換成那一筆；看完按「全部收到」")
@@ -960,14 +960,15 @@ async def send_task_notifications(
         except Exception:
             logger.exception("任務通知失敗（找不到 Discord 使用者）：%s", artist.name)
             continue
+        call = ritsu_voice.call_name(artist.name)
         for group in task_bundle.chunks(artist_tasks):
             try:
                 if len(group) == 1:
                     task = group[0]
                     # 任務說明已經寫在訊息裡，藝人不需要開 Notion。
                     content = (
-                        task_notifications.assignment_notification_message(task)
-                        if kind == task_bundle.KIND_ASSIGNMENT else task_notifications.notification_message(task)
+                        task_notifications.assignment_notification_message(task, name=call)
+                        if kind == task_bundle.KIND_ASSIGNMENT else task_notifications.notification_message(task, name=call)
                     )
                     await send_task_dm(user, task.page_id, content, client=bot)
                 else:
