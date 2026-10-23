@@ -11,7 +11,13 @@ STATE_PATH = Path(".state/task_dispatch_notifications.json")
 ASSIGNMENT_STATE_PATH = Path(".state/task_assignment_notifications.json")
 # 提交方式已全部停用（M4-03）：所有交件一律上傳到 Bot 提供的公司 Drive 資料夾。
 SUBMIT_GUIDE = "要交件的時候，用 `/我的任務` → 提交任務，檔案上傳到小律給你的公司 Drive 資料夾就好。"
-STAFF_HEADER = "👥 同仁知會：你是這個任務的相關同仁，這則僅供通知，不需要按收到。"
+# 審核人收到「新提交待審核」與每日待審核提醒時，最後附上怎麼審（2026-10-23 Johnny）
+REVIEW_HOW_TO = (
+    "**怎麼審（擇一）**\n"
+    "・**Notion**：打開上面的提交頁，先在 `審核回饋` 寫幾句，再把 `審核狀態` 改成「通過」或「需修改」。小律每分鐘檢查一次，改完就會通知藝人。\n"
+    "・**Discord**：到 `營運操作` 頻道打 `/審核提交`，選這筆提交，按「通過」或「需修改」，再填回饋。"
+)
+STAFF_HEADER ="👥 同仁知會：你是這個任務的相關同仁，這則僅供通知，不需要按收到。"
 # M3-30 小律的口吻：派發卡、課後作業卡的按鈕提示
 DISPATCH_PROMPT = "看完沒問題就按「收到任務」，小律會幫你告訴公司；不行的話按「有問題・無法配合」跟小律說。"
 ASSIGNMENT_PROMPT = "看過作業要求就按「收到任務」，小律會幫你告訴公司。"

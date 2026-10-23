@@ -46,6 +46,7 @@ async def notify_submission_reviewers(
     不寫死人名，符合多租戶平展化原則；`審核人員` 填了人但那個人缺 Discord ID，
     視同沒有可通知對象，一樣退回控方頻道，不會讓提交默默沒人知道。
     """
+    message = f"{message}\n\n{task_notifications.REVIEW_HOW_TO}"
     reviewers = await repositories.get_people_by_ids(task.reviewer_page_ids)
     notifiable = [r for r in reviewers if r.discord_user_id]
     if not notifiable:

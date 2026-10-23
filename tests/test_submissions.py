@@ -647,6 +647,10 @@ class _FakeClient:
         return user
 
 
+from services.task_notifications import REVIEW_HOW_TO as _GUIDE
+MSG_WITH_GUIDE = "msg\n\n" + _GUIDE  # 審核人通知最後一律附「怎麼審」（2026-10-23）
+
+
 class TestNotifySubmissionReviewers:
     """M4-15：審核人員 有填就私訊那些人，沒填才退回控方頻道——不是兩邊都發。"""
 
@@ -692,7 +696,7 @@ class TestNotifySubmissionReviewers:
 
         asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=["p1"]), "msg"))
 
-        assert jia.sent == ["msg"]
+        assert jia.sent == [MSG_WITH_GUIDE]
         assert channel.sent == []
 
     def test_switching_reviewer_only_notifies_the_new_one(self, monkeypatch):
@@ -706,7 +710,7 @@ class TestNotifySubmissionReviewers:
 
         asyncio.run(notify_submission_reviewers(client, task(reviewer_page_ids=["p2"]), "msg"))
 
-        assert yi.sent == ["msg"]
+        assert yi.sent == [MSG_WITH_GUIDE]
         assert jia.sent == []
 
     def test_multiple_reviewers_all_notified(self, monkeypatch):
@@ -721,8 +725,8 @@ class TestNotifySubmissionReviewers:
             client, task(reviewer_page_ids=["p1", "p2"]), "msg",
         ))
 
-        assert jia.sent == ["msg"]
-        assert yi.sent == ["msg"]
+        assert jia.sent == [MSG_WITH_GUIDE]
+        assert yi.sent == [MSG_WITH_GUIDE]
 
     def test_unreachable_reviewer_does_not_raise_or_fall_back(self, monkeypatch):
         """私訊失敗（例如 bot 跟那個人沒有共同伺服器）只記 log，不炸流程，
@@ -789,3 +793,26 @@ def test_審核結果的數字_第幾次交與連續一次就過():
     history.append(s("p5", "t4", "需修改", 23))
     facts = review_facts("需修改", history[-1], "a", history, now)
     assert facts.attempt == 2 and facts.pass_streak == 0 and facts.recent_fixed == 2
+
+
+def test_審核人收到的通知最後附上怎麼審(monkeypatch):
+    from cogs import submissions as sub_mod
+    from services import task_notifications
+
+    sent = []
+
+    class U:
+        async def send(self, content):
+            sent.append(content)
+
+    class C:
+        async def fetch_user(self, _):
+            return U()
+
+    async def people(ids):
+        return [repositories.PersonItem(page_id="p", name="Johnny", discord_user_id="1")]
+
+    monkeypatch.setattr(repositories, "get_people_by_ids", people)
+    task = repositories.TaskItem(page_id="t", name="x", status="待審核", task_type=None, reviewer_page_ids=["p"])
+    asyncio.run(sub_mod.notify_submission_reviewers(C(), task, "📥 **新提交待審核（檔案）**\n任務：x"))
+    assert sent[0].startswith("📥 **新提交待審核（檔案）**") and sent[0].endswith(task_notifications.REVIEW_HOW_TO)

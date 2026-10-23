@@ -7,6 +7,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from services import task_notifications
 from services.repositories import Artist, SubmissionItem, TaskItem
 
 ARTIST_NAG_STATUSES = ("已逾期", "需修改")
@@ -90,5 +91,5 @@ def pending_review_tasks(
 def review_nag_message(entries: list[tuple[TaskItem, SubmissionItem]], after_hours: float, title: str) -> str:
     lines = [title, f"以下提交已超過 {after_hours:g} 小時仍未審核："]
     lines += _lines([f"• {task.name[:50]}｜{submission.name[:40]}" for task, submission in entries])
-    lines.append("\n請用 `/審核提交` 完成審核並回填結果。")
+    lines.append("\n" + task_notifications.REVIEW_HOW_TO)
     return "\n".join(lines)
