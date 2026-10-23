@@ -200,7 +200,7 @@ def mark_reported_line(text: str, task_name: str) -> str:
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if line.startswith(f"・{name}｜"):
-            lines[i] = f"・~~{name}~~｜⚠️ 已回報問題，等控方調整"
+            lines[i] = f"・~~{name}~~｜⚠️ 已回報問題，等公司調整"
     return "\n".join(lines)
 
 

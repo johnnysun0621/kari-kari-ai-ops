@@ -416,8 +416,8 @@ async def open_concern_modal(interaction: discord.Interaction, task_id: str, bun
     await interaction.response.send_modal(TaskConcernModal(task_id, origin=origin, bundle_id=bundle_id))
 
 
-CONCERN_SENT_REPLY = "✅ 已將問題回報給控方，任務已暫停。控方調整後會重新通知你。"
-CONCERN_KEPT_REPLY = "✅ 已將問題回報給控方。這筆已經過了期限，會先維持「已逾期」，控方會跟你確認要延期還是怎麼處理。"
+CONCERN_SENT_REPLY = "✅ 已將問題回報給公司，任務已暫停。公司調整後會重新通知你。"
+CONCERN_KEPT_REPLY = "✅ 已將問題回報給公司。這筆已經過了期限，會先維持「已逾期」，公司會跟你確認要延期還是怎麼處理。"
 
 
 async def after_concern_reported(
@@ -631,7 +631,7 @@ async def receive_bundle(interaction: discord.Interaction, bundle_id: str, messa
     """
     artist = await repositories.find_artist_by_discord_id(interaction.user.id)
     if artist is None:
-        await interaction.followup.send("❌ 找不到你的藝人資料，請聯絡控方。", ephemeral=True)
+        await interaction.followup.send("❌ 找不到你的藝人資料，請聯絡公司。", ephemeral=True)
         return 0
     now = datetime.now(config.get_tenant().tz)
     state = notification_log.shared()

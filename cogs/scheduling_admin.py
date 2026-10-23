@@ -1328,7 +1328,7 @@ class DirectArrangementModal(discord.ui.Modal, title="建立安排 Task 草稿")
             f"安排類型：{self.arrangement_type}\n"
             f"任務類型：{self.task_type}\n"
             f"地點／連結：{location or '待補'}\n"
-            "此為控方草稿；補齊內容後勾選 Discord 顯示=true，Bot 會自動通知藝人。"
+            "此為營運草稿；補齊內容後勾選 Discord 顯示=true，Bot 會自動通知藝人。"
         )
         try:
             task = await repositories.create_formal_arrangement_task(

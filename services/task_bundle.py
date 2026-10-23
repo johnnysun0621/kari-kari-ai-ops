@@ -26,8 +26,8 @@ KIND_ASSIGNMENT = "assignment"
 CONCERN_STATUSES = {"尚未開始", "進行中", "待提交", "已逾期", None, ""}
 # 已逾期的任務可以回報，但不退回、不取消 Discord 顯示：保留逾期紀錄，由控方決定延期或結案（2026-10-23 Johnny 選 A）
 KEEP_STATUS_ON_CONCERN = {"已逾期"}
-CONCERN_BLOCKED_REPLY = "這筆已經交件或正在修改中，不能用按鈕回報。有問題請直接聯絡控方。"
-ALREADY_REPORTED_REPLY = "這筆已經回報過問題，控方調整後會重新通知你。"
+CONCERN_BLOCKED_REPLY = "這筆已經交件或正在修改中，不能用按鈕回報。有問題請直接聯絡公司。"
+ALREADY_REPORTED_REPLY = "這筆已經回報過問題，公司調整後會重新通知你。"
 
 _TITLES = {KIND_DISPATCH: "📌 **任務通知**", KIND_ASSIGNMENT: "📚 **課後作業通知**"}
 _FOOTERS = {
@@ -56,7 +56,7 @@ def _limit(text: str) -> str:
 
 
 def reported_item_line(task: TaskItem) -> str:
-    return f"・~~{strip_notion_links(task.name)}~~｜⚠️ 已回報問題，等控方調整"
+    return f"・~~{strip_notion_links(task.name)}~~｜⚠️ 已回報問題，等公司調整"
 
 
 def receive_label(pending: int, reported: int) -> str:
@@ -97,7 +97,7 @@ def done_text(received: list[TaskItem], reported: list[TaskItem], at: datetime, 
 
 def reported_card_line(task: TaskItem, at: datetime) -> str:
     """單筆卡回報問題後收成的那一行（M3-28）。"""
-    return f"⚠️ 已回報問題｜{strip_notion_links(task.name)}｜等控方調整｜{at:%m/%d %H:%M}"
+    return f"⚠️ 已回報問題｜{strip_notion_links(task.name)}｜等公司調整｜{at:%m/%d %H:%M}"
 
 
 def staff_bundle_text(tasks: list[TaskItem], artist_names, deadline_text) -> str:

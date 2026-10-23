@@ -122,7 +122,7 @@ class AIAnswerFeedbackModal(discord.ui.Modal, title="回報小律的回答"):
             await interaction.followup.send("❌ 回報寫入失敗，請稍後再試。", ephemeral=True)
             return
         await interaction.followup.send(
-            "✅ 已寫入 Notion 布告欄的「🙋 使用回饋」，控方會在那裡追蹤。",
+            "✅ 已寫入 Notion 布告欄的「🙋 使用回饋」，公司會在那裡追蹤。",
             ephemeral=True,
         )
 
@@ -212,10 +212,10 @@ class CourseQACog(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
         artist = await repositories.find_artist_by_discord_id(interaction.user.id)
         if artist is None:
-            await interaction.followup.send("❌ 找不到你的藝人資料，請聯絡控方確認 Discord User ID。", ephemeral=True)
+            await interaction.followup.send("❌ 找不到你的藝人資料，請聯絡公司確認 Discord User ID。", ephemeral=True)
             return
         if not can_artist_use_ai(artist):
-            await interaction.followup.send("❌ 目前的合約狀態無法使用小律，請聯絡控方。", ephemeral=True)
+            await interaction.followup.send("❌ 目前的合約狀態無法使用小律，請聯絡公司。", ephemeral=True)
             return
         parent = interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None
         if parent is None:
@@ -224,7 +224,7 @@ class CourseQACog(commands.Cog):
         thread, created = await self._get_or_create_thread_for(interaction.user, parent)
         if thread is None:
             await interaction.followup.send(
-                "❌ 無法建立私人討論串，請通知控方確認 Bot 有「建立私人討論串」權限。", ephemeral=True,
+                "❌ 無法建立私人討論串，請通知公司確認 Bot 有「建立私人討論串」權限。", ephemeral=True,
             )
             return
         if created:
@@ -295,9 +295,9 @@ class CourseQACog(commands.Cog):
     ) -> tuple[repositories.Artist | None, list[repositories.CourseMeetingRecord] | None, str | None]:
         artist = await repositories.find_artist_by_discord_id(user.id)
         if artist is None:
-            return None, None, "❌ 找不到你的藝人資料，請聯絡控方。"
+            return None, None, "❌ 找不到你的藝人資料，請聯絡公司。"
         if not can_artist_use_ai(artist):
-            return artist, None, "❌ 目前的合約狀態無法使用小律，請聯絡控方。"
+            return artist, None, "❌ 目前的合約狀態無法使用小律，請聯絡公司。"
         cached_records = self._records_cache.get(user.id)
         try:
             # Notion 是課程資料的來源；每次提問先同步，避免啟動預熱後看不到新紀錄。
@@ -311,7 +311,7 @@ class CourseQACog(commands.Cog):
             records = cached_records
         if not records:
             return artist, [], (
-                "目前沒有可供你查詢的會議紀錄。請確認控方已勾選 Notion 的「藝人可見」。\n"
+                "目前沒有可供你查詢的會議紀錄。請確認公司已勾選 Notion 的「藝人可見」。\n"
                 "想查自己的任務可以直接問，例如「這週有什麼任務」「還有哪些沒交」。"
             )
         return artist, records, None
@@ -395,9 +395,9 @@ class CourseQACog(commands.Cog):
         """
         artist = await repositories.find_artist_by_discord_id(user.id)
         if artist is None:
-            return "❌ 找不到你的藝人資料，請聯絡控方。"
+            return "❌ 找不到你的藝人資料，請聯絡公司。"
         if not can_artist_use_ai(artist):
-            return "❌ 目前的合約狀態無法使用小律，請聯絡控方。"
+            return "❌ 目前的合約狀態無法使用小律，請聯絡公司。"
         try:
             tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
         except Exception:

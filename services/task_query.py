@@ -204,7 +204,7 @@ def is_meeting_question(question: str) -> bool:
 # 時間池自動產生的任務草稿會在「任務說明」留下控方內部字樣（2026-10-18 實撈：10 筆），
 # 給藝人看之前拿掉；藝人回報追加在說明裡的舊格式紀錄也一併拿掉。
 _INTERNAL_PREFIXES = (
-    "安排來源：", "安排類型：", "任務類型：", "此為控方草稿", "此 Task 同時管理",
+    "安排來源：", "安排類型：", "任務類型：", "此為控方草稿", "此為營運草稿", "此 Task 同時管理",
     "候選時段（由營運最後確認）", "需要時長：",
 )
 _CANDIDATE_SLOT_RE = re.compile(r"^\s*20\d{2}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s*[~～-]\s*\d{1,2}:\d{2}\s*$")
@@ -276,7 +276,7 @@ def build_task_context(
     if reviewer_names:
         lines.append(f"審核人員：{'、'.join(reviewer_names)}")
     content = clean_description(strip_notion_links(body))
-    lines.append(f"任務內容：\n{content}" if content else "任務內容：（控方沒有寫）")
+    lines.append(f"任務內容：\n{content}" if content else "任務內容：（公司沒有寫）")
     return "\n".join(lines)
 
 
@@ -286,7 +286,7 @@ def task_detail_text(task: repositories.TaskItem, *, deadline_text: str, body: s
 
     content = clean_description(strip_notion_links(body or ""))
     if len(content) > MAX_DETAIL_CHARS:
-        content = content[:MAX_DETAIL_CHARS].rstrip() + "…（內容較長，只顯示前段；完整內容請問控方）"
+        content = content[:MAX_DETAIL_CHARS].rstrip() + "…（內容較長，只顯示前段；完整內容請問公司）"
     info = [
         f"・類型：{task.task_type or '任務'}",
         f"・狀態：{task.status or '未填狀態'}",
@@ -303,5 +303,5 @@ def task_detail_text(task: repositories.TaskItem, *, deadline_text: str, body: s
         f"📌 **{strip_notion_links(task.name)}**\n"
         + "\n".join(info)
         + "\n\n**任務內容**\n"
-        + (content or "（控方還沒寫任務內容）")
+        + (content or "（公司還沒寫任務內容）")
     )

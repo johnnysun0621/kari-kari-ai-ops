@@ -87,7 +87,7 @@ class BulletinFeedbackModal(discord.ui.Modal, title="回報這則公告"):
             logger.exception("Discord 布告欄回饋寫入 Notion 失敗")
             await interaction.followup.send("❌ 回饋寫入失敗，請稍後再試。", ephemeral=True)
             return
-        await interaction.followup.send("✅ 回饋已寫入 Notion 布告欄，控方可以在那裡處理。", ephemeral=True)
+        await interaction.followup.send("✅ 回饋已寫入 Notion 布告欄，公司可以在那裡處理。", ephemeral=True)
 
 
 class BulletinFeedbackView(discord.ui.View):

@@ -347,9 +347,9 @@ def large_file_drive_instruction(
         lines.append(f"資料夾：{folder_url}")
         lines.append("完成後按「我已上傳到 Drive」，系統會檢查公司資料夾中的新檔案。")
     elif drive_setup_error:
-        lines.append("⚠️ 公司 Drive 授權已失效或權限不足，請聯絡控方重新授權 Google Drive。")
+        lines.append("⚠️ 公司 Drive 授權已失效或權限不足，請聯絡公司重新授權 Google Drive。")
     else:
-        lines.append("目前無法自動產生指定資料夾連結，請聯絡控方檢查公司 Google Drive 設定。")
+        lines.append("目前無法自動產生指定資料夾連結，請聯絡公司檢查公司 Google Drive 設定。")
     return "\n".join(lines)
 
 
@@ -1366,14 +1366,14 @@ class SubmissionsCog(commands.Cog):
         pending = self.pending_file_submissions.get(interaction.user.id)
         if pending is None or not pending.folder_url or not pending.folder_base_id:
             await interaction.followup.send(
-                "❌ 目前沒有可驗證的公司資料夾，請回到 `/我的任務` 重新進入提交流程；若仍失敗請聯絡控方。",
+                "❌ 目前沒有可驗證的公司資料夾，請回到 `/我的任務` 重新進入提交流程；若仍失敗請聯絡公司。",
                 ephemeral=True,
             )
             return
         folder_id = drive_archive.extract_drive_folder_id(pending.folder_url)
         if not folder_id:
             await interaction.followup.send(
-                "❌ 找不到公司指定 Drive 資料夾，請聯絡控方檢查設定。",
+                "❌ 找不到公司指定 Drive 資料夾，請聯絡公司檢查設定。",
                 ephemeral=True,
             )
             return
@@ -1422,7 +1422,7 @@ class SubmissionsCog(commands.Cog):
             )
         except Exception:
             logger.exception("Drive 資料夾提交寫入 Notion 失敗")
-            await interaction.followup.send("❌ Drive 已讀到檔案，但 Notion 寫入失敗，請聯絡控方。", ephemeral=True)
+            await interaction.followup.send("❌ Drive 已讀到檔案，但 Notion 寫入失敗，請聯絡公司。", ephemeral=True)
             return
         self.pending_file_submissions.pop(interaction.user.id, None)
         try:
@@ -1624,7 +1624,7 @@ class SubmissionsCog(commands.Cog):
                 f"📎 **{pending.submission.name}** 的批改檔入口還開著（目前已收到 {len(pending.attachments)} 個附件）。\n"
                 "・檔案已放到 Drive → 按「貼 Drive 連結補回饋」\n"
                 "・要直接傳附件 → 在這個頻道上傳，傳完按「完成回饋」\n"
-                "（如果你剛剛有上傳附件但我說 0 個，代表 Discord Bot 的 Message Content Intent 尚未開啟，請通知控方處理。）",
+                "（如果你剛剛有上傳附件但我說 0 個，代表 Discord Bot 的 Message Content Intent 尚未開啟，請通知公司處理。）",
                 view=self._review_feedback_controls(pending, message.author.id),
             )
             return
@@ -1935,7 +1935,7 @@ class SubmissionsCog(commands.Cog):
             if submission.status not in REVIEW_RESULTS:
                 continue
             feedback = submission.review_feedback
-            reviewer = submission.reviewer or "老師／控方"
+            reviewer = submission.reviewer or "老師／公司"
             try:
                 await self._update_review_task_status(submission, submission.status)
                 sent = await self._notify_review_result(

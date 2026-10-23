@@ -309,7 +309,7 @@ class TestLargeFileDriveInstruction:
         text = large_file_drive_instruction(task_name="編曲作業", folder_url=None)
 
         assert "無法自動產生指定資料夾" in text
-        assert "聯絡控方" in text
+        assert "聯絡公司" in text
         assert "貼 Drive 連結" not in text
 
     def test_drive_folder_submission_summary_collects_names_ids_and_size(self):

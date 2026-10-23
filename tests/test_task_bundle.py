@@ -418,7 +418,7 @@ def test_單筆卡回報後收成一行_不留按鈕():
     sent = []
     asyncio.run(tasks_artist.after_concern_reported(_modal_interaction(sent), task("t1"), message, None))
     assert message.edits[-1]["view"] is None
-    assert message.edits[-1]["content"].startswith("⚠️ 已回報問題｜任務t1｜等控方調整")
+    assert message.edits[-1]["content"].startswith("⚠️ 已回報問題｜任務t1｜等公司調整")
     assert sent[0][1] is None
 
 

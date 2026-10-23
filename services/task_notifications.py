@@ -14,7 +14,7 @@ SUBMIT_GUIDE = "需要交件時，請用 `/我的任務` → 提交任務，檔�
 STAFF_HEADER = "👥 同仁知會：你是這個任務的相關同仁，這則僅供通知，不需要按收到。"
 # 只對藝人有意義的按鈕提示：同仁沒有按鈕，留著會跟上面那行矛盾
 _ARTIST_ONLY_PROMPTS = re.compile(
-    r"請先按「收到任務」確認你已看到這項(?:任務|作業)。|\n?看到這則提醒請按下方「收到通知」，讓控方知道你已掌握進度。"
+    r"請先按「收到任務」確認你已看到這項(?:任務|作業)。|\n?看到這則提醒請按下方「收到通知」，讓(?:控方|公司)知道你已掌握進度。"
 )
 
 
@@ -199,7 +199,7 @@ def reminder_message(task: TaskItem, stage: str, deadline_text: str) -> str:
     lines = [f"⏰ **任務提醒（{stage}）**", f"任務：**{task.name}**", deadline_text]
     if description:
         lines.append(f"\n**任務內容**\n{description}")
-    lines.append("\n看到這則提醒請按下方「收到通知」，讓控方知道你已掌握進度。")
+    lines.append("\n看到這則提醒請按下方「收到通知」，讓公司知道你已掌握進度。")
     return "\n".join(lines)
 
 

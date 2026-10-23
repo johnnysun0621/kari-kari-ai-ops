@@ -86,10 +86,10 @@ class CourseQAError(Exception):
 
 def quota_message(status: llm_usage.LimitStatus) -> str:
     if status.artist_remaining == 0:
-        return "⚠️ 你的小律個人每日額度已用完，請明天再試或聯絡控方。"
+        return "⚠️ 你的小律個人每日額度已用完，請明天再試或聯絡公司。"
     if status.system_remaining == 0:
-        return "⚠️ 小律全系統今日額度已用完，請明天再試或聯絡控方。"
-    return "⚠️ 小律今日使用額度不足，請明天再試或聯絡控方。"
+        return "⚠️ 小律全系統今日額度已用完，請明天再試或聯絡公司。"
+    return "⚠️ 小律今日使用額度不足，請明天再試或聯絡公司。"
 
 
 def _record_text(record: CourseMeetingRecord, attachment_names: tuple[str, ...] = ()) -> str:
@@ -181,7 +181,7 @@ async def _post_chat_completion(
                     if exc.response.status_code in {401, 403}:
                         raise CourseQAError(
                             f"LLM API HTTP {exc.response.status_code}: {body}",
-                            "⚠️ 小律 API key 無效或權限不足，請聯絡控方更新 LLM_API_KEY。",
+                            "⚠️ 小律 API key 無效或權限不足，請聯絡公司更新 LLM_API_KEY。",
                         ) from exc
                     raise CourseQAError(
                         f"LLM API HTTP {exc.response.status_code}: {body}",
@@ -226,7 +226,7 @@ async def answer_course_question(
     if not tenant.llm_api_key:
         raise CourseQAError(
             "尚未設定 LLM_API_KEY",
-            "⚠️ 小律尚未設定 API，請聯絡控方。",
+            "⚠️ 小律尚未設定 API，請聯絡公司。",
         )
     quota = llm_usage.limit_status(usage_key)
     if not quota.allowed:
@@ -277,7 +277,7 @@ async def answer_course_question(
     except llm_response.UnsupportedLLMProviderError as exc:
         raise CourseQAError(
             str(exc),
-            "⚠️ 小律的 AI 供應商設定不受支援，請聯絡控方。",
+            "⚠️ 小律的 AI 供應商設定不受支援，請聯絡公司。",
         ) from exc
     answer = await _post_chat_completion(
         payload, usage_key=usage_key, empty_fallback=lambda: build_course_notes_fallback(records),
@@ -295,7 +295,7 @@ def load_task_assistant_skill() -> str:
     try:
         return TASK_SKILL_PATH.read_text(encoding="utf-8")[:8000]
     except OSError:
-        return "只根據提供的任務資料回答；資料沒寫的請藝人問控方；交件用 /我的任務；不可輸出 Notion 網址。"
+        return "只根據提供的任務資料回答；資料沒寫的請藝人問公司；交件用 /我的任務；不可輸出 Notion 網址。"
 
 
 async def answer_task_question(
@@ -307,7 +307,7 @@ async def answer_task_question(
     """藝人問自己任務的具體問題（M6-03）。task_context 由 task_query.build_task_context 組好，不含網址。"""
     tenant = config.get_tenant()
     if not tenant.llm_api_key:
-        raise CourseQAError("尚未設定 LLM_API_KEY", "⚠️ 小律尚未設定 API，請聯絡控方。")
+        raise CourseQAError("尚未設定 LLM_API_KEY", "⚠️ 小律尚未設定 API，請聯絡公司。")
     quota = llm_usage.limit_status(usage_key)
     if not quota.allowed:
         raise CourseQAError("LLM daily token limit reached", quota_message(quota))
@@ -333,6 +333,6 @@ async def answer_task_question(
             payload, base_url=tenant.llm_base_url, model=tenant.llm_model, max_tokens=tenant.llm_max_tokens,
         )
     except llm_response.UnsupportedLLMProviderError as exc:
-        raise CourseQAError(str(exc), "⚠️ 小律的 AI 供應商設定不受支援，請聯絡控方。") from exc
+        raise CourseQAError(str(exc), "⚠️ 小律的 AI 供應商設定不受支援，請聯絡公司。") from exc
     answer = await _post_chat_completion(payload, usage_key=usage_key)
     return strip_notion_links(answer)[:3600]

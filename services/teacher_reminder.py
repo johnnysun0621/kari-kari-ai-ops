@@ -88,7 +88,7 @@ def unreachable_message(task: TaskItem, teacher_names: list[str]) -> str:
     who = "、".join(teacher_names) or "（未指定）"
     return (
         f"📝 **課後提醒（老師聯絡不到）**｜{task.name}\n"
-        f"負責老師：{who}，沒有 Discord ID 或私訊失敗。請控方轉告老師到論壇發布作業要求與評語。"
+        f"負責老師：{who}，沒有 Discord ID 或私訊失敗。請營運轉告老師到論壇發布作業要求與評語。"
     )
 
 

@@ -163,7 +163,7 @@ def due_events(now_ts: int) -> list[SLAEvent]:
         ):
             events.append(SLAEvent(
                 key,
-                f"⏰ **{workflow.month} 時間池已截止超過半天**，請控方執行 `/從時間池建立任務`。",
+                f"⏰ **{workflow.month} 時間池已截止超過半天**，請營運執行 `/從時間池建立任務`。",
             ))
     for workflow in _tasks.values():
         if workflow.completed_ts:

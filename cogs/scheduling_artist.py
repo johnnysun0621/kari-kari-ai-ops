@@ -184,7 +184,7 @@ async def _cleanup_notice(artist: repositories.Artist, interaction: discord.Inte
         )
     except Exception:
         logger.exception("送出後自動整理時間池失敗")
-        return "\n⚠️ 時間已記錄，但自動整理時間池失敗；請通知控方稍後重新執行安排比對。"
+        return "\n⚠️ 時間已記錄，但自動整理時間池失敗；請通知公司稍後重新執行安排比對。"
     if cleanup_count:
         return f"\n\n已自動整理 {cleanup_count} 筆重複、重疊或冗餘時段。"
     return ""
