@@ -971,6 +971,25 @@ async def send_task_notifications(
     return outcomes
 
 
+async def refresh_unreceived_cards(bot, user, tasks: list[repositories.TaskItem]) -> int:
+    """還沒按收到的任務卡搬到最下面（M3-29）：舊卡刪掉、重新送一張，2 筆以上合併。
+
+    只送藝人本人：不發同仁、不發公告、不改 Notion（這不是重新派發，只是把卡移到看得到的位置）。
+    回傳送出幾則。
+    """
+    sent = 0
+    for group in task_bundle.chunks(tasks):
+        try:
+            if len(group) == 1:
+                await send_task_dm(user, group[0].page_id, task_notifications.notification_message(group[0]), client=bot)
+            else:
+                await send_bundle_dm(bot, user, task_bundle.KIND_DISPATCH, group)
+            sent += 1
+        except Exception:
+            logger.exception("搬移還沒按收到的任務卡失敗：%s", "、".join(t.name for t in group))
+    return sent
+
+
 async def _after_dispatch(bot, task: repositories.TaskItem, outcome: DispatchOutcome) -> None:
     """派發全部送達後：公開類型發公告區、寫「Discord 通知時間」。"""
     logger.info("任務派發通知成功：%s，已通知 %s 位藝人、%s 位同仁", task.name, outcome.sent, outcome.staff_sent)

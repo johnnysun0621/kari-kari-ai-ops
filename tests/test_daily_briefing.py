@@ -613,3 +613,42 @@ def test_早報上回報問題_確認訊息不推看完按鈕_只提醒其他也
     # 早報上照樣留「看某一筆的詳細」和「我都看到了」，要不要按由藝人自己決定
     ids = [child.custom_id for child in env.message.edits[-1]["view"].children]
     assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"]
+
+
+# ---------- M3-29：還沒按收到的不列進早報，任務卡搬到早報下面 ----------
+
+def _unreceived(page_id, notified):
+    return dataclasses.replace(task(page_id, "尚未開始", acknowledged=False), discord_notified_at=notified)
+
+
+@pytest.fixture
+def card_env(send_env, monkeypatch):
+    monkeypatch.setattr(tasks_artist.audit, "log_event", lambda *a, **k: asyncio.sleep(0))
+    client = BriefClient()
+    client.user.id = 1
+    return client
+
+
+def test_還沒按收到的不列進早報_任務卡搬到早報下面(send_env, card_env):
+    send_env.tasks[:] = [task("late", "已逾期"), _unreceived("new", datetime(2026, 10, 19, 14, 0, tzinfo=TZ))]
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))
+    assert len(card_env.sent) == 2, "早報一則＋任務卡一則"
+    brief, card = card_env.sent
+    assert "任務late" in brief[0] and "任務new" not in brief[0] and "還沒按收到**" not in brief[0]
+    assert "1 筆任務還沒按收到，任務卡在這則下面" in brief[0]
+    assert [c.custom_id for c in card[1].children] == ["task_receipt:new", "task_concern:new"]
+    assert {c.custom_id for c in brief[1].children} == {"briefing_detail:20261020", "briefing_ack:20261020"}
+
+
+def test_今天才派發的不再送一次卡(send_env, card_env):
+    send_env.tasks[:] = [task("late", "已逾期"), _unreceived("new", NOW.replace(hour=8))]
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))
+    assert len(card_env.sent) == 1 and "1 筆任務還沒按收到" in card_env.sent[0][0]
+
+
+def test_只有還沒收的任務_不發早報只搬卡_重跑不重複(send_env, card_env):
+    send_env.tasks[:] = [_unreceived("n1", datetime(2026, 10, 19, tzinfo=TZ)), _unreceived("n2", datetime(2026, 10, 18, tzinfo=TZ))]
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))  # 同一天重試
+    assert len(card_env.sent) == 1, "兩筆合併成一則，重跑不再送"
+    assert "任務通知**（2）" in card_env.sent[0][0]

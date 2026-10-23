@@ -287,6 +287,22 @@ async def _delete_previous(client: discord.Client, entry: dict | None) -> None:
         logger.warning("刪除前一天的早報失敗：%s", entry.get("message_id"))
 
 
+async def _refresh_cards(client, artist, unreceived, day: date, refreshed: dict, user=None) -> None:
+    """還沒按收到的任務卡搬到早報下面（M3-29）。今天才派發的不用再送；一天只搬一次（重試不重複）。"""
+    from cogs.tasks_artist import refresh_unreceived_cards
+
+    due = [task for task in unreceived if daily_briefing.needs_card_refresh(task, day)]
+    refreshed[str(artist.discord_user_id)] = _day_code(day)
+    if not due:
+        return
+    try:
+        user = user or await client.fetch_user(int(artist.discord_user_id))
+    except Exception:
+        logger.exception("搬移任務卡：找不到 Discord 使用者：%s", artist.name)
+        return
+    await refresh_unreceived_cards(client, user, due)
+
+
 async def send_daily_briefings(client: discord.Client, now: datetime, *, final: bool = True) -> dict:
     """每位藝人一則早報；沒有要列的就只刪掉昨天那則。回傳統計供 audit。
 
@@ -306,7 +322,17 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
         if not artist.discord_user_id:
             continue
         previous = daily_briefing.briefing_for(state, artist.discord_user_id)
-        items = daily_briefing.build_items(artist.page_id, tasks, queued, acks, now)
+        items, unreceived = daily_briefing.split_unreceived(
+            daily_briefing.build_items(artist.page_id, tasks, queued, acks, now)
+        )
+        refreshed = state.setdefault("card_refresh", {})
+        if not items and unreceived and refreshed.get(str(artist.discord_user_id)) != _day_code(day):
+            # 沒有提醒、只有還沒收的任務：不發早報，只把任務卡搬下來
+            if previous and previous.get("day") != _day_code(day):
+                await _delete_previous(client, previous)
+                state.get("briefings", {}).pop(str(artist.discord_user_id), None)
+            await _refresh_cards(client, artist, unreceived, day, refreshed)
+            continue
         if previous and previous.get("day") == _day_code(day):
             continue  # 今天已發過（重啟後同一天不重發）
         if (previous and previous.get("day") and not previous.get("acked_at") and previous.get("task_ids")
@@ -322,13 +348,15 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
         try:
             user = await client.fetch_user(int(artist.discord_user_id))
             message = await user.send(
-                daily_briefing.briefing_text(day, items, _deadline_fn(now)),
+                daily_briefing.briefing_text(day, items, _deadline_fn(now), unreceived_count=len(unreceived)),
                 view=briefing_view(day, items, now),
             )
         except Exception:
             logger.exception("每日早報發送失敗：%s", artist.name)
             failed += 1
             continue
+        if unreceived and refreshed.get(str(artist.discord_user_id)) != _day_code(day):
+            await _refresh_cards(client, artist, unreceived, day, refreshed, user=user)
         daily_briefing.remember_briefing(state, artist.discord_user_id, {
             "day": _day_code(day),
             "channel_id": message.channel.id,

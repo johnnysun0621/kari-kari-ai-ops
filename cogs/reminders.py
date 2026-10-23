@@ -343,7 +343,7 @@ class RemindersCog(commands.Cog):
     async def _check_unacknowledged_task_notifications(self):
         """依 TASK_ACK_REMINDER_HOURS 掃描一次，重新推送所有尚未確認的任務。
 
-        每日早報開著時不跑（M3-24）：沒按收到的任務改列在早報的「還沒按收到」，不再每 12 小時發新訊息。
+        每日早報開著時不跑（M3-24）：沒按收到的任務卡改成每天早報時搬到早報下面（M3-29），不再每 12 小時發新訊息。
         """
         if config.get_tenant().daily_briefing_enabled:
             return

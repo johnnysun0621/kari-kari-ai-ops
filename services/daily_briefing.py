@@ -3,7 +3,8 @@
 藝人私訊原本一個任務會收到派發、每 12 小時重發、5／3／1 天前提醒各一則，同一輪還會一次跳好幾個
 階段（近 8 天：每天約 20 則提醒、25% 同時多階段、SOMA 51 則派發沒按收到）。改成：
 
-- 每位藝人每天 DAILY_BRIEFING_HOUR（預設 9）點一則早報：已逾期、需修改、快到期、還沒按收到
+- 每位藝人每天 DAILY_BRIEFING_HOUR（預設 9）點一則早報：已逾期、需修改、快到期
+  （還沒按收到的不列進早報，改成把任務卡搬到早報下面，M3-29）
 - 底下一個「看某一筆的詳細」下拉選單＋一顆「👌 我都看到了」；按了寫進每筆任務的「提醒確認」，早報收成一行
 - 隔天發新早報時刪掉前一天的，私訊裡永遠只有今天這則
 - 已逾期、需修改確認過後隔天仍列出，標「⚠️ 仍未完成（某天已確認）」，直到處理好
@@ -94,6 +95,28 @@ def build_items(
     return sorted(items, key=sort_key)[:MAX_ITEMS]
 
 
+def split_unreceived(items: list[BriefingItem]) -> tuple[list[BriefingItem], list[repositories.TaskItem]]:
+    """還沒按收到的任務不放進早報（M3-29，Johnny 2026-10-23 選戊）。
+
+    早報只放「知道就好」的提醒；要藝人做決定的新任務放在早報裡，他會以為按「我都看到了」就算收到。
+    改成把那張任務卡搬到早報下面（cogs/briefing.py），收到永遠只在任務卡上按。
+    回傳（早報要列的、還沒按收到的任務）。
+    """
+    keep = [item for item in items if item.section != SECTION_UNRECEIVED]
+    unreceived = [item.task for item in items if item.section == SECTION_UNRECEIVED]
+    return keep, unreceived
+
+
+def needs_card_refresh(task: repositories.TaskItem, today: date) -> bool:
+    """今天之前派發、還沒按收到的任務卡：今天早上搬到最下面。今天才派發的就不用再送一次。"""
+    notified = task.discord_notified_at
+    return notified is None or notified.date() < today
+
+
+def unreceived_tip(count: int) -> str:
+    return f"📌 你還有 {count} 筆任務還沒按收到，任務卡在這則下面 👇"
+
+
 def build_staff_items(
     person_page_id: str,
     tasks: list[repositories.TaskItem],
@@ -137,10 +160,13 @@ def briefing_text(
     deadline_text,
     extra_count: int = 0,
     footer: str | None = None,
+    unreceived_count: int = 0,
 ) -> str:
     """早報內文。deadline_text 由呼叫端傳入（cogs/ui_text.deadline_text），這裡不 import cogs。"""
     weekdays = "一二三四五六日"
     lines = [f"☀️ **{day.month}/{day.day}（{weekdays[day.weekday()]}）今天的任務提醒**"]
+    if unreceived_count:
+        lines.append(unreceived_tip(unreceived_count))
     for section in SECTION_ORDER:
         section_items = [item for item in items if item.section == section]
         if not section_items:
