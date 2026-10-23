@@ -30,7 +30,12 @@ MAX_CLOSING = 30
 MAX_COMPLETION_TOKENS = 200
 DEFAULT_CLOSING = "今天也一起加油！"
 _WEEKDAYS = "一二三四五六日"
-_BAD = re.compile(r"https?://|www\.|discord\.gg|notion\.|@|`|<|>")
+_BAD = re.compile(
+    r"https?://|www\.|discord\.gg|notion\.|@|[`<>#\[\]*_~]",
+    re.IGNORECASE,
+)
+_FACT_NUMBER = re.compile(r"\d|[零〇一二兩三四五六七八九十百千]+\s*(?:筆|件|次|天|日|週|月|年)")
+_SPECIFIC_TIME = re.compile(r"星期[一二三四五六日天]|週[一二三四五六日天末]|月底|月初|年底|年初")
 
 
 @dataclass
@@ -133,12 +138,43 @@ def qa_persona() -> str:
 def _clean(text, limit: int) -> str | None:
     if not isinstance(text, str):
         return None
+    if _BAD.search(text):
+        return None
     text = " ".join(text.replace("**", "").split()).strip("「」\"' ")
-    if not text or _BAD.search(text):
+    if not text:
         return None
     if len(text) > limit:
         return None  # 太長就整句不要，不硬切（切一半的句子比範本句還糟）
     return text
+
+
+def _clean_daily_voice(text, limit: int, counts: Counts) -> str | None:
+    """早報 AI 句子的第二層防護：事實與數字仍由程式負責。
+
+    Prompt 只能降低寫錯的機率，不能當保證。這裡拒絕網址／Markdown（由 ``_clean``
+    處理）、任何數字或具體星期，以及與輸入狀況矛盾的任務狀態；不合格就改用
+    程式內的固定範本句。
+    """
+    cleaned = _clean(text, limit)
+    if cleaned is None or _FACT_NUMBER.search(cleaned) or _SPECIFIC_TIME.search(cleaned):
+        return None
+    guarded_facts = (
+        (r"逾期|過期|過了期限|已經過期限", counts.overdue),
+        (r"需修改|要修改|需要修改", counts.needs_fix),
+        (r"還沒(?:按)?收到|等你按收到", counts.unreceived),
+        (r"已過截止|等公司確認", counts.awaiting),
+        (r"快到期|快截止|期限快到", counts.due_soon),
+    )
+    if any(re.search(pattern, cleaned) and not value for pattern, value in guarded_facts):
+        return None
+    if "昨天" in cleaned:
+        says_unread = bool(re.search(r"沒(?:有)?看|未看|沒按", cleaned))
+        says_read = bool(re.search(r"有看|看完|已讀", cleaned)) and not says_unread
+        if (says_unread and counts.yesterday_read is not False) or (
+            says_read and counts.yesterday_read is not True
+        ):
+            return None
+    return cleaned
 
 
 def _used_today(state: dict, today: str) -> int:
@@ -205,8 +241,8 @@ async def daily_voice(counts: Counts, *, state: dict, now: datetime, client: htt
     if parsed is None:
         return fallback
     tokens = parsed.get("_tokens", 0)
-    opening = _clean(parsed.get("opening"), MAX_OPENING)
-    closing = _clean(parsed.get("closing"), MAX_CLOSING)
+    opening = _clean_daily_voice(parsed.get("opening"), MAX_OPENING, counts)
+    closing = _clean_daily_voice(parsed.get("closing"), MAX_CLOSING, counts)
     voice = Voice(opening=opening or fallback.opening, closing=closing or fallback.closing,
                   source="ai" if opening and closing else "partial" if opening or closing else "template",
                   tokens=tokens)

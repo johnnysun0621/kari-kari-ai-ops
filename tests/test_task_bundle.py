@@ -41,6 +41,12 @@ ARTISTS = {
 PEOPLE = {"p1": SimpleNamespace(page_id="p1", name="Johnny", discord_user_id="300")}
 
 
+def test_單筆任務收到後用小律口吻收合():
+    text = tasks_artist.received_line(task("t1"), datetime(2026, 10, 23, 13, 20, tzinfo=TZ))
+    assert text.startswith("✅ 任務收好了，小律記下來囉｜任務t1")
+    assert "✅ 已收到" not in text
+
+
 class FakeMessage:
     def __init__(self, mid, content, view):
         self.id, self.content, self.view = mid, content, view
@@ -211,7 +217,7 @@ def test_全部收到_每筆都記收到_收成一行留有問題(repos, monkeyp
     asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
 
     assert acked == ["t1", "t2"]
-    assert "已收到 2 筆任務" in edits[0]["content"]
+    assert "2 筆任務收好了，小律記下來囉" in edits[0]["content"]
     assert ids(edits[0]["view"]) == [f"bundle_concern:{bundle_id}"]
     assert 1001 not in bot.deleted, "按的那則收成一行，不刪"
 
@@ -363,7 +369,7 @@ def test_合併通知每一筆都回報_整則收合不留按鈕(repos, monkeypa
     asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t2"))
     assert asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t1")) == 0
     assert message.edits[-1]["view"] is None
-    assert "已回報 2 筆" in message.edits[-1]["content"]
+    assert "2 筆小律已轉告公司" in message.edits[-1]["content"]
 
 
 def test_回報後其餘收到_只記沒回報的那筆(repos, monkeypatch):
@@ -383,7 +389,7 @@ def test_回報後其餘收到_只記沒回報的那筆(repos, monkeypatch):
     assert asyncio.run(tasks_artist.receive_bundle(interaction, bundle_id, message)) == 1
     assert acked == ["t1"]
     content = message.edits[-1]["content"]
-    assert "已收到 1 筆任務" in content and "已回報 1 筆" in content
+    assert "1 筆任務收好了，小律記下來囉" in content and "1 筆小律已轉告公司" in content
 
 
 def test_收到之後才回報_移到已回報_沒有可回報的就不留選單(repos, monkeypatch):
@@ -400,7 +406,7 @@ def test_收到之後才回報_移到已回報_沒有可回報的就不留選單
     asyncio.run(tasks_artist.receive_bundle(interaction, bundle_id, message))
     assert asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t1")) == 0
     edit = message.edits[-1]
-    assert "已收到 1 筆任務" in edit["content"] and "~~任務t1~~" in edit["content"]
+    assert "1 筆任務收好了，小律記下來囉" in edit["content"] and "~~任務t1~~" in edit["content"]
     assert [o.value for o in edit["view"].children[0].options] == ["t2"]
     asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "t2"))
     assert message.edits[-1]["view"] is None

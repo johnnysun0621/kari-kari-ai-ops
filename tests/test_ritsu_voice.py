@@ -54,12 +54,38 @@ def test_只送狀況統計_不送名字和任務名稱():
     assert "小律" in seen["messages"][0]["content"], "人設檔有送出"
 
 
-@pytest.mark.parametrize("opening", ["請看 https://notion.so/x", "@everyone 早安", "太長" * 40, ""])
+@pytest.mark.parametrize("opening", [
+    "請看 https://notion.so/x",
+    "請看 HTTPS://EXAMPLE.COM",
+    "@everyone 早安",
+    "# 今天加油",
+    "**今天加油**",
+    "太長" * 40,
+    "",
+])
 def test_寫壞的句子_改用範本句(opening):
     counts = ritsu_voice.Counts(due_soon=2)
     voice, _ = run(counts, reply(opening, "加油！"))
     assert voice.opening == ritsu_voice.template_voice(counts).opening
     assert voice.closing == "加油！" and voice.source == "partial"
+
+
+@pytest.mark.parametrize("opening", [
+    "今天有 99 筆逾期，一起加油！",
+    "週末前一起把事情整理好！",
+    "有任務逾期了，小律陪你！",
+])
+def test_數字_具體時間或與狀況矛盾的事實_改用範本句(opening):
+    counts = ritsu_voice.Counts(due_soon=1)
+    voice, _ = run(counts, reply(opening, "一起加油！"))
+    assert voice.opening == ritsu_voice.template_voice(counts).opening
+    assert voice.closing == "一起加油！" and voice.source == "partial"
+
+
+def test_與狀況一致但不自行報數字的句子可以使用():
+    voice, _ = run(ritsu_voice.Counts(due_soon=1), reply("有任務快到期了，小律陪你！", "一起加油！"))
+    assert voice.opening == "有任務快到期了，小律陪你！"
+    assert voice.source == "ai"
 
 
 def test_API_出錯或逾時_改用範本句_不丟例外():

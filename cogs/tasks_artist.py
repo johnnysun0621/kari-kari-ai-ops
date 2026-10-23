@@ -183,7 +183,7 @@ async def _send_staff_dm(bot, person, tasks: list[repositories.TaskItem], artist
 def received_line(task: repositories.TaskItem, received_at: datetime) -> str:
     """派發卡按了「收到任務」後收成的那一行。"""
     now = datetime.now(config.get_tenant().tz)
-    return f"✅ 已收到｜{task.name}（{ui_text.deadline_text(task, now)}）｜{received_at:%m/%d %H:%M}"
+    return f"✅ 任務收好了，小律記下來囉｜{task.name}（{ui_text.deadline_text(task, now)}）｜{received_at:%m/%d %H:%M}"
 
 
 async def mark_previous_notifications_received(
