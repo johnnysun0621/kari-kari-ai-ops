@@ -350,8 +350,29 @@ async def show_reminders(message, user_id, bundle_id: str, received: list, repor
         return True
     try:
         await message.delete()
+    except discord.NotFound:
+        pass  # 第一段已不存在，新的提醒就是私訊裡唯一可操作的早報
     except Exception:
-        logger.warning("早報第一段刪除失敗：%s", getattr(message, "id", None))
+        logger.warning("早報第一段刪除失敗，回退原訊息：%s", getattr(message, "id", None))
+        try:
+            await new_message.delete()
+        except Exception:
+            # 兩邊都刪不掉時，至少拿掉舊訊息的按鈕，避免兩則都能操作。
+            logger.warning("早報第二段回收失敗，停用第一段按鈕：%s", getattr(new_message, "id", None))
+            try:
+                await message.edit(content="↪️ 今天的任務提醒已移到下方。", embed=None, view=None)
+            except Exception:
+                logger.warning("早報第一段停用失敗：%s", getattr(message, "id", None))
+            entry["channel_id"] = new_message.channel.id
+            entry["message_id"] = new_message.id
+            notification_log.persist()
+            return True
+        # 新訊息已回收，安全地在原訊息顯示第二段；私訊仍只有一則。
+        await message.edit(content=content, embed=None, view=view)
+        entry["channel_id"] = message.channel.id
+        entry["message_id"] = message.id
+        notification_log.persist()
+        return True
     entry["channel_id"] = new_message.channel.id
     entry["message_id"] = new_message.id
     notification_log.persist()
