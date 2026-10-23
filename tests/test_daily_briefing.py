@@ -615,40 +615,133 @@ def test_早報上回報問題_確認訊息不推看完按鈕_只提醒其他也
     assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"]
 
 
-# ---------- M3-29：還沒按收到的不列進早報，任務卡搬到早報下面 ----------
+# ---------- M3-29 第五版：早上只有一則，先確認還沒收到的任務，收完同一則換成提醒 ----------
 
-def _unreceived(page_id, notified):
+def _unreceived(page_id, notified=datetime(2026, 10, 19, 14, 0, tzinfo=TZ)):
     return dataclasses.replace(task(page_id, "尚未開始", acknowledged=False), discord_notified_at=notified)
 
 
 @pytest.fixture
 def card_env(send_env, monkeypatch):
-    monkeypatch.setattr(tasks_artist.audit, "log_event", lambda *a, **k: asyncio.sleep(0))
+    async def noop(*a, **k):
+        return True
+
+    monkeypatch.setattr(tasks_artist.audit, "log_event", noop)
     client = BriefClient()
     client.user.id = 1
     return client
 
 
-def test_還沒按收到的不列進早報_任務卡搬到早報下面(send_env, card_env):
-    send_env.tasks[:] = [task("late", "已逾期"), _unreceived("new", datetime(2026, 10, 19, 14, 0, tzinfo=TZ))]
+def _ids(view):
+    return [c.custom_id.split(":")[0] for c in view.children] if view else []
+
+
+def test_有還沒收的任務_早上只有一則_先只問收到(send_env, card_env):
+    send_env.tasks[:] = [task("late", "已逾期"), _unreceived("new")]
     asyncio.run(briefing.send_daily_briefings(card_env, NOW))
-    assert len(card_env.sent) == 2, "早報一則＋任務卡一則"
-    brief, card = card_env.sent
-    assert "任務late" in brief[0] and "任務new" not in brief[0] and "還沒按收到**" not in brief[0]
-    assert "1 筆任務還沒按收到，任務卡在這則下面" in brief[0]
-    assert [c.custom_id for c in card[1].children] == ["task_receipt:new", "task_concern:new"]
-    assert {c.custom_id for c in brief[1].children} == {"briefing_detail:20261020", "briefing_ack:20261020"}
+    assert len(card_env.sent) == 1, "早上只有一則"
+    content, view = card_env.sent[0]
+    assert "先確認：還沒收到的任務（1）" in content and "10/19 派發" in content
+    assert "新任務" not in content and "任務late" not in content, "提醒要等收完才出現"
+    assert _ids(view) == ["bundle_detail", "bundle_receive", "bundle_concern"], "第一段沒有「我都看到了」"
 
 
-def test_今天才派發的不再送一次卡(send_env, card_env):
-    send_env.tasks[:] = [task("late", "已逾期"), _unreceived("new", NOW.replace(hour=8))]
+class EditMsg:
+    def __init__(self, mid):
+        self.id, self.channel, self.content, self.edits = mid, SimpleNamespace(id=900), "", []
+
+    async def edit(self, **kw):
+        self.edits.append(kw)
+
+
+def _patch_repo(monkeypatch, tasks, acked):
+    async def brief(tid):
+        return tasks[tid]
+
+    async def find_artist(_uid):
+        return repositories.Artist(page_id="a1", name="方晨", discord_user_id="1")
+
+    async def ack(tid, at):
+        acked.append(tid)
+        return True
+
+    monkeypatch.setattr(repositories, "get_task_brief", brief)
+    monkeypatch.setattr(repositories, "find_artist_by_discord_id", find_artist)
+    monkeypatch.setattr(repositories, "acknowledge_task", ack)
+
+
+def test_全部收到後_同一則換成今天的提醒_才出現我都看到了(send_env, card_env, monkeypatch):
+    new = _unreceived("new")
+    send_env.tasks[:] = [task("late", "已逾期"), new]
     asyncio.run(briefing.send_daily_briefings(card_env, NOW))
-    assert len(card_env.sent) == 1 and "1 筆任務還沒按收到" in card_env.sent[0][0]
+    bundle_id = card_env.sent[0][1].children[0].custom_id.split(":")[1]
+    acked = []
+    _patch_repo(monkeypatch, {"new": new}, acked)
+    message = EditMsg(1001)
+
+    async def defer():
+        return None
+
+    interaction = SimpleNamespace(user=SimpleNamespace(id=1), client=card_env, message=message,
+                                  response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
+    asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
+    assert acked == ["new"]
+    edit = message.edits[-1]
+    assert "今天的任務提醒" in edit["content"] and "任務late" in edit["content"]
+    assert "✅ 已收到 1 筆任務" in edit["content"]
+    assert _ids(edit["view"]) == ["briefing_detail", "briefing_ack"]
 
 
-def test_只有還沒收的任務_不發早報只搬卡_重跑不重複(send_env, card_env):
-    send_env.tasks[:] = [_unreceived("n1", datetime(2026, 10, 19, tzinfo=TZ)), _unreceived("n2", datetime(2026, 10, 18, tzinfo=TZ))]
+def test_每一筆都回報_也換成提醒(send_env, card_env, monkeypatch):
+    new = _unreceived("new")
+    send_env.tasks[:] = [task("late", "已逾期"), new]
     asyncio.run(briefing.send_daily_briefings(card_env, NOW))
-    asyncio.run(briefing.send_daily_briefings(card_env, NOW))  # 同一天重試
-    assert len(card_env.sent) == 1, "兩筆合併成一則，重跑不再送"
-    assert "任務通知**（2）" in card_env.sent[0][0]
+    bundle_id = card_env.sent[0][1].children[0].custom_id.split(":")[1]
+    _patch_repo(monkeypatch, {"new": dataclasses.replace(new, discord_visible=False)}, [])
+    message = EditMsg(1001)
+    assert asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "new")) == 0
+    edit = message.edits[-1]
+    assert "⚠️ 已回報 1 筆" in edit["content"] and "任務late" in edit["content"]
+    assert _ids(edit["view"]) == ["briefing_detail", "briefing_ack"]
+
+
+def test_沒有提醒只有還沒收的_收完就收合不用再按(send_env, card_env, monkeypatch):
+    new = _unreceived("new")
+    send_env.tasks[:] = [new]
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))
+    bundle_id = card_env.sent[0][1].children[0].custom_id.split(":")[1]
+    _patch_repo(monkeypatch, {"new": new}, [])
+    message = EditMsg(1001)
+
+    async def defer():
+        return None
+
+    interaction = SimpleNamespace(user=SimpleNamespace(id=1), client=card_env, message=message,
+                                  response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
+    asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
+    assert message.edits[-1]["view"] is None and "✅ 已收到 1 筆任務" in message.edits[-1]["content"]
+    assert notification_log.shared()["briefings"]["1"].get("acked_at"), "沒有提醒可看，不算沒看早報"
+
+
+def test_早上發新的一則前_清掉之前的任務通知(send_env, card_env):
+    state = notification_log.shared()
+    notification_log.record_message(state, "old-done", "1", 900, 77, datetime(2026, 10, 18, tzinfo=TZ))
+    notification_log.record_message(state, "new", "1", 900, 78, datetime(2026, 10, 19, tzinfo=TZ))
+    send_env.tasks[:] = [task("late", "已逾期"), _unreceived("new")]
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))
+    assert {77, 78} <= set(card_env.deleted)
+    assert [m["message_id"] for m in notification_log.messages_for(state, "new", "1")] == [1001], "只留今天這則"
+
+
+def test_同一天重跑不重發(send_env, card_env):
+    send_env.tasks[:] = [_unreceived("new")]
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))
+    assert len(card_env.sent) == 1
+
+
+def test_早報第一段還沒處理時_營運重送其中的任務_早報不會被刪(send_env, card_env, monkeypatch):
+    send_env.tasks[:] = [task("late", "已逾期"), _unreceived("new")]
+    asyncio.run(briefing.send_daily_briefings(card_env, NOW))
+    asyncio.run(tasks_artist.clear_old_notifications(card_env, {"new"}, "1"))
+    assert 1001 not in card_env.deleted

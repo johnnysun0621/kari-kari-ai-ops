@@ -10,7 +10,7 @@ import discord
 
 import config
 from cogs import ui_text
-from services import audit, daily_briefing, notification_log, ops_briefing, repositories, task_notifications, task_query
+from services import audit, daily_briefing, notification_log, ops_briefing, repositories, task_bundle, task_notifications, task_query
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -287,20 +287,61 @@ async def _delete_previous(client: discord.Client, entry: dict | None) -> None:
         logger.warning("刪除前一天的早報失敗：%s", entry.get("message_id"))
 
 
-async def _refresh_cards(client, artist, unreceived, day: date, refreshed: dict, user=None) -> None:
-    """還沒按收到的任務卡搬到早報下面（M3-29）。今天才派發的不用再送；一天只搬一次（重試不重複）。"""
-    from cogs.tasks_artist import refresh_unreceived_cards
+def _options_from_items(items: list[daily_briefing.BriefingItem], now: datetime) -> list[dict]:
+    deadline_text = _deadline_fn(now)
+    return [
+        {"label": strip_notion_links(item.task.name)[:100] or "未命名任務", "value": item.task.page_id,
+         "description": daily_briefing.option_description(item, deadline_text)}
+        for item in items
+    ]
 
-    due = [task for task in unreceived if daily_briefing.needs_card_refresh(task, day)]
-    refreshed[str(artist.discord_user_id)] = _day_code(day)
-    if not due:
-        return
-    try:
-        user = user or await client.fetch_user(int(artist.discord_user_id))
-    except Exception:
-        logger.exception("搬移任務卡：找不到 Discord 使用者：%s", artist.name)
-        return
-    await refresh_unreceived_cards(client, user, due)
+
+def reminders_view(day_code: str, options: list[dict]) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(BriefingDetailSelect(day_code, [discord.SelectOption(**o) for o in options]))
+    view.add_item(BriefingAckButton(day_code))
+    return view
+
+
+async def _clear_old_task_messages(client, user_id: str) -> None:
+    """早上發新的一則前，清掉這位藝人之前的任務通知（M3-29 第五版）。
+
+    收成一行的「已收到／已回報」是處理完的；還沒收的會併進今天這則。私訊裡只留今天要看的。
+    只清得到 bot 有記錄的訊息。
+    """
+    from cogs.tasks_artist import clear_old_notifications
+
+    state = notification_log.shared()
+    task_ids = {tid for tid, per_user in state.get("messages", {}).items() if str(user_id) in per_user}
+    if task_ids:
+        await clear_old_notifications(client, task_ids, user_id)
+
+
+async def show_reminders(message, user_id, bundle_id: str, received: list, reported: list) -> bool:
+    """第一段（先確認還沒收到的任務）處理完：同一則換成今天的提醒（M3-29 第五版）。
+
+    回傳 False＝狀態檔沒有這則早報（不是早報的第一段），呼叫端照一般合併通知收合。
+    """
+    state = notification_log.shared()
+    entry = daily_briefing.briefing_for(state, user_id)
+    if not entry or entry.get("bundle_id") != bundle_id:
+        return False
+    now = datetime.now(config.get_tenant().tz)
+    head = daily_briefing.handled_line(len(received), len(reported))
+    entry["stage"] = 2
+    if entry.get("reminder_text"):
+        lines = entry["reminder_text"].split("\n")
+        content = "\n".join([lines[0], head, *lines[1:]])
+        view = reminders_view(entry["day"], entry.get("options") or [])
+    else:
+        # 今天沒有提醒：處理完就收合，也不用再按「我都看到了」
+        day = datetime.strptime(entry["day"], "%Y%m%d").date()
+        content = f"☀️ {day.month}/{day.day} 今天的任務提醒\n{head}"
+        view = None
+        entry["acked_at"] = now.isoformat()
+    notification_log.persist()
+    await message.edit(content=content[:2000], embed=None, view=view)
+    return True
 
 
 async def send_daily_briefings(client: discord.Client, now: datetime, *, final: bool = True) -> dict:
@@ -308,7 +349,12 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
 
     今天已發過的人會跳過，所以失敗後重跑只補發沒送到的人（M3-11）。`final=False` 時有人失敗就
     保留「快到期」佇列給下一次重試；最後一次（或全部成功）才清掉。
+
+    M3-29 第五版（Johnny 2026-10-23）：早上只有一則、一次只有一種按鈕。有還沒收到的任務時，
+    先只顯示「先確認：還沒收到的任務」（全部收到／某一筆有問題），處理完同一則才換成今天的提醒。
     """
+    from cogs.tasks_artist import bundle_options, bundle_view
+
     state = notification_log.shared()
     tasks = await repositories.get_active_tasks()
     artist_map = await repositories.get_artist_map()
@@ -321,18 +367,11 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
     for artist in artist_map.values():
         if not artist.discord_user_id:
             continue
-        previous = daily_briefing.briefing_for(state, artist.discord_user_id)
+        uid = str(artist.discord_user_id)
+        previous = daily_briefing.briefing_for(state, uid)
         items, unreceived = daily_briefing.split_unreceived(
             daily_briefing.build_items(artist.page_id, tasks, queued, acks, now)
         )
-        refreshed = state.setdefault("card_refresh", {})
-        if not items and unreceived and refreshed.get(str(artist.discord_user_id)) != _day_code(day):
-            # 沒有提醒、只有還沒收的任務：不發早報，只把任務卡搬下來
-            if previous and previous.get("day") != _day_code(day):
-                await _delete_previous(client, previous)
-                state.get("briefings", {}).pop(str(artist.discord_user_id), None)
-            await _refresh_cards(client, artist, unreceived, day, refreshed)
-            continue
         if previous and previous.get("day") == _day_code(day):
             continue  # 今天已發過（重啟後同一天不重發）
         if (previous and previous.get("day") and not previous.get("acked_at") and previous.get("task_ids")
@@ -340,30 +379,45 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
             # 昨天那則沒按「我都看到了」→ 給營運早報的「昨天的早報沒看」（M3-25）
             ops_briefing.record_unread(state, previous["day"], previous.get("artist_name") or artist.name)
         await _delete_previous(client, previous)
-        if not items:
+        if not items and not unreceived:
             if previous:
-                state.get("briefings", {}).pop(str(artist.discord_user_id), None)
+                state.get("briefings", {}).pop(uid, None)
                 cleared += 1
             continue
+        await _clear_old_task_messages(client, uid)
+        reminder_text = daily_briefing.briefing_text(day, items, _deadline_fn(now)) if items else ""
+        options = _options_from_items(items, now)
+        bundle_id = None
         try:
             user = await client.fetch_user(int(artist.discord_user_id))
-            message = await user.send(
-                daily_briefing.briefing_text(day, items, _deadline_fn(now), unreceived_count=len(unreceived)),
-                view=briefing_view(day, items, now),
-            )
+            if unreceived:
+                bundle_id = task_bundle.new_bundle_id()
+                message = await user.send(
+                    task_bundle.bundle_text(task_bundle.KIND_BRIEFING, unreceived, _deadline_fn(now)),
+                    view=bundle_view(bundle_id, bundle_options(unreceived)),
+                )
+            else:
+                message = await user.send(reminder_text, view=reminders_view(_day_code(day), options))
         except Exception:
             logger.exception("每日早報發送失敗：%s", artist.name)
             failed += 1
             continue
-        if unreceived and refreshed.get(str(artist.discord_user_id)) != _day_code(day):
-            await _refresh_cards(client, artist, unreceived, day, refreshed, user=user)
-        daily_briefing.remember_briefing(state, artist.discord_user_id, {
+        if bundle_id:
+            ids = [task.page_id for task in unreceived]
+            task_bundle.remember_bundle(state, bundle_id, uid, task_bundle.KIND_BRIEFING, ids, now)
+            for task_id in ids:
+                notification_log.record_message(state, task_id, uid, message.channel.id, message.id, now, bundle_id=bundle_id)
+        daily_briefing.remember_briefing(state, uid, {
             "day": _day_code(day),
             "channel_id": message.channel.id,
             "message_id": message.id,
             "task_ids": [item.task.page_id for item in items],
             "artist_page_id": artist.page_id,
             "artist_name": artist.name,
+            "bundle_id": bundle_id,
+            "stage": 1 if bundle_id else 2,
+            "reminder_text": reminder_text,
+            "options": options,
         })
         sent += 1
         for item in items:

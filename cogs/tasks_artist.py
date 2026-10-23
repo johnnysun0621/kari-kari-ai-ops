@@ -39,6 +39,8 @@ async def clear_old_notifications(
             bundle_id = record.get("bundle")
             if bundle_id and not task_bundle.supersede(state, bundle_id, task_ids):
                 continue  # 舊合併訊息裡還有別的任務要留著
+            if bundle_id and (task_bundle.bundle_for(state, bundle_id) or {}).get("kind") == task_bundle.KIND_BRIEFING:
+                continue  # 早報不在這裡刪：它還要換成今天的提醒，隔天發新早報時才刪（M3-29 第五版）
             try:
                 await client.get_partial_messageable(key[0]).get_partial_message(key[1]).delete()
                 deleted += 1
@@ -677,6 +679,13 @@ async def receive_bundle(interaction: discord.Interaction, bundle_id: str, messa
         entry["reported"] = [task.page_id for task in reported]
         notification_log.persist()
     try:
+        if (entry or {}).get("kind") == task_bundle.KIND_BRIEFING:
+            from cogs import briefing
+
+            # 早報第一段處理完：同一則換成今天的提醒（M3-29 第五版）
+            if await briefing.show_reminders(message, interaction.user.id, bundle_id, mine, reported):
+                logger.info("早報第一段全部收到：%s 筆（%s）", len(mine), artist.name)
+                return len(mine)
         await message.edit(
             content=task_bundle.done_text(mine, reported, now, _deadline_fn()), embed=None,
             view=bundle_view(bundle_id, bundle_options(mine), received=True),
@@ -720,6 +729,12 @@ async def refresh_bundle_after_concern(message, bundle_id: str, task_id: str) ->
         return 0
     pending = [task for task in tasks if task.page_id not in reported_ids]
     if not pending:
+        if entry.get("kind") == task_bundle.KIND_BRIEFING:
+            from cogs import briefing
+
+            # 早報第一段每一筆都回報了：同一則換成今天的提醒（M3-29 第五版）
+            if await briefing.show_reminders(message, entry.get("user_id"), bundle_id, [], reported):
+                return 0
         await message.edit(content=task_bundle.done_text([], reported, now, _deadline_fn()), embed=None, view=None)
         return 0
     await message.edit(
@@ -969,25 +984,6 @@ async def send_task_notifications(
             continue
         await _after_dispatch(bot, task, outcome)
     return outcomes
-
-
-async def refresh_unreceived_cards(bot, user, tasks: list[repositories.TaskItem]) -> int:
-    """還沒按收到的任務卡搬到最下面（M3-29）：舊卡刪掉、重新送一張，2 筆以上合併。
-
-    只送藝人本人：不發同仁、不發公告、不改 Notion（這不是重新派發，只是把卡移到看得到的位置）。
-    回傳送出幾則。
-    """
-    sent = 0
-    for group in task_bundle.chunks(tasks):
-        try:
-            if len(group) == 1:
-                await send_task_dm(user, group[0].page_id, task_notifications.notification_message(group[0]), client=bot)
-            else:
-                await send_bundle_dm(bot, user, task_bundle.KIND_DISPATCH, group)
-            sent += 1
-        except Exception:
-            logger.exception("搬移還沒按收到的任務卡失敗：%s", "、".join(t.name for t in group))
-    return sent
 
 
 async def _after_dispatch(bot, task: repositories.TaskItem, outcome: DispatchOutcome) -> None:

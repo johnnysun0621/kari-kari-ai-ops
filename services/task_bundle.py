@@ -22,6 +22,7 @@ MESSAGE_LIMIT = 1900
 RETENTION_DAYS = 45
 KIND_DISPATCH = "dispatch"
 KIND_ASSIGNMENT = "assignment"
+KIND_BRIEFING = "briefing"  # 早報第一段：先確認還沒收到的任務（M3-29 第五版）
 # 已交件（待審核）或修改中（需修改）的任務退回「尚未開始」會打亂審核流程，請藝人直接聯絡控方
 CONCERN_STATUSES = {"尚未開始", "進行中", "待提交", "已逾期", None, ""}
 # 已逾期的任務可以回報，但不退回、不取消 Discord 顯示：保留逾期紀錄，由控方決定延期或結案（2026-10-23 Johnny 選 A）
@@ -64,7 +65,33 @@ def receive_label(pending: int, reported: int) -> str:
     return "全部收到" if not reported else f"其餘 {pending} 筆收到"
 
 
+def _briefing_first_text(tasks: list[TaskItem], deadline_text, reported) -> str:
+    """早報第一段（M3-29 第五版）：只問還沒收到的任務。不寫「新任務」，註明哪天派發。"""
+    today = datetime.now(_tz())
+    weekdays = "一二三四五六日"
+    lines = [f"☀️ **{today.month}/{today.day}（{weekdays[today.weekday()]}）早安**", "",
+             f"📌 **先確認：還沒收到的任務（{len(tasks)}）**"]
+    for task in tasks:
+        if task.page_id in reported:
+            lines.append(reported_item_line(task))
+            continue
+        sent = f"{task.discord_notified_at.month}/{task.discord_notified_at.day} 派發｜" if task.discord_notified_at else ""
+        lines.append(f"・{strip_notion_links(task.name)}｜{sent}{deadline_text(task)}")
+    pending = sum(1 for task in tasks if task.page_id not in reported)
+    lines += ["", f"看過後按「✅ {receive_label(pending, len(reported))}」；某一筆不行就用「⚠️ 某一筆有問題」。",
+              "收完後，這則會接著顯示今天的提醒。"]
+    return _limit("\n".join(lines))
+
+
+def _tz():
+    import config
+
+    return config.get_tenant().tz
+
+
 def bundle_text(kind: str, tasks: list[TaskItem], deadline_text, reported: set[str] | frozenset = frozenset()) -> str:
+    if kind == KIND_BRIEFING:
+        return _briefing_first_text(tasks, deadline_text, reported)
     lines = [f"{_TITLES[kind]}（{len(tasks)}）"]
     for task in tasks:
         if task.page_id in reported:
