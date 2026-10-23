@@ -250,7 +250,7 @@ async def daily_voice(counts: Counts, *, state: dict, now: datetime, client: htt
     return voice
 
 
-# ---------- 審核結果（M4-16） ----------
+# ---------- 審核結果（M4-18） ----------
 
 MAX_REVIEW_LINE = 45
 

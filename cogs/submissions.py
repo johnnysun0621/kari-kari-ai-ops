@@ -343,7 +343,7 @@ def large_file_drive_instruction(
 ) -> str:
     lines: list[str] = []
     if folder_url:
-        # M4-16 小律的口吻
+        # M4-18 小律的口吻
         lines.append(f"📤 **「{task_name}」的資料夾準備好了！**")
         lines.append(f"把檔案上傳到這裡：{folder_url}")
         lines.append("傳好之後按「我已上傳到 Drive」，小律會去資料夾幫你確認。")
@@ -532,7 +532,7 @@ def review_dm_text(
     name: str = "",
     ritsu_line: str = "",
 ) -> str:
-    """審核結果私訊（M4-16 小律的口吻）。ritsu_line 是小律依最近表現說的一句（AI 或範本句）。"""
+    """審核結果私訊（M4-18 小律的口吻）。ritsu_line 是小律依最近表現說的一句（AI 或範本句）。"""
     who = f"{name}同學，" if name else ""
     task = task_name or submission.name
     header = {
@@ -1717,7 +1717,7 @@ class SubmissionsCog(commands.Cog):
             if not artist or not artist.discord_user_id:
                 continue
             try:
-                # 小律依這位藝人最近的表現說一句（M4-16）：只送數字，失敗回範本句
+                # 小律依這位藝人最近的表現說一句（M4-18）：只送數字，失敗回範本句
                 facts = review_facts(result, submission, artist_page_id, history, now)
                 line = await ritsu_voice.review_line(facts, state=notification_log.shared(), now=now)
                 notification_log.persist()
