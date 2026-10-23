@@ -647,11 +647,24 @@ def test_有還沒收的任務_早上只有一則_先只問收到(send_env, card
 
 
 class EditMsg:
+    """早報第一段那則：可以改、可以刪；第二段會發到同一個頻道（記在 channel.sent）。"""
+
     def __init__(self, mid):
-        self.id, self.channel, self.content, self.edits = mid, SimpleNamespace(id=900), "", []
+        self.id, self.content, self.edits, self.deleted = mid, "", [], False
+        self.channel = SimpleNamespace(id=900, sent=[])
+        msg = self
+
+        async def send(content, view=None):
+            msg.channel.sent.append({"content": content, "view": view})
+            return SimpleNamespace(id=2000 + len(msg.channel.sent), channel=SimpleNamespace(id=900))
+
+        self.channel.send = send
 
     async def edit(self, **kw):
         self.edits.append(kw)
+
+    async def delete(self):
+        self.deleted = True
 
 
 def _patch_repo(monkeypatch, tasks, acked):
@@ -686,10 +699,13 @@ def test_全部收到後_同一則換成今天的提醒_才出現我都看到了
                                   response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
     asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
     assert acked == ["new"]
-    edit = message.edits[-1]
-    assert "今天的任務提醒" in edit["content"] and "任務late" in edit["content"]
-    assert "✅ 已收到 1 筆任務" in edit["content"]
-    assert _ids(edit["view"]) == ["briefing_detail", "briefing_ack"]
+    # 第一段刪掉、提醒以新訊息出現在最下面（2026-10-23：原地換的話「我都看到了」會被推到畫面外）
+    assert message.deleted and message.edits == []
+    new = message.channel.sent[-1]
+    assert "今天的任務提醒" in new["content"] and "任務late" in new["content"]
+    assert "✅ 已收到 1 筆任務" in new["content"]
+    assert _ids(new["view"]) == ["briefing_detail", "briefing_ack"]
+    assert notification_log.shared()["briefings"]["1"]["message_id"] == 2001, "之後按我都看到了、隔天刪除都找得到新的那則"
 
 
 def test_每一筆都回報_也換成提醒(send_env, card_env, monkeypatch):
@@ -700,9 +716,9 @@ def test_每一筆都回報_也換成提醒(send_env, card_env, monkeypatch):
     _patch_repo(monkeypatch, {"new": dataclasses.replace(new, discord_visible=False)}, [])
     message = EditMsg(1001)
     assert asyncio.run(tasks_artist.refresh_bundle_after_concern(message, bundle_id, "new")) == 0
-    edit = message.edits[-1]
-    assert "⚠️ 已回報 1 筆" in edit["content"] and "任務late" in edit["content"]
-    assert _ids(edit["view"]) == ["briefing_detail", "briefing_ack"]
+    new = message.channel.sent[-1]
+    assert message.deleted and "⚠️ 已回報 1 筆" in new["content"] and "任務late" in new["content"]
+    assert _ids(new["view"]) == ["briefing_detail", "briefing_ack"]
 
 
 def test_沒有提醒只有還沒收的_收完就收合不用再按(send_env, card_env, monkeypatch):

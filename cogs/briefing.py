@@ -329,18 +329,32 @@ async def show_reminders(message, user_id, bundle_id: str, received: list, repor
     now = datetime.now(config.get_tenant().tz)
     head = daily_briefing.handled_line(len(received), len(reported))
     entry["stage"] = 2
-    if entry.get("reminder_text"):
-        lines = entry["reminder_text"].split("\n")
-        content = "\n".join([lines[0], head, *lines[1:]])
-        view = reminders_view(entry["day"], entry.get("options") or [])
-    else:
-        # 今天沒有提醒：處理完就收合，也不用再按「我都看到了」
+    if not entry.get("reminder_text"):
+        # 今天沒有提醒：原地收合就好，也不用再按「我都看到了」
         day = datetime.strptime(entry["day"], "%Y%m%d").date()
-        content = f"☀️ {day.month}/{day.day} 今天的任務提醒\n{head}"
-        view = None
         entry["acked_at"] = now.isoformat()
+        notification_log.persist()
+        await message.edit(content=f"☀️ {day.month}/{day.day} 今天的任務提醒\n{head}", embed=None, view=None)
+        return True
+    lines = entry["reminder_text"].split("\n")
+    content = "\n".join([lines[0], head, *lines[1:]])[:2000]
+    view = reminders_view(entry["day"], entry.get("options") or [])
+    # 2026-10-23 Johnny：原地換的話，提醒長在按鈕上方、「我都看到了」被推到畫面外，藝人不會發現還要按。
+    # 改成第一段刪掉、提醒以新訊息出現在最下面（視線本來就在那），私訊裡還是只有一則。
+    try:
+        new_message = await message.channel.send(content, view=view)
+    except Exception:
+        logger.warning("早報第二段改發新訊息失敗，改成原地換：%s", entry.get("message_id"))
+        notification_log.persist()
+        await message.edit(content=content, embed=None, view=view)
+        return True
+    try:
+        await message.delete()
+    except Exception:
+        logger.warning("早報第一段刪除失敗：%s", getattr(message, "id", None))
+    entry["channel_id"] = new_message.channel.id
+    entry["message_id"] = new_message.id
     notification_log.persist()
-    await message.edit(content=content[:2000], embed=None, view=view)
     return True
 
 
