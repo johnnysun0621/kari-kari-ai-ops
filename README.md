@@ -40,6 +40,12 @@ KariKari 是第一個測試站；專案方向是可套用到多家公司，而�
 | [ARTIST_SOP.md](docs/sop/ARTIST_SOP.md) | 藝人操作 SOP |
 | [docs/sop/README.md](docs/sop/README.md) | SOP 分頁怎麼寫：一頁一主題放 `ops/`、`artist/`，完整版由 `scripts/build_sop.py` 產生，不要直接改 |
 
+**[docs/delivery/](docs/delivery/)** — 給客戶驗收與簽核的正式文件
+
+| 文件 | 用途 |
+|---|---|
+| [CLIENT_ACCEPTANCE_SOP.md](docs/delivery/CLIENT_ACCEPTANCE_SOP.md) | 客戶營運主版、完整工作流程、角色分工、驗收清單與簽核區 |
+
 **[docs/operations/](docs/operations/)**
 
 | 文件 | 用途 |
