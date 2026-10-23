@@ -598,7 +598,7 @@ def test_早報每一筆都回報_直接算已讀收合(reported_env):
     assert env.lines == []
 
 
-def test_早報上回報問題_確認訊息附其他我都看到了(reported_env):
+def test_早報上回報問題_確認訊息不推看完按鈕_只提醒其他也能回報(reported_env):
     env = reported_env
     replies = []
 
@@ -608,4 +608,8 @@ def test_早報上回報問題_確認訊息附其他我都看到了(reported_env
     interaction = SimpleNamespace(user=SimpleNamespace(id=1), followup=SimpleNamespace(send=followup_send))
     asyncio.run(tasks_artist.after_concern_reported(interaction, task("late"), env.message, None))
     content, view = replies[0]
-    assert "早報裡其他的" in content and view.children[0].label == "其他我都看到了"
+    # 2026-10-23 Johnny：回報完就推「其他我都看到了」，等於逼藝人把其他的也認了
+    assert view is None and "其他筆如果也有問題" in content
+    # 早報上照樣留「看某一筆的詳細」和「我都看到了」，要不要按由藝人自己決定
+    ids = [child.custom_id for child in env.message.edits[-1]["view"].children]
+    assert ids == ["briefing_detail:20261020", "briefing_ack:20261020"]

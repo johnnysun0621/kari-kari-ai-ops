@@ -425,7 +425,7 @@ async def after_concern_reported(
     """回報送出後：按的那則原地收尾，剩下沒問題的一鍵收完（M3-28）。
 
     - 合併通知：劃掉這筆，按鈕變「其餘 N 筆收到」；確認訊息也附同一顆。每一筆都回報了就整則收合。
-    - 早報：那一行標「已回報」，確認訊息附「其他我都看到了」；每一筆都回報了就直接算已讀。
+    - 早報：那一行標「已回報」，確認訊息提醒其他筆也能回報（不附看完按鈕）；每一筆都回報了就直接算已讀。
     - 單筆卡：收成一行「⚠️ 已回報問題」，不留按鈕。
     """
     from cogs import briefing
@@ -442,8 +442,8 @@ async def after_concern_reported(
         elif origin is not None and briefing.is_briefing_message(origin):
             pending = await briefing.mark_reported(interaction, origin, task)
             if pending:
-                reply += "\n早報裡其他的看過了，直接按下面就好："
-                view = briefing.ack_rest_view(origin)
+                # 不附「其他我都看到了」：回報完馬上推一顆按鈕，像在催藝人把其他的也認了（2026-10-23 Johnny）
+                reply += "\n早報裡其他筆如果也有問題，一樣用「看某一筆的詳細」展開後回報；都看過了再按「👌 我都看到了」。"
         elif origin is not None:
             await origin.edit(content=task_bundle.reported_card_line(task, now), embed=None, view=None)
     except Exception:

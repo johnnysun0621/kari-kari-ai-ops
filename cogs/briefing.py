@@ -128,8 +128,8 @@ class BriefingAckButton(
 async def ack_briefing(interaction: discord.Interaction, day_code: str, message, *, edit_via_response: bool) -> bool:
     """「我都看到了」：早報收成一行，每筆任務的「提醒確認」各寫一行。
 
-    早報上的按鈕走 edit_via_response（Discord 3 秒內要回應，直接改這則）；回報問題後確認訊息上的
-    「其他我都看到了」（M3-28）已經 defer 過，改的是早報本身（message）。回報過問題的那幾筆不記看過。
+    早報上的按鈕走 edit_via_response（Discord 3 秒內要回應，直接改這則）；早報每一筆都回報了自動算已讀時
+    （M3-28）已經 defer 過，改的是早報本身（message）。回報過問題的那幾筆不記看過。
     """
     state = notification_log.shared()
     now = datetime.now(config.get_tenant().tz)
@@ -230,22 +230,6 @@ async def mark_reported(interaction: discord.Interaction, message, task: reposit
     view.add_item(BriefingAckButton(day_code))
     await message.edit(content=daily_briefing.mark_reported_line(message.content, task.name), embed=None, view=view)
     return len(remaining)
-
-
-def ack_rest_view(message) -> discord.ui.View:
-    """回報後確認訊息上的「其他我都看到了」：只有藝人看得到，按了等於在早報上按「我都看到了」。"""
-    day_code = _briefing_day(message)
-    view = discord.ui.View(timeout=900)
-    button = discord.ui.Button(label="其他我都看到了", emoji="👌", style=discord.ButtonStyle.success)
-
-    async def callback(interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        if await ack_briefing(interaction, day_code, message, edit_via_response=False):
-            await interaction.edit_original_response(content="👌 早報已讀。", view=None)
-
-    button.callback = callback
-    view.add_item(button)
-    return view
 
 
 async def _entry_from_message(interaction: discord.Interaction, day: str, message=None) -> dict | None:
