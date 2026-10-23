@@ -308,7 +308,7 @@ class TestLargeFileDriveInstruction:
     def test_without_folder_link_requires_company_drive_repair(self):
         text = large_file_drive_instruction(task_name="編曲作業", folder_url=None)
 
-        assert "無法自動產生指定資料夾" in text
+        assert "沒辦法幫你準備資料夾" in text
         assert "聯絡公司" in text
         assert "貼 Drive 連結" not in text
 

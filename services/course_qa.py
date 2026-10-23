@@ -8,7 +8,7 @@ import re
 import httpx
 
 import config
-from services import course_intent, llm_response, llm_usage, notion_links
+from services import course_intent, llm_response, llm_usage, notion_links, ritsu_voice
 from services.repositories import CourseMeetingRecord
 
 
@@ -246,6 +246,7 @@ async def answer_course_question(
             {
                 "role": "system",
                 "content": (
+                    f"{ritsu_voice.qa_persona()}\n\n"
                     "你是小律，只能根據提供的 Notion 會議紀錄回答。"
                     "這些紀錄類型包含藝人單人會議、企劃會議、A&R 會議等，不限於課程；"
                     "不要預設每筆紀錄都跟課程或上課有關，依紀錄本身內容判斷。"
@@ -317,6 +318,7 @@ async def answer_task_question(
             {
                 "role": "system",
                 "content": (
+                    f"{ritsu_voice.qa_persona()}\n\n"
                     "你是小律，KariKari 的任務小幫手，正在回答藝人關於自己任務的問題，只能根據提供的任務資料回答。"
                     "絕對不可輸出 Notion 連結或任何 notion 網址。"
                     f"\n\n固定規則：\n{load_task_assistant_skill()}"

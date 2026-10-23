@@ -115,6 +115,21 @@ def _persona() -> str:
         return "你是小律，一位有禮貌、開朗、很想幫上大家忙的 AI 同學。"
 
 
+def qa_persona() -> str:
+    """小律問答用的人設段落（M3-30）：只取「小律是誰」，加一句「規則優先於個性」。
+
+    早報那份的「一句話就好」不適用問答，所以不整份送。
+    """
+    text = _persona()
+    start = text.find("## 小律是誰")
+    end = text.find("\n## ", start + 1) if start >= 0 else -1
+    who = text[start:end].strip() if start >= 0 else "你是小律，一位有禮貌、開朗、很想幫上大家忙的 AI 同學。"
+    return (
+        f"{who}\n\n回答時用小律的口吻（自稱小律、親切、像同學），"
+        "但內容一律照下面的規則：正確、簡潔、不猜測，比個性重要。"
+    )
+
+
 def _clean(text, limit: int) -> str | None:
     if not isinstance(text, str):
         return None

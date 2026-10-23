@@ -343,13 +343,14 @@ def large_file_drive_instruction(
 ) -> str:
     lines: list[str] = []
     if folder_url:
-        lines.append(f"請將 **{task_name}** 的檔案上傳至指定 Google Drive 資料夾。")
-        lines.append(f"資料夾：{folder_url}")
-        lines.append("完成後按「我已上傳到 Drive」，系統會檢查公司資料夾中的新檔案。")
+        # M4-16 小律的口吻
+        lines.append(f"📤 **「{task_name}」的資料夾準備好了！**")
+        lines.append(f"把檔案上傳到這裡：{folder_url}")
+        lines.append("傳好之後按「我已上傳到 Drive」，小律會去資料夾幫你確認。")
     elif drive_setup_error:
-        lines.append("⚠️ 公司 Drive 授權已失效或權限不足，請聯絡公司重新授權 Google Drive。")
+        lines.append("⚠️ 小律現在打不開公司的 Drive（授權失效或權限不足），請聯絡公司重新授權 Google Drive。")
     else:
-        lines.append("目前無法自動產生指定資料夾連結，請聯絡公司檢查公司 Google Drive 設定。")
+        lines.append("⚠️ 小律這次沒辦法幫你準備資料夾，請聯絡公司檢查公司 Google Drive 設定。")
     return "\n".join(lines)
 
 
@@ -852,12 +853,12 @@ async def _archive_file_submission_batch(
         f"任務：{task.name}｜{artist.name}｜{len(uploaded_files)} 個檔案（{file_size_mb}MB）\n"
         f"Drive：{folder_url}\nNotion：{submission_page.get('url', '')}",
     )
-    resubmit_note = f"\n（已取代先前 {replaced} 筆提交，這筆為最新版）" if replaced else ""
+    resubmit_note = f"\n（之前交的 {replaced} 筆換成這次的，這筆是最新版）" if replaced else ""
     return True, (
-        f"✅ 檔案已提交並歸檔：**{task.name}**\n"
+        f"✅ **檔案收到了！「{task.name}」小律已經交給公司審核**\n"
         f"📁 {artist.name}專區／{folder_text}\n"
         f"檔案數：{len(uploaded_files)}｜{display_files}\n"
-        f"任務狀態已轉「待審核」，審核結果會再通知你。{resubmit_note}"
+        f"審核結果出來，小律會馬上通知你。辛苦了！{resubmit_note}"
     )
 
 
@@ -976,14 +977,14 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
     @discord.ui.button(label="我已上傳到 Drive", style=discord.ButtonStyle.success)
     async def verify_drive_upload(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.owner_id is not None and interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ 這個提交入口只給原本操作的人使用。", ephemeral=True)
+            await interaction.response.send_message("❌ 這個交件入口是給打開它的那位同學用的喔。", ephemeral=True)
             return
         await self.cog.complete_drive_folder_submission(interaction)
 
     @discord.ui.button(label="返回任務選擇", style=discord.ButtonStyle.secondary, emoji="↩️")
     async def back_to_tasks(self, interaction: discord.Interaction, _: discord.ui.Button):
         if self.owner_id is not None and interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ 這個提交入口只給原本操作的人使用。", ephemeral=True)
+            await interaction.response.send_message("❌ 這個交件入口是給打開它的那位同學用的喔。", ephemeral=True)
             return
         await self.cog.return_to_submit_task_list(interaction)
 
@@ -1423,7 +1424,7 @@ class SubmissionsCog(commands.Cog):
                 await asyncio.sleep(2)
         except Exception:
             logger.exception("驗證 Drive 資料夾檔案失敗")
-            await interaction.followup.send("❌ 讀取 Drive 資料夾失敗，請稍後再按一次。", ephemeral=True)
+            await interaction.followup.send("❌ 小律剛剛讀不到 Drive 資料夾，請稍後再按一次。", ephemeral=True)
             return
         if not files:
             await interaction.followup.send(
@@ -1457,7 +1458,7 @@ class SubmissionsCog(commands.Cog):
             )
         except Exception:
             logger.exception("Drive 資料夾提交寫入 Notion 失敗")
-            await interaction.followup.send("❌ Drive 已讀到檔案，但 Notion 寫入失敗，請聯絡公司。", ephemeral=True)
+            await interaction.followup.send("❌ 小律有看到你的檔案，但記到 Notion 時失敗了，請聯絡公司幫忙確認。", ephemeral=True)
             return
         self.pending_file_submissions.pop(interaction.user.id, None)
         try:
@@ -1627,7 +1628,7 @@ class SubmissionsCog(commands.Cog):
         now = datetime.now(config.get_tenant().tz)
         if pending.is_expired(now):
             self.pending_file_submissions.pop(message.author.id, None)
-            await message.channel.send("❌ 這次檔案上傳入口已過期，請回到 `/我的任務` 重新進入提交流程。")
+            await message.channel.send("❌ 這次的上傳入口過期了，請回到 `/我的任務` 重新按「提交任務」，小律再幫你準備一次。")
             return
         if message.attachments:
             folder_hint = (
