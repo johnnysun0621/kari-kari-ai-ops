@@ -1,0 +1,371 @@
+<title>__SITE_TITLE__</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+/* LURASUPA SOP 網站：左邊目錄＋搜尋，右邊內容。內容由 scripts/build_sop_site.py 從 docs/sop 分頁產生。 */
+:root {
+  --bg: #f3f5f4; --surface: #ffffff; --sunken: #eaeeec; --ink: #18211e; --muted: #5c6964; --line: #d9e0dc;
+  --accent: #0e6f68; --accent-soft: #dff0ec; --accent-ink: #ffffff;
+  --warn: #8a5300; --warn-soft: #fbeedb; --tip: #2b5a96; --tip-soft: #e5eef9; --ok: #1f7a46; --ok-soft: #e2f3e8; --stop: #6b5b95; --stop-soft: #eee9f7;
+  --dc-bg: #313338; --dc-panel: #2b2d31; --dc-field: #1e1f22; --dc-ink: #dbdee1; --dc-head: #f2f3f5; --dc-muted: #949ba4; --dc-green: #248046; --dc-grey: #4e5058; --dc-blurple: #5865f2;
+  --nt-bg: #ffffff; --nt-ink: #37352f; --nt-line: #e9e9e7;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-display: "Noto Serif TC", "Songti TC", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --side: 290px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111715; --surface: #18201d; --sunken: #1f2925; --ink: #e3eae7; --muted: #9aa8a2; --line: #2b3632;
+    --accent: #45bcac; --accent-soft: #14302c; --accent-ink: #08201c;
+    --warn: #f0b15b; --warn-soft: #33260f; --tip: #8db6ee; --tip-soft: #172437; --ok: #6fcf97; --ok-soft: #14291c; --stop: #b9a8e8; --stop-soft: #241e33;
+    --nt-bg: #202020; --nt-ink: #e6e6e3; --nt-line: #343434; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111715; --surface: #18201d; --sunken: #1f2925; --ink: #e3eae7; --muted: #9aa8a2; --line: #2b3632;
+  --accent: #45bcac; --accent-soft: #14302c; --accent-ink: #08201c;
+  --warn: #f0b15b; --warn-soft: #33260f; --tip: #8db6ee; --tip-soft: #172437; --ok: #6fcf97; --ok-soft: #14291c; --stop: #b9a8e8; --stop-soft: #241e33;
+  --nt-bg: #202020; --nt-ink: #e6e6e3; --nt-line: #343434; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.75; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.shell { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); min-height: 100vh; }
+
+/* ---- 側欄 ---- */
+.side { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--line); padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
+.brand { display: grid; gap: 2px; text-decoration: none; color: var(--ink); }
+.brand b { font-family: var(--font-display); font-size: 21px; letter-spacing: .02em; }
+.brand span { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.search { position: relative; }
+.search input { width: 100%; font: inherit; font-size: 14px; padding: 9px 12px 9px 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: var(--muted); }
+.nav { display: grid; gap: 18px; }
+.nav h2 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
+.nav ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.nav a { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 6px; padding: 5px 8px; border-radius: 6px; color: var(--ink); text-decoration: none; font-size: 14px; line-height: 1.45; }
+.nav a .n { font-family: var(--font-mono); font-size: 11px; color: var(--muted); padding-top: 2px; font-variant-numeric: tabular-nums; }
+.nav a:hover { background: var(--sunken); }
+.nav a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.side .foot { margin-top: auto; font-size: 12px; color: var(--muted); }
+
+/* ---- 頂部（手機） ---- */
+.topbar { display: none; }
+
+/* ---- 內容 ---- */
+main { padding: 40px 48px 90px; min-width: 0; }
+.page { max-width: 780px; margin: 0 auto; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .1em; color: var(--accent); text-transform: uppercase; }
+.page-head { display: grid; gap: 10px; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 26px; }
+.page-head h1 { margin: 0; font-family: var(--font-display); font-weight: 800; font-size: clamp(27px, 4vw, 36px); line-height: 1.25; text-wrap: balance; }
+.page-head .sum { color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--font-mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); }
+.chip.rule { background: var(--accent-soft); color: var(--accent); }
+
+.md h1 { display: none; }
+.md h2 { font-family: var(--font-display); font-size: 23px; margin: 36px 0 10px; line-height: 1.35; text-wrap: balance; }
+.md h3 { font-size: 18px; margin: 26px 0 8px; }
+.md h4 { font-size: 16px; margin: 20px 0 6px; }
+.md p, .md ul, .md ol { margin: 10px 0; }
+.md li { margin: 4px 0; }
+.md code { font-family: var(--font-mono); font-size: .86em; background: var(--sunken); padding: 1px 5px; border-radius: 4px; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0; }
+.md table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+.tablewrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.md th, .md td { text-align: left; vertical-align: top; padding: 8px 11px; border-bottom: 1px solid var(--line); }
+.md th { font-size: 12.5px; color: var(--muted); letter-spacing: .03em; background: var(--sunken); white-space: nowrap; }
+.md tr:last-child td { border-bottom: 0; }
+.md blockquote { margin: 14px 0; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--surface); border-radius: 0 8px 8px 0; color: var(--ink); }
+.md blockquote p { margin: 4px 0; }
+.md blockquote.warn { border-color: var(--warn); background: var(--warn-soft); }
+.md blockquote.tip { border-color: var(--tip); background: var(--tip-soft); }
+.md blockquote.stop { border-color: var(--stop); background: var(--stop-soft); }
+.md blockquote.hello { border-color: var(--accent); background: var(--accent-soft); }
+.md details { margin: 12px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 6px 14px; }
+.md details summary { cursor: pointer; font-weight: 700; }
+.md pre.plain { background: var(--sunken); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; white-space: pre; }
+
+/* 勾選清單（客戶驗收） */
+.md li.task { list-style: none; margin-left: -1.3em; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: start; }
+.md li.task input { width: 17px; height: 17px; margin-top: 5px; accent-color: var(--accent); cursor: pointer; }
+.md li.task.done > span { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.progress { margin: 14px 0; display: grid; gap: 6px; }
+.bar { height: 8px; background: var(--sunken); border-radius: 999px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+.progress small { color: var(--muted); }
+
+/* Discord 範例 */
+.dc { margin: 16px 0; background: var(--dc-bg); color: var(--dc-ink); border-radius: 10px; padding: 14px 16px; font-size: 14px; line-height: 1.6; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; overflow-x: auto; }
+.dc .ava { width: 36px; height: 36px; border-radius: 50%; background: #0f766e; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+.dc .who { color: var(--dc-head); font-weight: 600; }
+.dc .who span { font-size: 10px; background: var(--dc-blurple); color: #fff; border-radius: 3px; padding: 1px 4px; margin-left: 4px; vertical-align: 2px; }
+.dc .body { white-space: pre-wrap; word-break: break-word; }
+.dc .body strong { color: var(--dc-head); }
+.dc .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; white-space: normal; }
+.dc .btn { font-size: 13px; background: var(--dc-grey); color: #fff; border-radius: 4px; padding: 3px 11px; }
+.dc .btn.go { background: var(--dc-green); }
+.dc .sel { display: block; font-size: 13px; background: var(--dc-field); color: var(--dc-muted); border-radius: 4px; padding: 5px 10px; margin: 4px 0; white-space: normal; }
+/* Notion 範例 */
+.nt { margin: 16px 0; background: var(--nt-bg); color: var(--nt-ink); border: 1px solid var(--nt-line); border-radius: 8px; padding: 14px 16px; font-family: ui-sans-serif, -apple-system, "Segoe UI", var(--font-body); font-size: 14px; white-space: pre-wrap; overflow-x: auto; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.nt::before { content: "Notion"; display: block; font-size: 11px; letter-spacing: .08em; color: #9b9a97; margin-bottom: 6px; font-weight: 600; }
+
+/* 上一頁／下一頁 */
+.pager { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 48px; }
+.pager a { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); background: var(--surface); }
+.pager a small { color: var(--muted); font-size: 12px; }
+.pager a.next { text-align: right; grid-column: 2; }
+
+/* 首頁 */
+.hero { display: grid; gap: 10px; margin-bottom: 30px; }
+.hero h1 { margin: 0; font-family: var(--font-display); font-weight: 800; font-size: clamp(30px, 5vw, 44px); line-height: 1.2; text-wrap: balance; }
+.hero p { margin: 0; color: var(--muted); max-width: 62ch; }
+.group { margin: 26px 0; }
+.group h2 { font-family: var(--font-display); font-size: 21px; margin: 0 0 4px; }
+.group > p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.card { display: grid; gap: 4px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); text-decoration: none; color: var(--ink); }
+.card:hover { border-color: var(--accent); }
+.card b { font-size: 15px; line-height: 1.4; }
+.card span { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.card .n { font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+
+/* 搜尋結果 */
+.results { display: grid; gap: 8px; }
+.result { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); text-decoration: none; color: var(--ink); }
+.result small { color: var(--muted); font-size: 12px; }
+.result p { margin: 0; font-size: 14px; color: var(--muted); }
+mark { background: var(--warn-soft); color: inherit; padding: 0 2px; border-radius: 2px; }
+.empty { color: var(--muted); }
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .side { position: fixed; inset: 0 auto 0 0; width: min(86vw, 320px); z-index: 20; transform: translateX(-102%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.25); }
+  .side.open { transform: none; }
+  .topbar { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--line); padding: 10px 16px; }
+  .topbar button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  .topbar b { font-family: var(--font-display); }
+  main { padding: 24px 16px 70px; }
+  .pager { grid-template-columns: 1fr; }
+  .pager a.next { grid-column: 1; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media print { .side, .topbar, .pager { display: none; } .shell { display: block; } main { padding: 0; } }
+</style>
+
+<div class="topbar"><button type="button" id="menu" aria-controls="side" aria-expanded="false">☰ 目錄</button><b id="topTitle">LURASUPA SOP</b></div>
+<div class="shell">
+  <aside class="side" id="side" aria-label="目錄">
+    <a class="brand" href="#/"><span id="edition"></span><b>LURASUPA SOP</b></a>
+    <label class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="搜尋，例如：早報、重送、審核" aria-label="搜尋 SOP">
+    </label>
+    <nav class="nav" id="nav"></nav>
+    <div class="foot" id="foot"></div>
+  </aside>
+  <main id="main" tabindex="-1"></main>
+</div>
+
+<script id="site-data" type="application/json">__SITE_DATA__</script>
+<script>
+const SITE = JSON.parse(document.getElementById("site-data").textContent);
+SITE.groups.forEach(g => g.pages.forEach(p => { p.group = g; }));
+const PAGES = SITE.groups.flatMap(g => g.pages);
+const BY_ID = Object.fromEntries(PAGES.map(p => [p.id, p]));
+const BY_TITLE = new Map(PAGES.map(p => [p.title, p]));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+function el(tag, attrs = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "text") n.textContent = v; else if (k === "html") n.innerHTML = v; else if (k === "class") n.className = v; else n.setAttribute(k, v);
+  }
+  kids.flat().forEach(k => k != null && n.append(typeof k === "string" ? document.createTextNode(k) : k));
+  return n;
+}
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const plain = md => md.replace(/```[\s\S]*?```/g, m => m.replace(/```\w*/g, "")).replace(/[#>*`|_~\-]/g, " ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\s+/g, " ");
+const num = p => p.group.key === "acceptance" ? (p.order ? String(p.order) : "·") : String(p.order).padStart(2, "0");
+
+/* ---- 目錄 ---- */
+function buildNav() {
+  document.getElementById("edition").textContent = SITE.editionLabel;
+  document.getElementById("topTitle").textContent = `LURASUPA SOP｜${SITE.editionLabel}`;
+  document.getElementById("foot").textContent = `內容產生於 ${SITE.generated}`;
+  const nav = document.getElementById("nav");
+  for (const g of SITE.groups) {
+    nav.append(el("section", {}, el("h2", { text: g.label }),
+      el("ol", {}, g.pages.map(p => el("li", {}, el("a", { href: `#/${p.id}`, "data-id": p.id }, el("span", { class: "n", text: num(p) }), el("span", { text: p.title })))))));
+  }
+}
+function markNav(id) {
+  document.querySelectorAll(".nav a").forEach(a => a.toggleAttribute("aria-current", a.dataset.id === id));
+  document.querySelectorAll(".nav a[aria-current]").forEach(a => a.setAttribute("aria-current", "page"));
+}
+
+/* ---- 內文轉換 ---- */
+function discordBlock(code) {
+  const lines = esc(code).split("\n").map(line => {
+    const t = line.trim();
+    if (/^(\[[^\]]+\]\s*)+$/.test(t)) {
+      return `<div class="row">${[...t.matchAll(/\[([^\]]+)\]/g)].map(m => {
+        const label = m[1];
+        if (label.includes("▾") || label.endsWith("…")) return `<span class="sel">${label}</span>`;
+        const go = ["✅", "👌", "收到任務", "全部收到", "收下", "我看完了", "我已上傳"].some(w => label.includes(w));
+        return `<span class="btn${go ? " go" : ""}">${label}</span>`;
+      }).join("")}</div>`;
+    }
+    return line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/~~(.+?)~~/g, "<s>$1</s>");
+  });
+  return `<div class="dc" role="img" aria-label="Discord 訊息範例"><div class="ava">律</div><div><div class="who">小律<span>APP</span></div><div class="body">${lines.join("\n").replace(/<\/div>\n/g, "</div>")}</div></div></div>`;
+}
+const renderer = {
+  code(code, lang) {
+    const text = typeof code === "object" ? code.text : code;
+    const language = typeof code === "object" ? code.lang : lang;
+    if (language === "discord") return discordBlock(text);
+    if (language === "notion") return `<div class="nt">${esc(text)}</div>`;
+    return `<pre class="plain">${esc(text)}</pre>`;
+  },
+};
+function renderMarkdown(md) {
+  if (!window.marked) return `<pre class="plain">${esc(md)}</pre>`;
+  marked.use({ renderer, gfm: true, breaks: false });
+  return marked.parse(md);
+}
+function enhance(root, page) {
+  // 提示框
+  root.querySelectorAll("blockquote").forEach(q => {
+    const t = q.textContent.trim();
+    if (/^⚠️/.test(t)) q.classList.add("warn");
+    else if (/^💡/.test(t)) q.classList.add("tip");
+    else if (/^⏸/.test(t)) q.classList.add("stop");
+    else if (/^👋/.test(t)) q.classList.add("hello");
+  });
+  // 表格可以左右捲
+  root.querySelectorAll("table").forEach(t => { const w = el("div", { class: "tablewrap" }); t.replaceWith(w); w.append(t); });
+  // 「頁面標題」→ 連結
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest("a, code, .dc, .nt, pre") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const targets = [];
+  while (walker.nextNode()) if (/「[^」]+」/.test(walker.currentNode.nodeValue)) targets.push(walker.currentNode);
+  for (const node of targets) {
+    const parts = node.nodeValue.split(/(「[^」]+」)/);
+    if (!parts.some(s => BY_TITLE.has(s.slice(1, -1)) && BY_TITLE.get(s.slice(1, -1)).id !== page.id)) continue;
+    const frag = document.createDocumentFragment();
+    for (const s of parts) {
+      const hit = s.startsWith("「") && BY_TITLE.get(s.slice(1, -1));
+      frag.append(hit && hit.id !== page.id ? el("a", { href: `#/${hit.id}`, text: s }) : document.createTextNode(s));
+    }
+    node.replaceWith(frag);
+  }
+  // 勾選清單：記在這台裝置上
+  const boxes = [...root.querySelectorAll('li > input[type="checkbox"]')];
+  boxes.forEach((box, i) => {
+    const li = box.parentElement;
+    const key = `sop:${SITE.edition}:${page.id}:${i}`;
+    li.classList.add("task");
+    const rest = el("span");
+    while (box.nextSibling) rest.append(box.nextSibling);
+    li.append(rest);
+    box.disabled = false;
+    box.checked = store.get(key) === "1";
+    li.classList.toggle("done", box.checked);
+    box.setAttribute("aria-label", rest.textContent.trim().slice(0, 60));
+    box.addEventListener("change", () => { store.set(key, box.checked ? "1" : "0"); li.classList.toggle("done", box.checked); updateProgress(); });
+  });
+  let progress = null;
+  function updateProgress() {
+    if (!progress) return;
+    const done = boxes.filter(b => b.checked).length;
+    progress.querySelector("i").style.width = `${(done / boxes.length) * 100}%`;
+    progress.querySelector("small").textContent = `已勾選 ${done}／${boxes.length} 項（只記在這台裝置）`;
+  }
+  if (boxes.length >= 3) {
+    progress = el("div", { class: "progress" }, el("div", { class: "bar" }, el("i")), el("small"));
+    root.prepend(progress);
+    updateProgress();
+  }
+}
+
+/* ---- 畫面 ---- */
+function showPage(page) {
+  const i = PAGES.indexOf(page);
+  const prev = PAGES[i - 1], next = PAGES[i + 1];
+  const body = el("div", { class: "md", html: renderMarkdown(page.md) });
+  enhance(body, page);
+  const chips = el("div", { class: "chips" },
+    page.rules.map(r => el("span", { class: "chip rule", text: r })),
+    page.updated ? el("span", { class: "chip", text: `更新 ${page.updated}` }) : null);
+  const main = document.getElementById("main");
+  main.replaceChildren(el("article", { class: "page" },
+    el("header", { class: "page-head" }, el("span", { class: "eyebrow", text: `${page.group.label}｜${num(page)}` }), el("h1", { text: page.title }),
+      page.summary ? el("p", { class: "sum", text: page.summary }) : null, chips),
+    body,
+    el("nav", { class: "pager", "aria-label": "上一頁／下一頁" },
+      prev ? el("a", { href: `#/${prev.id}` }, el("small", { text: "← 上一頁" }), el("span", { text: prev.title })) : null,
+      next ? el("a", { class: "next", href: `#/${next.id}` }, el("small", { text: "下一頁 →" }), el("span", { text: next.title })) : null)));
+  document.title = `${page.title}｜LURASUPA SOP`;
+  markNav(page.id);
+}
+function showHome() {
+  const intro = SITE.edition === "artist"
+    ? "你會用到的四件事：回報時間、確認任務、交作業、問小律。不知道從哪裡開始，就從第一頁看起。"
+    : "營運操作手冊、藝人看到的畫面、客戶驗收清單都在這裡。左邊的搜尋可以找任何關鍵字。";
+  document.getElementById("main").replaceChildren(el("div", { class: "page" },
+    el("section", { class: "hero" }, el("span", { class: "eyebrow", text: SITE.editionLabel }), el("h1", { text: SITE.edition === "artist" ? "藝人操作 SOP" : "LURASUPA 營運 SOP" }), el("p", { text: intro })),
+    SITE.groups.map(g => el("section", { class: "group" }, el("h2", { text: g.label }), el("p", { text: g.blurb }),
+      el("div", { class: "cards" }, g.pages.map(p => el("a", { class: "card", href: `#/${p.id}` }, el("span", { class: "n", text: num(p) }), el("b", { text: p.title }), el("span", { text: p.summary }))))))));
+  document.title = `LURASUPA SOP｜${SITE.editionLabel}`;
+  markNav(null);
+}
+const INDEX = PAGES.map(p => ({ page: p, text: plain(p.md) }));
+function showSearch(q) {
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = INDEX.map(({ page, text }) => {
+    const hay = (page.title + " " + page.summary + " " + text).toLowerCase();
+    if (!words.every(w => hay.includes(w))) return null;
+    const score = words.reduce((s, w) => s + (page.title.toLowerCase().includes(w) ? 5 : 0) + hay.split(w).length, 0);
+    const at = text.toLowerCase().indexOf(words[0]);
+    const snippet = at >= 0 ? text.slice(Math.max(0, at - 30), at + 70) : page.summary;
+    return { page, score, snippet };
+  }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 25);
+  const mark = s => { let out = esc(s); for (const w of words) out = out.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), m => `<mark>${m}</mark>`); return out; };
+  document.getElementById("main").replaceChildren(el("div", { class: "page" },
+    el("header", { class: "page-head" }, el("span", { class: "eyebrow", text: "搜尋" }), el("h1", { text: `「${q.trim()}」` }), el("p", { class: "sum", text: hits.length ? `找到 ${hits.length} 頁` : "" })),
+    hits.length ? el("div", { class: "results" }, hits.map(h => el("a", { class: "result", href: `#/${h.page.id}` },
+      el("small", { text: h.page.group.label }), el("b", { html: mark(h.page.title) }), el("p", { html: "…" + mark(h.snippet) + "…" }))))
+      : el("p", { class: "empty", text: "沒有找到。換個說法試試，例如「早報」「重送」「交件」「審核」。" })));
+  markNav(null);
+}
+function route() {
+  const id = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
+  if (id && BY_ID[id]) showPage(BY_ID[id]); else showHome();
+  window.scrollTo(0, 0);
+  closeMenu();
+}
+
+/* ---- 手機目錄 ---- */
+const side = document.getElementById("side"), menu = document.getElementById("menu");
+function closeMenu() { side.classList.remove("open"); menu.setAttribute("aria-expanded", "false"); }
+menu.addEventListener("click", () => { const open = !side.classList.contains("open"); side.classList.toggle("open", open); menu.setAttribute("aria-expanded", String(open)); });
+
+let timer = null;
+document.getElementById("q").addEventListener("input", e => {
+  clearTimeout(timer);
+  const q = e.target.value;
+  timer = setTimeout(() => q.trim() ? showSearch(q) : route(), 150);
+});
+window.addEventListener("hashchange", route);
+buildNav();
+route();
+</script>
