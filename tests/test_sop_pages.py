@@ -41,7 +41,7 @@ def test_程式碼區塊都有標類型():
             for line in page.body.split("\n"):
                 if line.strip().startswith("```"):
                     if not fence_open:
-                        assert line.strip() in ("```discord", "```notion", "```text", "```yaml"), (
+                        assert line.strip() in ("```discord", "```notion", "```text", "```yaml", "```mermaid"), (
                             f"{page.path.name}：程式碼區塊要標 discord／notion／text：{line.strip()}"
                         )
                     fence_open = not fence_open

@@ -4,6 +4,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;800&family=JetBrains+Mono:wght@400;600&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
 <style>
 /* LURASUPA SOP 網站：左邊目錄＋搜尋，右邊內容。內容由 scripts/build_sop_site.py 從 docs/sop 分頁產生。 */
 :root {
@@ -81,6 +82,10 @@ main { padding: 40px 48px 90px; min-width: 0; }
 .tablewrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .md th, .md td { text-align: left; vertical-align: top; padding: 8px 11px; border-bottom: 1px solid var(--line); }
 .md td:first-child code { white-space: nowrap; }
+.md .diagram { margin: 20px 0; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.md .diagram pre.mermaid { margin: 0; background: none; border: 0; padding: 0; display: flex; justify-content: center; }
+.md .diagram pre.mermaid:not([data-processed]), .md .diagram pre.mermaid.failed { display: block; white-space: pre; font: 12.5px/1.6 var(--font-mono); color: var(--muted); }
+.md .diagram svg { max-width: 100%; height: auto; }
 .md th { font-size: 12.5px; color: var(--muted); letter-spacing: .03em; background: var(--sunken); white-space: nowrap; }
 .md tr:last-child td { border-bottom: 0; }
 .md blockquote { margin: 14px 0; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--surface); border-radius: 0 8px 8px 0; color: var(--ink); }
@@ -236,6 +241,7 @@ const renderer = {
     const language = typeof code === "object" ? code.lang : lang;
     if (language === "discord") return discordBlock(text);
     if (language === "notion") return `<div class="nt">${esc(text)}</div>`;
+    if (language === "mermaid") return `<figure class="diagram"><pre class="mermaid">${esc(text)}</pre></figure>`;
     return `<pre class="plain">${esc(text)}</pre>`;
   },
 };
@@ -317,6 +323,28 @@ function showPage(page) {
       next ? el("a", { class: "next", href: `#/${next.id}` }, el("small", { text: "下一頁 →" }), el("span", { text: next.title })) : null)));
   document.title = `${page.title}｜LURASUPA SOP`;
   markNav(page.id);
+  drawDiagrams(body);
+}
+/* ---- 示意圖：顏色跟著網站的淺色／深色 ---- */
+function drawDiagrams(root) {
+  const nodes = [...root.querySelectorAll("pre.mermaid")];
+  if (!nodes.length || !window.mermaid) return;
+  const css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim();
+  mermaid.initialize({
+    startOnLoad: false, securityLevel: "strict", theme: "base",
+    fontFamily: v("--font-body"),
+    flowchart: { htmlLabels: true, curve: "basis", padding: 12, useMaxWidth: true },
+    sequence: { useMaxWidth: true, mirrorActors: false },
+    themeVariables: {
+      background: v("--surface"), primaryColor: v("--accent-soft"), primaryTextColor: v("--ink"), primaryBorderColor: v("--accent"),
+      secondaryColor: v("--tip-soft"), tertiaryColor: v("--sunken"), lineColor: v("--muted"), textColor: v("--ink"),
+      clusterBkg: v("--sunken"), clusterBorder: v("--line"), edgeLabelBackground: v("--surface"),
+      actorBkg: v("--accent-soft"), actorBorder: v("--accent"), actorTextColor: v("--ink"), signalColor: v("--ink"), signalTextColor: v("--ink"),
+      noteBkgColor: v("--warn-soft"), noteTextColor: v("--ink"), noteBorderColor: v("--warn"), labelBoxBkgColor: v("--sunken"), labelTextColor: v("--ink"),
+      fontSize: "14px",
+    },
+  });
+  mermaid.run({ nodes }).catch(() => nodes.forEach(n => n.classList.add("failed")));
 }
 function showHome() {
   const intro = SITE.edition === "artist"
