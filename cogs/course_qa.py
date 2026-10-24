@@ -481,8 +481,10 @@ class CourseQACog(commands.Cog):
         notification_log.persist()
         if not selected:
             # 小律自己會說「這週沒有任務喔」，程式那句只在 AI 用不了時才補
-            empty = intro if from_ai else f"{scope}沒有{kind}喔。\n{intro}"
-            return f"🤖 **小律**\n\n{empty}\n\n{footer}"
+            if from_ai:
+                # 清單是空的：小律的話就是整個回答（可能根本不是在查任務，例如「下個月通告費什麼時候發」）
+                return f"🤖 **小律**\n\n{intro}"
+            return f"🤖 **小律**\n\n{scope}沒有{kind}喔。\n{intro}\n\n{footer}"
         self._memory_by_user[str(user.id)] = {
             **self._memory_by_user.get(str(user.id), {}),
             "task_ids": [task.page_id for task in selected[:task_query.MAX_LINES]],
