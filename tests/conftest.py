@@ -23,6 +23,12 @@ def no_real_llm(monkeypatch, request):
     async def query(facts, *, state, now, client=None):
         return ritsu_voice.query_template(facts)
 
+    async def no_chat(**kwargs):
+        return None  # 小律聊天（M6-08）一律退回固定回答
+
+    from services import ritsu_chat
+
+    monkeypatch.setattr(ritsu_chat, "reply", no_chat)
     monkeypatch.setattr(ritsu_voice, "review_line", review)
     monkeypatch.setattr(ritsu_voice, "query_line", query)
 

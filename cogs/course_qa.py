@@ -11,7 +11,7 @@ from discord.ext import commands
 
 import config
 from cogs import channel_guard, ui_text
-from services import course_intent, course_qa, notification_log, repositories, ritsu_voice, task_query
+from services import course_intent, course_qa, notification_log, repositories, ritsu_chat, ritsu_voice, task_query
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -187,7 +187,14 @@ class CourseQACog(commands.Cog):
         self._records_cache: dict[int, list[repositories.CourseMeetingRecord]] = {}
         self._catalog_sent_threads: set[int] = set()
         self._answer_locks: dict[int, asyncio.Lock] = {}
+        self._chat_memory = ritsu_chat.Memory()  # M6-08：每位藝人今天的對話，只放記憶體
         self._warm_task: asyncio.Task | None = None
+
+    @property
+    def _chat(self) -> ritsu_chat.Memory:
+        if not hasattr(self, "_chat_memory"):
+            self._chat_memory = ritsu_chat.Memory()
+        return self._chat_memory
 
     async def cog_load(self):
         """啟動時預熱課程目錄；只讀 Notion，不呼叫 LLM。註冊入口按鈕並確保頻道有置頂說明。"""
@@ -340,12 +347,21 @@ class CourseQACog(commands.Cog):
         """同一位使用者同時只跑一個回答，避免重複消耗 API 額度。"""
         lock = self._answer_locks.setdefault(user.id, asyncio.Lock())
         async with lock:
-            return await self._answer_for_user_unlocked(user, question)
+            answer = await self._answer_for_user_unlocked(user, question)
+            # 同一個討論串記得最近幾句（M6-08，只放記憶體）：下一句才接得上「那第二個呢」
+            convo = self._chat.get(user.id, datetime.now(config.get_tenant().tz).date())
+            convo.add("artist", question)
+            convo.add("ritsu", answer.removeprefix("🤖 **小律**").strip())
+            return answer
 
     async def _answer_for_user_unlocked(self, user: discord.abc.User, question: str) -> str:
         if not config.get_tenant().meeting_qa_enabled:
-            # 會議紀錄查詢封存中：所有問題都走任務，對不到就說明可以怎麼問。
-            return await self._answer_task_query(user, question) or TASK_ONLY_HELP
+            # 會議紀錄查詢封存中：所有問題都走任務；不是查任務的話跟小律聊（M6-08），都不行才說明可以怎麼問。
+            return (
+                await self._answer_task_query(user, question)
+                or await self._chat_answer(user, question)
+                or TASK_ONLY_HELP
+            )
         if task_query.is_task_query(question) or (
             (task_query.wants_detail(question) or task_query.is_specific_question(question))
             and not task_query.is_meeting_question(question)
@@ -443,34 +459,63 @@ class CourseQACog(commands.Cog):
         footer = TASK_LIST_FOOTER
         if specific and selected and len(selected) <= task_query.MAX_CONTEXT_TASKS:
             return await self._task_llm_answer(artist, question, selected, now)
-        # 小律依查到的狀況說一句（M6-07）：只送數字，失敗回範本句
-        line = await ritsu_voice.query_line(
-            _query_facts(scope, selected, now, pending_only), state=notification_log.shared(), now=now,
-        )
-        notification_log.persist()
-        if not selected:
-            return f"🤖 **小律**\n\n{scope}沒有{kind}喔。{line}\n\n{footer}"
         lines = [
             f"・**{strip_notion_links(task.name)}**｜{task.task_type or '任務'}｜"
             f"{ui_text.deadline_text(task, now)}｜{task.status or '未填狀態'}"
             for task in selected[:task_query.MAX_LINES]
         ]
+        lines = [f"{index}. {text.removeprefix('・')}" for index, text in enumerate(lines, start=1)]
+        who = ritsu_voice.call_name(artist.name)
+        # 小律看這位藝人今天的狀況＋剛剛聊過的，說清單上面那段話（M6-08）；不行就退回 M6-07 那一句
+        intro = await ritsu_chat.reply(
+            call_name=who, question=question, tasks=tasks, now=now,
+            deadline_text=lambda task: ui_text.deadline_text(task, now),
+            convo=self._chat.get(user.id, now.date()), state=notification_log.shared(),
+            list_text="\n".join(lines).replace("**", "") if lines else "（沒有任務）",
+        )
+        from_ai = intro is not None
+        if intro is None:
+            intro = await ritsu_voice.query_line(
+                _query_facts(scope, selected, now, pending_only), state=notification_log.shared(), now=now,
+            )
+        notification_log.persist()
+        if not selected:
+            # 小律自己會說「這週沒有任務喔」，程式那句只在 AI 用不了時才補
+            empty = intro if from_ai else f"{scope}沒有{kind}喔。\n{intro}"
+            return f"🤖 **小律**\n\n{empty}\n\n{footer}"
         self._memory_by_user[str(user.id)] = {
             **self._memory_by_user.get(str(user.id), {}),
             "task_ids": [task.page_id for task in selected[:task_query.MAX_LINES]],
         }
         self._save_memory_state()
-        lines = [f"{index}. {line.removeprefix('・')}" for index, line in enumerate(lines, start=1)]
         more = len(selected) - len(lines)
         if more > 0:
             lines.append(f"（另有 {more} 筆，完整清單請用 `/我的任務`）")
-        who = ritsu_voice.call_name(artist.name)
         return (
             f"🤖 **小律**\n\n📑 **{who}同學，{scope}{'' if pending_only else '的'}{kind}有 {len(selected)} 筆**\n"
-            f"{line}\n"
+            f"{intro}\n"
             + "\n".join(lines)
             + f"\n\n{footer}"
         )
+
+    async def _chat_answer(self, user: discord.abc.User, question: str) -> str | None:
+        """清單、任務內容以外的話（打招呼、好累、謝謝…）：小律依今天的狀況回（M6-08）。失敗回 None。"""
+        artist = await repositories.find_artist_by_discord_id(user.id)
+        if artist is None or not can_artist_use_ai(artist):
+            return None
+        try:
+            tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
+        except Exception:
+            logger.exception("小律聊天讀取任務失敗：%s", artist.name)
+            return None
+        now = datetime.now(config.get_tenant().tz)
+        text = await ritsu_chat.reply(
+            call_name=ritsu_voice.call_name(artist.name), question=question, tasks=tasks, now=now,
+            deadline_text=lambda task: ui_text.deadline_text(task, now),
+            convo=self._chat.get(user.id, now.date()), state=notification_log.shared(),
+        )
+        notification_log.persist()
+        return f"🤖 **小律**\n\n{text}" if text else None
 
     def _detail_targets(
         self, user: discord.abc.User, question: str, tasks: list[repositories.TaskItem],

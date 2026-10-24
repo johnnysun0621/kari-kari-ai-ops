@@ -58,9 +58,9 @@ class Voice:
 
 def daily_limit() -> int:
     try:
-        return int(os.getenv("RITSU_VOICE_DAILY_TOKEN_LIMIT", "30000"))
+        return int(os.getenv("RITSU_VOICE_DAILY_TOKEN_LIMIT", "200000"))
     except ValueError:
-        return 30000
+        return 200000
 
 
 def call_name(name: str) -> str:
@@ -187,7 +187,7 @@ def _add_usage(state: dict, today: str, tokens: int) -> None:
 
 
 async def _ask_json(system_extra: str, user_text: str, *, state: dict, now: datetime,
-                    client: httpx.AsyncClient | None = None) -> dict | None:
+                    client: httpx.AsyncClient | None = None, max_tokens: int = MAX_COMPLETION_TOKENS) -> dict | None:
     """送一次 chat completion，要求回 JSON。沒有 key、額度用完、任何失敗都回 None（呼叫端用範本句）。"""
     tenant = config.get_tenant()
     today = now.date().isoformat()
@@ -207,7 +207,7 @@ async def _ask_json(system_extra: str, user_text: str, *, state: dict, now: date
     }
     try:
         llm_response.configure_chat_completion(
-            payload, base_url=tenant.llm_base_url, model=tenant.llm_model, max_tokens=MAX_COMPLETION_TOKENS,
+            payload, base_url=tenant.llm_base_url, model=tenant.llm_model, max_tokens=max_tokens,
         )
         owns = client is None
         client = client or httpx.AsyncClient(timeout=TIMEOUT_SECONDS)
