@@ -11,7 +11,7 @@ from discord.ext import commands
 
 import config
 from cogs import channel_guard, ui_text
-from services import course_intent, course_qa, repositories, task_query
+from services import course_intent, course_qa, notification_log, repositories, ritsu_voice, task_query
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -27,21 +27,22 @@ def _submit_channel() -> str:
 
 
 def panel_text() -> str:
+    # M6-07：小律的口吻（M3-30）
     return (
         "🤖 **小律｜查任務的地方**\n\n"
-        "這裡可以問**你自己任務的細節**：\n"
+        "大家好，我是小律！在這裡可以問小律**你自己任務的細節**：\n"
         "・這週／下週有什麼任務、還有哪些沒交\n"
         "・某個任務要做什麼、要交什麼形式、什麼時候截止\n\n"
-        "👉 按下方「💬 開始問小律」，會開一個**只有你看得到**的討論串，在裡面直接打字問就好。\n\n"
-        "📤 **要交作業、按「收到任務」，不是在這裡**\n"
-        f"請到 {_submit_channel()} 打 `/我的任務`。小律只能幫你查，不能幫你交。\n\n"
+        "👉 按下方「💬 開始問小律」，小律會幫你開一個**只有你看得到**的討論串，在裡面直接打字問就好。\n\n"
+        "📤 **要交作業、按「收到任務」，不是在這裡喔**\n"
+        f"請到 {_submit_channel()} 打 `/我的任務`。小律在這裡只能幫你查，不能幫你交。\n\n"
         "⚠️ 請不要直接在這個頻道打字，這裡大家都看得到。"
     )
 
 
 def thread_welcome() -> str:
     return (
-        "👋 這裡只有你看得到，直接打字問就好，例如：\n"
+        "👋 歡迎！這裡只有你看得到，想問小律什麼直接打字就好，例如：\n"
         "・「這週有什麼任務」「我還有哪些沒交」\n"
         "・「第 2 個的詳細內容」\n"
         "・「week4 聽力要做幾題」\n\n"
@@ -50,13 +51,32 @@ def thread_welcome() -> str:
 _DISCORD_MESSAGE_LIMIT = 1900
 TASK_ONLY_HELP = (
     "🤖 **小律**\n\n"
-    "我可以幫你查自己的任務，例如：\n"
+    "小律可以幫你查自己的任務，這樣問就好：\n"
     "・「這週有什麼任務」「下週要交什麼」「11 月有什麼行程」\n"
     "・「我還有哪些沒交」\n"
     "・「第 2 個的詳細內容」，或直接講任務名稱\n"
     "・「week4 聽力要做幾題」「要用什麼格式交」\n\n"
     "要交件或按「收到任務」，請用 `/我的任務`。"
 )
+TASK_LIST_FOOTER = (
+    "想看哪一筆的內容，跟小律說「第 2 個」或直接講任務名稱就好。"
+    "要交件或按「收到任務」，請用 `/我的任務`。"
+)
+
+
+def _query_facts(scope: str, selected: list, now: datetime, pending_only: bool) -> ritsu_voice.QueryFacts:
+    """清單上小律那一句用的數字（M6-07）：不含名字、任務名稱、藝人問的原句。"""
+    def due_soon(task) -> bool:
+        deadline, _ = repositories.task_action_deadline(task)
+        return bool(deadline and task.status not in ("已逾期", "待審核") and 0 <= (deadline - now).total_seconds() <= 3 * 86400)
+
+    return ritsu_voice.QueryFacts(
+        scope=scope, total=len(selected), pending_only=pending_only,
+        overdue=sum(1 for t in selected if t.status == "已逾期"),
+        due_soon=sum(1 for t in selected if due_soon(t)),
+        needs_fix=sum(1 for t in selected if t.status == "需修改"),
+        in_review=sum(1 for t in selected if t.status == "待審核"),
+    )
 
 
 def can_artist_use_ai(artist: repositories.Artist) -> bool:
@@ -122,7 +142,7 @@ class AIAnswerFeedbackModal(discord.ui.Modal, title="回報小律的回答"):
             await interaction.followup.send("❌ 回報寫入失敗，請稍後再試。", ephemeral=True)
             return
         await interaction.followup.send(
-            "✅ 已寫入 Notion 布告欄的「🙋 使用回饋」，公司會在那裡追蹤。",
+            "✅ 謝謝你告訴小律！已經記到 Notion 布告欄的「🙋 使用回饋」，公司會在那裡追蹤。",
             ephemeral=True,
         )
 
@@ -219,7 +239,7 @@ class CourseQACog(commands.Cog):
             return
         parent = interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None
         if parent is None:
-            await interaction.followup.send("❌ 請在小律頻道按這個按鈕。", ephemeral=True)
+            await interaction.followup.send("❌ 這個按鈕要在小律的頻道按喔。", ephemeral=True)
             return
         thread, created = await self._get_or_create_thread_for(interaction.user, parent)
         if thread is None:
@@ -229,7 +249,7 @@ class CourseQACog(commands.Cog):
             return
         if created:
             await thread.send(f"{interaction.user.mention} {thread_welcome()}")
-        await interaction.followup.send(f"✅ 你的私人討論串在這裡：{thread.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ 小律幫你準備好討論串了：{thread.mention}", ephemeral=True)
 
     async def _warm_course_cache(self) -> None:
         await self.bot.wait_until_ready()
@@ -349,7 +369,7 @@ class CourseQACog(commands.Cog):
             intent = course_intent._fallback_intent(question, records)
         selected = course_intent.select_records(records, intent, memory)
         if not selected:
-            return "請指定月份、會議主題、負責人、附件名稱或關鍵字，我才能縮小查詢範圍。"
+            return "可以再跟小律說月份、會議主題、負責人、附件名稱或關鍵字嗎？小律才能幫你縮小範圍。"
         intent_context = json.dumps(
             {
                 "mode": intent.mode,
@@ -377,7 +397,7 @@ class CourseQACog(commands.Cog):
                 return exc.user_message
             except Exception:
                 logger.exception("小律回答階段發生未預期錯誤")
-                return "⚠️ 小律這次未能完成回答，請稍後重試。"
+                return "⚠️ 小律這次沒能回答完，請稍後再問一次。"
         self._memory_by_user[str(user.id)] = {
             "mode": intent.mode,
             "month": intent.month,
@@ -402,7 +422,7 @@ class CourseQACog(commands.Cog):
             tasks = await repositories.get_discord_tasks_for_artist(artist.page_id)
         except Exception:
             logger.exception("小律讀取任務失敗：%s", artist.name)
-            return "❌ 讀取任務失敗，請稍後再試，或改用 `/我的任務`。"
+            return "❌ 小律剛剛讀不到你的任務，請稍後再試，或先用 `/我的任務`。"
         now = datetime.now(config.get_tenant().tz)
         detail_targets = self._detail_targets(user, question, tasks)
         specific = task_query.is_specific_question(question) and bool(config.get_tenant().llm_api_key)
@@ -412,7 +432,7 @@ class CourseQACog(commands.Cog):
             if len(detail_targets) == 1:
                 return await self._task_detail_answer(detail_targets[0], now)
             names = "\n".join(f"・{strip_notion_links(task.name)}" for task in detail_targets[:10])
-            return f"🤖 **小律**\n\n符合的任務有 {len(detail_targets)} 筆，你要看哪一筆？\n{names}"
+            return f"🤖 **小律**\n\n小律找到 {len(detail_targets)} 筆符合的，你想看哪一筆呢？\n{names}"
         if not task_query.is_task_query(question):
             return None
         date_range = task_query.parse_range(question, now)
@@ -420,11 +440,16 @@ class CourseQACog(commands.Cog):
         selected = task_query.select_tasks(tasks, date_range, pending_only=pending_only)
         scope = f"{date_range.label}" if date_range else "目前"
         kind = "還沒交的任務" if pending_only else "任務"
-        footer = "想看某一筆的內容，可以問「第 2 個的詳細內容」或直接講任務名稱。要交件或按「收到任務」，請用 `/我的任務`。"
-        if not selected:
-            return f"🤖 **小律**\n\n{scope}沒有{kind}。\n{footer}"
-        if specific and len(selected) <= task_query.MAX_CONTEXT_TASKS:
+        footer = TASK_LIST_FOOTER
+        if specific and selected and len(selected) <= task_query.MAX_CONTEXT_TASKS:
             return await self._task_llm_answer(artist, question, selected, now)
+        # 小律依查到的狀況說一句（M6-07）：只送數字，失敗回範本句
+        line = await ritsu_voice.query_line(
+            _query_facts(scope, selected, now, pending_only), state=notification_log.shared(), now=now,
+        )
+        notification_log.persist()
+        if not selected:
+            return f"🤖 **小律**\n\n{scope}沒有{kind}喔。{line}\n\n{footer}"
         lines = [
             f"・**{strip_notion_links(task.name)}**｜{task.task_type or '任務'}｜"
             f"{ui_text.deadline_text(task, now)}｜{task.status or '未填狀態'}"
@@ -439,8 +464,10 @@ class CourseQACog(commands.Cog):
         more = len(selected) - len(lines)
         if more > 0:
             lines.append(f"（另有 {more} 筆，完整清單請用 `/我的任務`）")
+        who = ritsu_voice.call_name(artist.name)
         return (
-            f"🤖 **小律**\n\n📑 **{artist.name}｜{scope}{'' if pending_only else '的'}{kind}**（{len(selected)} 筆）\n"
+            f"🤖 **小律**\n\n📑 **{who}同學，{scope}{'' if pending_only else '的'}{kind}有 {len(selected)} 筆**\n"
+            f"{line}\n"
             + "\n".join(lines)
             + f"\n\n{footer}"
         )

@@ -303,3 +303,61 @@ async def review_line(facts: ReviewFacts, *, state: dict, now: datetime, client:
     line = _clean(parsed.get("line"), MAX_REVIEW_LINE) if parsed else None
     logger.info("小律審核結果（%s）：%s", "ai" if line else "template", line or fallback)
     return line or fallback
+
+
+# ---------- 問小律查任務的清單（M6-07） ----------
+
+MAX_QUERY_LINE = 40
+
+
+@dataclass
+class QueryFacts:
+    scope: str  # 這週、下週、10 月…（程式的範圍標籤，不含任務名稱）
+    total: int = 0
+    overdue: int = 0
+    due_soon: int = 0  # 三天內截止
+    needs_fix: int = 0
+    in_review: int = 0
+    pending_only: bool = False  # 問的是「還有哪些沒交」
+
+
+def query_template(facts: QueryFacts) -> str:
+    if not facts.total:
+        return "都交完了，好厲害！" if facts.pending_only else "這段時間沒有任務，可以喘口氣了～"
+    if facts.overdue:
+        return "有過了期限的要先處理喔，小律陪你一起。"
+    if facts.needs_fix:
+        return "有要修改的，照著回饋調整就好。"
+    if facts.due_soon:
+        return "有快到期的，照順序一筆一筆來就好。"
+    return "都在掌握中，繼續保持！"
+
+
+def query_text(facts: QueryFacts) -> str:
+    return "\n".join([
+        f"藝人問了「{facts.scope}{'還沒交的' if facts.pending_only else '的'}任務」，查到 {facts.total} 筆：",
+        f"- 已經過期限：{facts.overdue} 筆",
+        f"- 三天內截止：{facts.due_soon} 筆",
+        f"- 需要修改：{facts.needs_fix} 筆",
+        f"- 已交、等審核：{facts.in_review} 筆",
+    ])
+
+
+_QUERY_RULES = (
+    "藝人剛問小律自己的任務清單，清單會由程式列在你這句話下面。"
+    "請依照上面的人設，用繁體中文寫一句話接在清單標題下面，只輸出 JSON：{\"line\": \"...\"}。\n"
+    f"- 最多 {MAX_QUERY_LINE - 5} 個字\n"
+    "- 不要寫任何數字、筆數或日期（「一筆」「兩筆」「這週」都不要，清單上已經有），不要稱呼名字，不要提任務名稱，不要編造狀況裡沒有的事\n"
+    "- 有逾期或需要修改：不責備，給陪伴；都很順：真心稱讚；沒有任務：輕鬆一點\n"
+    "- 不要網址、不要 @、不要 markdown"
+)
+
+
+async def query_line(facts: QueryFacts, *, state: dict, now: datetime, client: httpx.AsyncClient | None = None) -> str:
+    """查任務清單上小律的一句（M6-07）。只送數字，不送名字、任務名稱、藝人問的原句。失敗回範本句。"""
+    fallback = query_template(facts)
+    parsed = await _ask_json(_QUERY_RULES, query_text(facts), state=state, now=now, client=client)
+    guard = Counts(overdue=facts.overdue, needs_fix=facts.needs_fix, due_soon=facts.due_soon)
+    line = _clean_daily_voice(parsed.get("line"), MAX_QUERY_LINE, guard) if parsed else None
+    logger.info("小律查任務（%s）：%s", "ai" if line else "template", line or fallback)
+    return line or fallback

@@ -204,7 +204,8 @@ def detail_cog(cog, monkeypatch):
 
 def test_先列清單再問第N個的詳細(detail_cog):
     listing = ask(detail_cog, "我有哪些任務")
-    assert listing.splitlines()[3].startswith("1. ")
+    # 標題下面是小律依狀況說的一句（M6-07），清單從下一行開始
+    assert listing.splitlines()[4].startswith("1. ")
 
     detail = ask(detail_cog, "第2個的詳細內容")
 

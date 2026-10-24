@@ -147,3 +147,38 @@ def test_審核結果_AI_失敗用範本句():
 
     facts = ritsu_voice.ReviewFacts(result="需修改", attempt=2)
     assert asyncio.run(ritsu_voice.review_line(facts, state={}, now=NOW, client=fake_client(boom))) == "再調整一下就好，小律陪你一起改。"
+
+
+# ---------- M6-07：查任務清單 ----------
+
+def test_查任務清單一句_只送數字_有數字的句子不用():
+    seen = {}
+
+    def handler(request):
+        seen.update(json.loads(request.content))
+        body = {"choices": [{"message": {"content": json.dumps({"line": "有三筆快到期喔"}, ensure_ascii=False)}}],
+                "usage": {"total_tokens": 200}}
+        return httpx.Response(200, json=body)
+
+    facts = ritsu_voice.QueryFacts(scope="這週", total=3, due_soon=2)
+    line = asyncio.run(ritsu_voice.query_line(facts, state={}, now=NOW, client=fake_client(handler)))
+    assert "三" not in line or line == ritsu_voice.query_template(facts)
+    user = seen["messages"][1]["content"]
+    assert "這週的任務" in user and "三天內截止：2 筆" in user
+
+
+def test_查任務清單_AI_說了沒有的狀況_用範本句():
+    reply_line = reply("", "")  # 只是為了拿到同樣格式
+
+    def handler(request):
+        body = {"choices": [{"message": {"content": json.dumps({"line": "有過期限的要先處理喔"}, ensure_ascii=False)}}],
+                "usage": {"total_tokens": 200}}
+        return httpx.Response(200, json=body)
+
+    facts = ritsu_voice.QueryFacts(scope="下週", total=2)
+    assert asyncio.run(ritsu_voice.query_line(facts, state={}, now=NOW, client=fake_client(handler))) == "都在掌握中，繼續保持！"
+
+
+def test_查任務沒有任務的範本句():
+    assert ritsu_voice.query_template(ritsu_voice.QueryFacts(scope="明天")) == "這段時間沒有任務，可以喘口氣了～"
+    assert ritsu_voice.query_template(ritsu_voice.QueryFacts(scope="目前", pending_only=True)) == "都交完了，好厲害！"

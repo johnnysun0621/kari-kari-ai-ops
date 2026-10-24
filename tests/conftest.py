@@ -20,7 +20,11 @@ def no_real_llm(monkeypatch, request):
         return ritsu_voice.review_template(facts)
 
     monkeypatch.setattr(ritsu_voice, "daily_voice", template)
+    async def query(facts, *, state, now, client=None):
+        return ritsu_voice.query_template(facts)
+
     monkeypatch.setattr(ritsu_voice, "review_line", review)
+    monkeypatch.setattr(ritsu_voice, "query_line", query)
 
 
 def pytest_configure(config):
