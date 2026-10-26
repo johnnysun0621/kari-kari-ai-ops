@@ -30,6 +30,12 @@ def test_營運版有營運_藝人_客戶驗收():
     assert acceptance[0]["title"] == "關於這份文件" and any(p["title"] == "客戶驗收清單" for p in acceptance)
 
 
+def test_工程版有工程參考_營運_藝人_頁面帶分組():
+    _, data = _data("eng")
+    assert [g["key"] for g in data["groups"]] == ["eng", "ops", "artist"]
+    assert all(p["section"] for g in data["groups"] for p in g["pages"]), "每頁都要有 section 分組"
+
+
 def test_頁面編號不重複_內容不會提早結束_script():
     for edition in site.EDITIONS:
         html, data = _data(edition)

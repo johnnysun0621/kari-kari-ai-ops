@@ -25,11 +25,13 @@ ACCEPTANCE = ROOT / "docs" / "delivery" / "CLIENT_ACCEPTANCE_SOP.md"
 EDITIONS = {
     "artist": {"label": "藝人版", "groups": ["artist"]},
     "ops": {"label": "營運版", "groups": ["ops", "artist", "acceptance"]},
+    "eng": {"label": "工程版", "groups": ["eng", "ops", "artist"]},
 }
 GROUP_LABELS = {
-    "ops": ("營運操作", "建任務、派發、審核、早報、出問題怎麼查"),
+    "ops": ("營運操作", "照「我想做什麼」寫的操作文章：派任務、審核、看早報、處理通知"),
     "artist": ("藝人看到什麼", "藝人收到的訊息與按鈕，營運可以對照"),
     "acceptance": ("客戶驗收", "驗收前準備、日常流程、驗收清單"),
+    "eng": ("工程參考", "每個操作與排程觸發哪段程式、讀寫哪些欄位、發出什麼訊息"),
 }
 
 
@@ -45,6 +47,7 @@ def _sop_pages(audience: str) -> list[dict]:
             "id": f"{audience}-{page.order:02d}",
             "title": meta["title"],
             "summary": meta["summary"],
+            "section": meta.get("section", ""),
             "order": page.order,
             "rules": _rules(meta["rules"]),
             "updated": meta["updated"],

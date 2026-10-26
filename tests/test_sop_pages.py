@@ -29,7 +29,7 @@ def test_完整版跟分頁一致():
 
 
 def test_SOP_不寫工程細節():
-    for audience in build_sop.AUDIENCES:
+    for audience in ("ops", "artist"):  # 工程版（eng/）本來就寫程式細節
         for page in build_sop.load(audience):
             assert not ENGINEERING_WORDS.search(page.body), f"{page.path.name} 有工程細節，請移到 docs/operations/SETTINGS.md"
 

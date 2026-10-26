@@ -1,4 +1,4 @@
-"""把 docs/sop/ops/、docs/sop/artist/ 的分頁合併成完整版 ADMIN_SOP.md、ARTIST_SOP.md。
+"""把 docs/sop/ops/、artist/、eng/ 的分頁合併成完整版 ADMIN_SOP.md、ARTIST_SOP.md、ENGINEERING_SOP.md。
 
 分頁是唯一來源；完整版是產生出來的，不要直接改。改了分頁後執行：
 
@@ -13,21 +13,27 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOP = ROOT / "docs" / "sop"
-AUDIENCES = ("ops", "artist")
+AUDIENCES = ("ops", "artist", "eng")
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 REQUIRED = ("title", "audience", "order", "rules", "summary", "updated")
 
 OUTPUTS = {
     "ops": (
         SOP / "ADMIN_SOP.md",
-        "控方操作 SOP",
-        "LURASUPA 營運系統的控方操作手冊，照實際工作順序編排。每個流程都標明系統會在 Notion 寫什麼，出狀況時你知道去哪裡看。"
-        "藝人看到的是什麼，見 [藝人 SOP](ARTIST_SOP.md)；工程端的設定見 [設定與技術細節](../operations/SETTINGS.md)。",
+        "營運操作 SOP",
+        "LURASUPA 營運的操作手冊：每一篇講一件事，照「我想做什麼」編排，一步一個動作。"
+        "藝人看到的是什麼，見 [藝人 SOP](ARTIST_SOP.md)；系統內部怎麼運作，見 [工程版](ENGINEERING_SOP.md)。",
     ),
     "artist": (
         SOP / "ARTIST_SOP.md",
         "藝人操作 SOP",
         "你會用到的四件事：**回報時間、確認任務、交作業、問小律**。",
+    ),
+    "eng": (
+        SOP / "ENGINEERING_SOP.md",
+        "工程版：系統觸發與資料對照",
+        "給工程師的參考資料：每一個操作或排程會觸發哪段程式、讀寫哪些 Notion 欄位、發出什麼訊息。"
+        "操作步驟請看 [營運 SOP](ADMIN_SOP.md)、[藝人 SOP](ARTIST_SOP.md)。",
     ),
 }
 

@@ -50,6 +50,9 @@ a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid 
 .nav { display: grid; gap: 18px; }
 .nav h2 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
 .nav ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.nav li.sec { margin: 10px 0 2px 8px; font-size: 11.5px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+.nav li.sec:first-child { margin-top: 2px; }
+.group h3 { font-size: 13px; color: var(--muted); margin: 16px 0 8px; font-weight: 600; letter-spacing: .04em; }
 .nav a { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 6px; padding: 5px 8px; border-radius: 6px; color: var(--ink); text-decoration: none; font-size: 14px; line-height: 1.45; }
 .nav a .n { font-family: var(--font-mono); font-size: 11px; color: var(--muted); padding-top: 2px; font-variant-numeric: tabular-nums; }
 .nav a:hover { background: var(--sunken); }
@@ -196,7 +199,7 @@ function el(tag, attrs = {}, ...kids) {
   for (const [k, v] of Object.entries(attrs)) {
     if (k === "text") n.textContent = v; else if (k === "html") n.innerHTML = v; else if (k === "class") n.className = v; else n.setAttribute(k, v);
   }
-  kids.flat().forEach(k => k != null && n.append(typeof k === "string" ? document.createTextNode(k) : k));
+  kids.flat(Infinity).forEach(k => k != null && n.append(typeof k === "string" ? document.createTextNode(k) : k));
   return n;
 }
 const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -210,8 +213,15 @@ function buildNav() {
   document.getElementById("foot").textContent = `內容產生於 ${SITE.generated}`;
   const nav = document.getElementById("nav");
   for (const g of SITE.groups) {
-    nav.append(el("section", {}, el("h2", { text: g.label }),
-      el("ol", {}, g.pages.map(p => el("li", {}, el("a", { href: `#/${p.id}`, "data-id": p.id }, el("span", { class: "n", text: num(p) }), el("span", { text: p.title })))))));
+    const items = [];
+    let section = null;
+    for (const p of g.pages) {
+      // 分組小標題（頁面標記 section），同一組連續的頁只出現一次
+      if (p.section && p.section !== section) items.push(el("li", { class: "sec", text: p.section }));
+      section = p.section || section;
+      items.push(el("li", {}, el("a", { href: `#/${p.id}`, "data-id": p.id }, el("span", { class: "n", text: num(p) }), el("span", { text: p.title }))));
+    }
+    nav.append(el("section", {}, el("h2", { text: g.label }), el("ol", {}, items)));
   }
 }
 function markNav(id) {
@@ -347,13 +357,24 @@ function drawDiagrams(root) {
   mermaid.run({ nodes }).catch(() => nodes.forEach(n => n.classList.add("failed")));
 }
 function showHome() {
-  const intro = SITE.edition === "artist"
-    ? "你會用到的四件事：回報時間、確認任務、交作業、問小律。不知道從哪裡開始，就從第一頁看起。"
-    : "營運操作手冊、藝人看到的畫面、客戶驗收清單都在這裡。左邊的搜尋可以找任何關鍵字。";
+  const intro = {
+    artist: "你會用到的四件事：回報時間、確認任務、交作業、問小律。不知道從哪裡開始，就從第一頁看起。",
+    eng: "每個操作與排程觸發哪段程式、讀寫哪些 Notion 欄位、發出什麼訊息。操作步驟見後面的營運版與藝人版。",
+  }[SITE.edition] || "營運操作手冊、藝人看到的畫面、客戶驗收清單都在這裡。左邊的搜尋可以找任何關鍵字。";
+  const heading = { artist: "藝人操作 SOP", eng: "LURASUPA 工程參考" }[SITE.edition] || "LURASUPA 營運 SOP";
   document.getElementById("main").replaceChildren(el("div", { class: "page" },
-    el("section", { class: "hero" }, el("span", { class: "eyebrow", text: SITE.editionLabel }), el("h1", { text: SITE.edition === "artist" ? "藝人操作 SOP" : "LURASUPA 營運 SOP" }), el("p", { text: intro })),
-    SITE.groups.map(g => el("section", { class: "group" }, el("h2", { text: g.label }), el("p", { text: g.blurb }),
-      el("div", { class: "cards" }, g.pages.map(p => el("a", { class: "card", href: `#/${p.id}` }, el("span", { class: "n", text: num(p) }), el("b", { text: p.title }), el("span", { text: p.summary }))))))));
+    el("section", { class: "hero" }, el("span", { class: "eyebrow", text: SITE.editionLabel }), el("h1", { text: heading }), el("p", { text: intro })),
+    SITE.groups.map(g => {
+      const card = p => el("a", { class: "card", href: `#/${p.id}` }, el("span", { class: "n", text: num(p) }), el("b", { text: p.title }), el("span", { text: p.summary }));
+      const sections = [];
+      for (const p of g.pages) {
+        const name = p.section || "";
+        if (!sections.length || sections[sections.length - 1].name !== name) sections.push({ name, pages: [] });
+        sections[sections.length - 1].pages.push(p);
+      }
+      return el("section", { class: "group" }, el("h2", { text: g.label }), el("p", { text: g.blurb }),
+        sections.map(s => [s.name ? el("h3", { text: s.name }) : null, el("div", { class: "cards" }, s.pages.map(card))]));
+    })));
   document.title = `LURASUPA SOP｜${SITE.editionLabel}`;
   markNav(null);
 }

@@ -131,11 +131,11 @@ pgrep -fl "python.*bot.py"
 | 變更類型 | 必改文件 |
 |---|---|
 | 新增 / 修改 slash command | `DISCORD_COMMANDS.md` |
-| 調整 Discord 頻道或權限 | `DISCORD_CHANNELS.md`、`SETTINGS.md`、`sop/ops/01-系統地圖與頻道.md`、`sop/ops/14-伺服器初始化.md` |
+| 調整 Discord 頻道或權限 | `DISCORD_CHANNELS.md`、`SETTINGS.md`、`sop/ops/01-系統怎麼運作.md`、`sop/ops/25-初始化Discord伺服器.md` |
 | 改 Notion 欄位或資料庫用途 | `NOTION_SCHEMA.md` |
-| 改交件流程 / 檔案大小分界 | `SUBMISSION_FLOW.md`、`DISCORD_COMMANDS.md`、`sop/ops/07-交件與審核.md`、`sop/artist/05-交作業.md` |
-| 改營運流程 | `sop/ops/`、`sop/artist/` 分頁，再跑 `scripts/build_sop.py` |
-| 改提醒／催辦時間或對象 | `sop/ops/09-每天的提醒與早報.md`、`sop/ops/16-時間與期限一覽.md`、`sop/artist/04-每日早報.md`、`sop/artist/06-期限與逾期.md`、`SETTINGS.md`、`DISCORD_COMMANDS.md` |
+| 改交件流程 / 檔案大小分界 | `SUBMISSION_FLOW.md`、`DISCORD_COMMANDS.md`、`sop/ops/09-派一筆要交作業的任務.md`、`sop/ops/16-交件的檔案存在哪裡.md`、`sop/artist/08-交作業.md`、`sop/eng/02-藝人觸發.md` |
+| 改營運流程或按鈕 | `sop/ops/`、`sop/artist/`、`sop/eng/` 分頁，再跑 `scripts/build_sop.py`；新增按鈕一定要寫進 SOP（`tests/test_sop_coverage.py` 會檢查） |
+| 改提醒／催辦時間或對象 | `sop/ops/17-看營運早報.md`、`sop/ops/26-時間與期限一覽.md`、`sop/artist/07-每天早上的任務提醒.md`、`sop/eng/05-自動排程.md`、`SETTINGS.md`、`DISCORD_COMMANDS.md` |
 | 改工程架構 | `ARCHITECTURE.md` |
 | 改測試方式或驗收情境 | `TESTING.md` |
 | 改產品方向 / 平轉原則 | `PROJECT_PRINCIPLES.md` |
