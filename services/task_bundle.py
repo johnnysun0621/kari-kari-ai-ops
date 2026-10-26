@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from services.notion_links import strip_notion_links
-from services.repositories import TaskItem
+from services.repositories import COURSE_TASK_TYPE, TaskItem
 
 MAX_BUNDLE = 25  # Discord 下拉選單最多 25 個選項
 MESSAGE_LIMIT = 1900
@@ -104,7 +104,10 @@ def bundle_text(
 ) -> str:
     if kind == KIND_BRIEFING:
         return _briefing_first_text(tasks, deadline_text, reported, greeting)
-    lines = [f"{_TITLES[kind]}（{len(tasks)}）"]
+    title = _TITLES[kind]
+    if kind == KIND_ASSIGNMENT and any(task.task_type != COURSE_TASK_TYPE for task in tasks):
+        title = "📚 **作業開放通知**"  # 有非課程的任務就不叫「課後作業」（M2-15）
+    lines = [f"{title}（{len(tasks)}）"]
     for task in tasks:
         if task.page_id in reported:
             lines.append(reported_item_line(task))

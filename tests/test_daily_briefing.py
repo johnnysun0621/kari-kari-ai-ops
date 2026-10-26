@@ -44,7 +44,7 @@ def test_四個區塊依急迫度排序_每筆只出現一次():
         task("new", "尚未開始", acknowledged=False),
         task("soon_and_new", "尚未開始", acknowledged=False),
     ]
-    items = daily_briefing.build_items("a1", tasks, {"soon", "soon_and_new"}, {})
+    items = daily_briefing.build_items("a1", tasks, {"soon", "soon_and_new"}, {}, NOW)
 
     assert [(i.task.page_id, i.section) for i in items] == [
         ("late", "overdue"), ("fix", "needs_fix"),
@@ -60,23 +60,23 @@ def test_不列的任務():
         task("someone_else", "已逾期", artists=("a2",)),
         task("quiet"),  # 不在提醒點、已收到、沒逾期 → 今天不列
     ]
-    assert daily_briefing.build_items("a1", tasks, {"review"}, {}) == []
+    assert daily_briefing.build_items("a1", tasks, {"review"}, {}, NOW) == []
 
 
 def test_快到期只在提醒點出現():
     """佇列由截止前提醒的 loop 放進來（5／3／1 天前、當天）；不在佇列就不列。"""
-    assert daily_briefing.build_items("a1", [task("t")], set(), {}) == []
-    assert len(daily_briefing.build_items("a1", [task("t")], {"t"}, {})) == 1
+    assert daily_briefing.build_items("a1", [task("t")], set(), {}, NOW) == []
+    assert len(daily_briefing.build_items("a1", [task("t")], {"t"}, {}, NOW)) == 1
 
 
 def test_最多25筆():
     tasks = [task(f"t{i}", "已逾期") for i in range(30)]
-    assert len(daily_briefing.build_items("a1", tasks, set(), {})) == daily_briefing.MAX_ITEMS
+    assert len(daily_briefing.build_items("a1", tasks, set(), {}, NOW)) == daily_briefing.MAX_ITEMS
 
 
 def test_逾期確認過_隔天仍列並標仍未完成():
     acks = {"late": {"a1": "2026-10-19"}}
-    items = daily_briefing.build_items("a1", [task("late", "已逾期")], set(), acks)
+    items = daily_briefing.build_items("a1", [task("late", "已逾期")], set(), acks, NOW)
     text = daily_briefing.briefing_text(date(2026, 10, 20), items, lambda t: "截止 10/17（已過 3 天）")
 
     assert "⚠️ 仍未完成（10/19 已確認）" in text
@@ -84,13 +84,13 @@ def test_逾期確認過_隔天仍列並標仍未完成():
 
 def test_當天確認過不標():
     acks = {"late": {"a1": "2026-10-20"}}
-    items = daily_briefing.build_items("a1", [task("late", "已逾期")], set(), acks)
+    items = daily_briefing.build_items("a1", [task("late", "已逾期")], set(), acks, NOW)
     assert "仍未完成" not in daily_briefing.briefing_text(date(2026, 10, 20), items, lambda t: "x")
 
 
 def test_早報文字有區塊標題_不帶_Notion_網址():
     tasks = [task("late", "已逾期", name="MISS21 https://www.notion.so/abc"), task("soon")]
-    items = daily_briefing.build_items("a1", tasks, {"soon"}, {})
+    items = daily_briefing.build_items("a1", tasks, {"soon"}, {}, NOW)
     text = daily_briefing.briefing_text(date(2026, 10, 20), items, lambda t: "截止 10/25（剩 5 天）")
 
     assert "今天要注意的事（10/20 二）" in text

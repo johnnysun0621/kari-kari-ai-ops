@@ -532,6 +532,7 @@ def review_dm_text(
     reviewer: str = "",
     name: str = "",
     ritsu_line: str = "",
+    revision_deadline: datetime | None = None,
 ) -> str:
     """審核結果私訊（M4-18 小律的口吻）。ritsu_line 是小律依最近表現說的一句（AI 或範本句）。"""
     who = f"{name}同學，" if name else ""
@@ -549,6 +550,9 @@ def review_dm_text(
     if reviewer:
         lines.append(f"審核：{reviewer}")
     if result in ("需修改", "退回"):
+        if revision_deadline:
+            weekday = "一二三四五六日"[revision_deadline.weekday()]
+            lines.append(f"修改期限：{revision_deadline.month}/{revision_deadline.day}（{weekday}）")
         lines.append("\n照回饋改好之後，到 `/我的任務` 按「提交任務」重新交就好，小律等你～")
     return "\n".join(lines)
 
@@ -1703,10 +1707,11 @@ class SubmissionsCog(commands.Cog):
         result: str,
         feedback: str = "",
         reviewer: str = "",
+        revision_deadline: datetime | None = None,
     ) -> int:
         artist_map = await repositories.get_artist_map()
         sent = 0
-        task_name = submission.name
+        task_name = await self._review_task_name(submission)
         now = datetime.now(config.get_tenant().tz)
         try:
             history = await repositories.get_all_submissions()
@@ -1732,6 +1737,7 @@ class SubmissionsCog(commands.Cog):
                         reviewer=reviewer,
                         name=ritsu_voice.call_name(artist.name),
                         ritsu_line=line,
+                        revision_deadline=revision_deadline,
                     )
                 )
                 sent += 1
@@ -1884,19 +1890,47 @@ class SubmissionsCog(commands.Cog):
         result: str,
         *,
         revision_days: int | None = None,
-    ) -> None:
+    ) -> datetime | None:
+        """改任務狀態並處理修改期限；回傳給藝人看的修改期限（通過時為 None）。
+
+        Discord 審核由審核人輸入 1～7 天。Notion 手動審核沿用任務上已填的修改期限；
+        沒填就補「今天＋REVIEW_DEFAULT_REVISION_DAYS」（M4-19）——藝人交件時系統會清掉
+        修改期限，不補的話這筆永遠不會有修改逾時提醒。
+        """
         task_status = review_task_status_for_result(result)
         if not task_status:
-            return
+            return None
+        shown: datetime | None = None
+        now = datetime.now(config.get_tenant().tz)
         for task_page_id in submission.task_page_ids:
             await repositories.update_task_status(task_page_id, task_status)
-            if result in ("需修改", "退回"):
-                # Discord 審核由審核人輸入 1～7 天；Notion 手動審核則保留既有欄位值。
-                if revision_days is not None:
-                    deadline = datetime.now(config.get_tenant().tz) + timedelta(days=revision_days)
-                    await repositories.set_task_revision_deadline(task_page_id, deadline)
-            else:
+            if result not in ("需修改", "退回"):
                 await repositories.set_task_revision_deadline(task_page_id, None)
+                continue
+            if revision_days is not None:
+                deadline = now + timedelta(days=revision_days)
+                await repositories.set_task_revision_deadline(task_page_id, deadline)
+            else:
+                task = await repositories.get_task_brief(task_page_id)
+                deadline = task.revision_deadline if task else None
+                if deadline is None:
+                    days = config.get_tenant().review_default_revision_days
+                    deadline = now + timedelta(days=days)
+                    await repositories.set_task_revision_deadline(task_page_id, deadline)
+            shown = shown or deadline
+        return shown
+
+    async def _review_task_name(self, submission: repositories.SubmissionItem) -> str:
+        """審核結果私訊用任務名稱（M4-19）；讀不到才退回提交名稱。"""
+        for task_page_id in submission.task_page_ids:
+            try:
+                task = await repositories.get_task_brief(task_page_id)
+            except Exception:
+                logger.exception("讀取關聯任務名稱失敗：%s", task_page_id)
+                continue
+            if task and task.name:
+                return task.name
+        return submission.name
 
     async def complete_discord_review(
         self,
@@ -1918,7 +1952,7 @@ class SubmissionsCog(commands.Cog):
                 source="Discord",
                 notified_at=now,
             )
-            await self._update_review_task_status(
+            revision_deadline = await self._update_review_task_status(
                 submission,
                 result,
                 revision_days=revision_days,
@@ -1936,6 +1970,7 @@ class SubmissionsCog(commands.Cog):
             result=result,
             feedback=feedback,
             reviewer=reviewer,
+            revision_deadline=revision_deadline,
         )
         self._review_notified.add(submission.page_id)
         await audit.log_event(
@@ -1986,12 +2021,13 @@ class SubmissionsCog(commands.Cog):
             feedback = submission.review_feedback
             reviewer = submission.reviewer or "老師／公司"
             try:
-                await self._update_review_task_status(submission, submission.status)
+                revision_deadline = await self._update_review_task_status(submission, submission.status)
                 sent = await self._notify_review_result(
                     submission,
                     result=submission.status,
                     feedback=feedback,
                     reviewer=reviewer,
+                    revision_deadline=revision_deadline,
                 )
                 self._review_notified.add(submission.page_id)
                 try:
@@ -2040,8 +2076,12 @@ class SubmissionsCog(commands.Cog):
         )
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error):
-        logger.exception("提交指令執行錯誤", exc_info=error)
-        msg = "❌ 指令執行出錯，請稍後再試（詳見 bot log）。"
+        if isinstance(error, app_commands.CheckFailure):
+            # 跟其他管理指令一致（M4-19）：沒權限不是錯誤，不要讓人以為系統壞了
+            msg = "❌ 這個指令僅限管理者使用。"
+        else:
+            logger.exception("提交指令執行錯誤", exc_info=error)
+            msg = "❌ 指令執行出錯，請稍後再試（詳見 bot log）。"
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
         else:

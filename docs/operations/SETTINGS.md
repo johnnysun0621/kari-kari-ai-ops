@@ -10,6 +10,7 @@
 | `TASK_ACK_REMINDER_HOURS` | 12 小時 | 藝人沒按「收到任務」的重送間隔（**只在每日早報關掉時有效**） |
 | `REMIND_BEFORE_DEADLINE_HOURS` | 6 小時 | 月度收集截止前多久催未填的人 |
 | `REVIEW_REMINDER_AFTER_HOURS` | 24 小時 | 提交後多久才列入每日催辦 |
+| `REVIEW_DEFAULT_REVISION_DAYS` | 3 天 | 在 Notion 審成需修改／退回、沒填修改期限時自動補的天數 |
 | `DAILY_NAG_HOUR` | 10 點 | 審核人員催辦、課後提醒老師每天幾點跑 |
 | `DAILY_BRIEFING_ENABLED`／`DAILY_BRIEFING_HOUR` | true／9 點 | 藝人與同仁每日早報（M3-24）。false＝回到逐則通知 |
 | `OPS_BRIEFING_ENABLED`／`OPS_BRIEFING_TIME` | true／09:30 | 營運早報（M3-25）。false＝回到逐則通知；時間要比藝人早報晚，才算得出「昨天的早報沒看」 |

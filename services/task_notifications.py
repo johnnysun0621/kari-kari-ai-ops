@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from services import notion_links
-from services.repositories import TaskItem
+from services.repositories import COURSE_TASK_TYPE, TaskItem
 
 STATE_PATH = Path(".state/task_dispatch_notifications.json")
 ASSIGNMENT_STATE_PATH = Path(".state/task_assignment_notifications.json")
@@ -119,9 +119,11 @@ def assignment_notification_message(task: TaskItem, *, name: str = "", detail: b
         deadline = assignment_deadline.strftime(
             "%m/%d %H:%M" if assignment_has_time else "%m/%d"
         )
+    # 「老師的」只用在課程任務（M2-15）；其他任務勾了開放提交也會走這裡
+    whose = "老師的" if task.task_type == COURSE_TASK_TYPE else ""
     return (
         ("📚 **作業要求**\n" if detail else
-           f"📚 **{name + '同學，' if name else ''}老師的作業開放囉，可以開始交了！**\n")
+           f"📚 **{name + '同學，' if name else ''}{whose}作業開放囉，可以開始交了！**\n")
         + f"任務：**{task.name}**\n"
         f"截止：{deadline}\n\n"
         f"**作業要求**\n{description}\n\n"
@@ -139,7 +141,10 @@ _INTERNAL_DESCRIPTION_PREFIXES = (
     "候選時段",
     "此 Task 同時管理",
     "正式時間請由營運",
+    "此為營運草稿",  # /從時間池建立任務 的草稿說明（M2-15）
 )
+# 「地點／連結：」有填就給藝人看，還寫「待補」就拿掉（M2-15，Johnny 2026-10-26）
+_PLACEHOLDER_LINES = re.compile(r"^地點／連結：\s*(待補)?\s*$")
 
 
 def _description_value(description: str, field_name: str) -> str:
@@ -162,6 +167,7 @@ def _artist_facing_description(description: str) -> str:
         if (
             not stripped
             or any(stripped.startswith(prefix) for prefix in _INTERNAL_DESCRIPTION_PREFIXES)
+            or _PLACEHOLDER_LINES.match(stripped)
             or re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s*[~〜–-]\s*\d{2}:\d{2}$", stripped)
         ):
             continue

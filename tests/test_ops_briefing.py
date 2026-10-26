@@ -254,6 +254,37 @@ def test_逾期不再即時一筆一則_改記進早報(monkeypatch):
     assert ops_briefing.new_overdue_ids(state) == {"t1"}
 
 
+def test_還沒派發的草稿過了日期不判逾期(monkeypatch):
+    """M3-31：沒勾 Discord 顯示＝藝人還沒收到，不能改成已逾期、也不列進營運早報。"""
+    import dataclasses
+
+    state = notification_log.shared()
+    state["reminders_baseline_done"] = True
+    updates = []
+
+    async def get_active_tasks():
+        draft = task("draft", end=datetime(2026, 10, 1, tzinfo=TZ), open_for_submission=True)
+        return [dataclasses.replace(draft, discord_visible=False)]
+
+    async def update(page_id, status):
+        updates.append((page_id, status))
+
+    async def noop(*a, **k):
+        return True
+
+    monkeypatch.setattr(repositories, "get_active_tasks", get_active_tasks)
+    monkeypatch.setattr(repositories, "get_artist_map", noop)
+    monkeypatch.setattr(repositories, "update_task_status", update)
+    monkeypatch.setattr(audit, "log_event", noop)
+    monkeypatch.setattr(reminders_cog, "datetime", SimpleNamespace(now=lambda tz=None: NOW))
+    cog = SimpleNamespace(bot=None, _sent={})
+
+    asyncio.run(reminders_cog.RemindersCog._check_task_reminders(cog))
+
+    assert updates == []
+    assert ops_briefing.new_overdue_ids(state) == set()
+
+
 def test_昨天早報沒按看到_記進營運早報(monkeypatch):
     state = notification_log.shared()
     state["briefings"] = {"1": {"day": "20261020", "channel_id": 9, "message_id": 8, "task_ids": ["x"], "artist_name": "方晨"}}

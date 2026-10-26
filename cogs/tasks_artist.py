@@ -10,7 +10,9 @@ from discord.ext import commands
 import config
 from cogs import channel_guard, paging, ui_text
 from services.permissions import is_admin
-from services import audit, notification_log, ops_notice, repositories, ritsu_voice, task_bundle, task_notifications
+from services import (
+    audit, notification_log, ops_notice, repositories, ritsu_voice, scheduling_sla, task_bundle, task_notifications,
+)
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -214,7 +216,7 @@ async def mark_previous_notifications_received(
 
 
 def _concern_only_view(task_id: str) -> discord.ui.View:
-    """收到之後仍可回報問題（M3-27）：收成一行的那則留一顆「有問題／無法配合」。"""
+    """收到之後仍可回報問題（M3-27）：收成一行的那則留一顆「有問題・無法配合」。"""
     view = discord.ui.View(timeout=None)
     view.add_item(TaskConcernButton(task_id))
     return view
@@ -380,7 +382,7 @@ def reminder_view(task_id: str, stage: str) -> discord.ui.View | None:
 class TaskConcernButton(discord.ui.DynamicItem[discord.ui.Button], template=r"task_concern:(?P<task_id>[\w-]+)"):
     """任務通知中的持久化問題／無法配合按鈕。"""
 
-    def __init__(self, task_id: str, label: str = "有問題／無法配合"):
+    def __init__(self, task_id: str, label: str = "有問題・無法配合"):
         super().__init__(
             discord.ui.Button(
                 label=label,
@@ -393,7 +395,7 @@ class TaskConcernButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
 
     @classmethod
     async def from_custom_id(cls, interaction, item, match):
-        return cls(match.group("task_id"), item.label or "有問題／無法配合")
+        return cls(match.group("task_id"), item.label or "有問題・無法配合")
 
     async def callback(self, interaction: discord.Interaction) -> None:
         await open_concern_modal(interaction, self.task_id)
@@ -904,18 +906,25 @@ class MyTasksView(paging.PagedTextView):
 
 @dataclass
 class DispatchOutcome:
-    """單筆任務派發通知的結果；供背景 loop 與 /任務通知重送 共用同一套發送邏輯。"""
+    """單筆任務派發通知的結果；供背景 loop 與 /任務通知重送 共用同一套發送邏輯。
+
+    notifyable_*：這一輪要送的人（已經送到的不算，M2-15）。
+    missing_artists：關聯藝人裡沒有 Discord User ID（或找不到）的人，送不到，任務就還沒派發完成。
+    """
     notifyable_artists: list[repositories.Artist] = field(default_factory=list)
     sent: int = 0
     notifyable_staff: list[repositories.PersonItem] = field(default_factory=list)
     staff_sent: int = 0
+    missing_artists: list[str] = field(default_factory=list)
+    has_artists: bool = False
+    has_staff: bool = False
 
     @property
     def is_complete(self) -> bool:
-        # 有藝人時只看藝人：同仁發失敗就重送整筆，藝人會重複收到。只掛同仁的任務才看同仁。
-        if self.notifyable_artists:
-            return self.sent == len(self.notifyable_artists)
-        return bool(self.notifyable_staff) and self.staff_sent == len(self.notifyable_staff)
+        # 有藝人時只看藝人（同仁發失敗不擋）；每一位關聯藝人都要送到，缺 ID 的人補上之前都不算完成。
+        if self.has_artists or self.notifyable_artists:
+            return self.sent == len(self.notifyable_artists) and not self.missing_artists
+        return bool(self.has_staff or self.notifyable_staff) and self.staff_sent == len(self.notifyable_staff)
 
 
 async def send_task_notification(bot, task: repositories.TaskItem) -> DispatchOutcome | None:
@@ -925,29 +934,54 @@ async def send_task_notification(bot, task: repositories.TaskItem) -> DispatchOu
 
 async def send_task_notifications(
     bot, tasks: list[repositories.TaskItem], kind: str = task_bundle.KIND_DISPATCH,
+    *, artist_kind: str | None = None,
 ) -> dict[str, DispatchOutcome | None]:
     """這一輪要通知的任務，依收件人分組送出（M3-27）。
 
     同一位藝人 1 筆 → 原本的任務卡；2 筆以上 → 一則合併訊息（最多 25 筆一則）。
     相關同仁同樣分組（課後作業通知不發同仁，跟原本一樣）。送之前先刪掉同一任務發給同一個人的舊通知。
     回傳每筆任務的結果；None 代表那筆沒有任何有效收件人（藝人與同仁都沒有，或都缺 Discord User ID）。
-    派發（kind=dispatch）全部送達的任務會發公開公告、寫「Discord 通知時間」；課後作業由呼叫端記錄。
+
+    派發（kind=dispatch，M2-15）：
+    - 逐一記錄送到誰，已送到的人下一輪不重送；每一位關聯藝人都送到才寫「Discord 通知時間」。
+    - artist_kind=assignment：同一輪又剛好開放交件時，藝人只收一張作業卡（同仁照常收知會）。
+    - 通告／演出第一次有人收到就貼公告區，之後重送不重貼。
+    課後作業（kind=assignment）由呼叫端記錄。
     """
+    artist_kind = artist_kind or kind
+    dispatching = kind == task_bundle.KIND_DISPATCH
+    state = notification_log.shared()
     artist_ids = sorted({pid for task in tasks for pid in task.artist_page_ids})
     artists = {a.page_id: a for a in await repositories.get_artists_by_ids(artist_ids)} if artist_ids else {}
-    staff_ids = sorted({pid for task in tasks for pid in task.staff_page_ids}) if kind == task_bundle.KIND_DISPATCH else []
+    staff_ids = sorted({pid for task in tasks for pid in task.staff_page_ids}) if dispatching else []
     people = {p.page_id: p for p in await repositories.get_people_items_by_ids(staff_ids)} if staff_ids else {}
 
     outcomes: dict[str, DispatchOutcome | None] = {}
     per_artist: dict[str, list[repositories.TaskItem]] = {}
     per_staff: dict[str, list[repositories.TaskItem]] = {}
     for task in tasks:
-        notifyable_artists = [artists[pid] for pid in task.artist_page_ids if pid in artists and artists[pid].discord_user_id]
-        notifyable_staff = [people[pid] for pid in task.staff_page_ids if pid in people and people[pid].discord_user_id]
-        if not notifyable_artists and not notifyable_staff:
+        delivered = notification_log.delivered_for(state, task.page_id) if dispatching else set()
+        notifyable_artists = [
+            artists[pid] for pid in task.artist_page_ids
+            if pid in artists and artists[pid].discord_user_id and f"a:{pid}" not in delivered
+        ]
+        missing = [
+            artists[pid].name if pid in artists else "（找不到藝人資料）"
+            for pid in task.artist_page_ids
+            if not (pid in artists and artists[pid].discord_user_id)
+        ]
+        notifyable_staff = [
+            people[pid] for pid in task.staff_page_ids
+            if pid in people and people[pid].discord_user_id and f"p:{pid}" not in delivered
+        ]
+        if not notifyable_artists and not notifyable_staff and not delivered:
             outcomes[task.page_id] = None
             continue
-        outcomes[task.page_id] = DispatchOutcome(notifyable_artists=notifyable_artists, notifyable_staff=notifyable_staff)
+        outcomes[task.page_id] = DispatchOutcome(
+            notifyable_artists=notifyable_artists, notifyable_staff=notifyable_staff,
+            missing_artists=missing, has_artists=bool(task.artist_page_ids),
+            has_staff=any(pid in people and people[pid].discord_user_id for pid in task.staff_page_ids),
+        )
         for artist in notifyable_artists:
             per_artist.setdefault(artist.page_id, []).append(task)
         for person in notifyable_staff:
@@ -968,16 +1002,18 @@ async def send_task_notifications(
                     # 任務說明已經寫在訊息裡，藝人不需要開 Notion。
                     content = (
                         task_notifications.assignment_notification_message(task, name=call)
-                        if kind == task_bundle.KIND_ASSIGNMENT else task_notifications.notification_message(task, name=call)
+                        if artist_kind == task_bundle.KIND_ASSIGNMENT else task_notifications.notification_message(task, name=call)
                     )
                     await send_task_dm(user, task.page_id, content, client=bot)
                 else:
-                    await send_bundle_dm(bot, user, kind, group)
+                    await send_bundle_dm(bot, user, artist_kind, group)
             except Exception:
                 logger.exception("任務通知失敗：%s／%s", artist.name, "、".join(t.name for t in group))
                 continue
             for task in group:
                 outcomes[task.page_id].sent += 1
+                if dispatching:
+                    notification_log.mark_delivered(state, task.page_id, f"a:{artist_id}")
 
     def artist_names(task):
         return [artists[pid].name for pid in task.artist_page_ids if pid in artists]
@@ -987,35 +1023,52 @@ async def send_task_notifications(
             if await _send_staff_dm(bot, people[person_id], group, artist_names):
                 for task in group:
                     outcomes[task.page_id].staff_sent += 1
+                    notification_log.mark_delivered(state, task.page_id, f"p:{person_id}")
 
-    for task in tasks:
-        outcome = outcomes.get(task.page_id)
-        if outcome is None or not outcome.is_complete or kind != task_bundle.KIND_DISPATCH:
-            continue
-        await _after_dispatch(bot, task, outcome)
+    if dispatching:
+        for task in tasks:
+            outcome = outcomes.get(task.page_id)
+            if outcome is None:
+                continue
+            if outcome.sent or outcome.staff_sent:
+                await _after_first_delivery(bot, task, state)
+            if outcome.is_complete:
+                await _after_dispatch(bot, task, outcome)
+                notification_log.clear_delivered(state, task.page_id)
+        notification_log.persist()
     return outcomes
 
 
+async def _after_first_delivery(bot, task: repositories.TaskItem, state: dict) -> None:
+    """有人收到了：排課流程算完成（M1-11）；通告／演出貼一次公告區（重送不重貼，M2-15）。"""
+    now = datetime.now(config.get_tenant().tz)
+    scheduling_sla.mark_completed(task.page_id, int(now.timestamp()))
+    if notification_log.announced(state, task.page_id):
+        return
+    if not task_notifications.is_public_announcement_task(task, config.get_tenant().public_task_types):
+        return
+    announce_channel = bot.get_channel(config.get_tenant().resolved_announce_channel_id)
+    if announce_channel is None:
+        return
+    try:
+        await announce_channel.send(task_notifications.public_announcement_message(task))
+    except Exception:
+        logger.exception("任務公開公告發送失敗：%s", task.name)
+        return
+    notification_log.mark_announced(state, task.page_id, now)
+    await audit.log_event(
+        event_name=f"任務公開通知｜{task.name}",
+        action_type="建立",
+        operator="System",
+        target_db="Tasks",
+        target_url=task.url,
+        after=f"公告頻道 {announce_channel.id}",
+    )
+
+
 async def _after_dispatch(bot, task: repositories.TaskItem, outcome: DispatchOutcome) -> None:
-    """派發全部送達後：公開類型發公告區、寫「Discord 通知時間」。"""
+    """每一位都送到後：寫「Discord 通知時間」。"""
     logger.info("任務派發通知成功：%s，已通知 %s 位藝人、%s 位同仁", task.name, outcome.sent, outcome.staff_sent)
-    if task_notifications.is_public_announcement_task(
-        task, config.get_tenant().public_task_types
-    ):
-        announce_channel = bot.get_channel(config.get_tenant().resolved_announce_channel_id)
-        if announce_channel is not None:
-            try:
-                await announce_channel.send(task_notifications.public_announcement_message(task))
-                await audit.log_event(
-                    event_name=f"任務公開通知｜{task.name}",
-                    action_type="建立",
-                    operator="System",
-                    target_db="Tasks",
-                    target_url=task.url,
-                    after=f"公告頻道 {announce_channel.id}",
-                )
-            except Exception:
-                logger.exception("任務公開公告發送失敗：%s", task.name)
     try:
         await repositories.mark_task_discord_notified(task.page_id)
     except Exception:

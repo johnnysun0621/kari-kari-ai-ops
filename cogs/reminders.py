@@ -238,7 +238,20 @@ class RemindersCog(commands.Cog):
         for task in stale_hidden_tasks:
             try:
                 await repositories.reset_task_discord_notification(task.page_id)
+                # 取消 Discord 顯示＝收回派發：下次重新勾會當成新派發，通告／演出也會重貼公告
+                notification_log.forget_announced(notification_log.shared(), task.page_id)
+                notification_log.persist()
                 logger.info("已重置隱藏任務的 Discord 通知狀態：%s", task.name)
+                await audit.log_event(
+                    event_name=f"取消派發｜{task.name}",
+                    action_type="更新",
+                    operator="System（Notion 取消 Discord 顯示）",
+                    source="Notion",
+                    target_db="Tasks",
+                    target_url=task.url,
+                    before="已派發",
+                    after="清除 Discord 通知時間、收到時間、提醒確認",
+                )
             except Exception:
                 logger.exception(
                     "隱藏任務通知狀態重置失敗：%s（%s）",
@@ -255,8 +268,33 @@ class RemindersCog(commands.Cog):
         # 這一輪批次重送剛送過的不再送（Notion 查詢可能還沒反映剛寫的 Discord 通知時間）
         resent = getattr(self, "_resent_this_round", set())
         dispatchable = [task for task in unseen if task.discord_visible and task.page_id not in resent]
+        # M2-15：派發時已經開放交件（兩個都勾了）→ 藝人只收一張作業卡，不要先收任務卡、再被作業卡換掉
+        with_assignment = [
+            task for task in dispatchable
+            if task_notifications.is_assignment_dispatchable(task)
+            and not task_notifications.was_assignment_notified(task.page_id, self._assignment_notification_state)
+        ]
+        combined_ids = {task.page_id for task in with_assignment}
+        plain = [task for task in dispatchable if task.page_id not in combined_ids]
         # 整輪一起送：同一位藝人這一輪有好幾筆就合併成一則（M3-27）
-        outcomes = await send_task_notifications(self.bot, dispatchable) if dispatchable else {}
+        from services import task_bundle
+
+        outcomes = await send_task_notifications(self.bot, plain) if plain else {}
+        if with_assignment:
+            outcomes.update(await send_task_notifications(
+                self.bot, with_assignment, artist_kind=task_bundle.KIND_ASSIGNMENT,
+            ))
+        for task in with_assignment:
+            outcome = outcomes.get(task.page_id)
+            if outcome is not None and outcome.is_complete:
+                self._assignment_notification_state = task_notifications.mark_assignment_notified(
+                    task.page_id, self._assignment_notification_state
+                )
+                task_notifications.save_assignment_state(self._assignment_notification_state)
+        for task in dispatchable:
+            outcome = outcomes.get(task.page_id)
+            if outcome is not None and outcome.missing_artists:
+                await self._warn_missing_artists(task, outcome.missing_artists, outcome.sent)
         for task in dispatchable:
             outcome = outcomes.get(task.page_id)
             if outcome is None:
@@ -304,6 +342,33 @@ class RemindersCog(commands.Cog):
                     outcome.sent,
                     len(outcome.notifyable_artists),
                 )
+
+    async def _warn_missing_artists(self, task, missing: list[str], sent_now: int) -> None:
+        """關聯藝人裡有人沒有 Discord User ID（M2-15）：其他人照送，這幾位在營運內部通知發 🟥。
+        同一組名單只發一次；補好 ID 後下一輪會自動補發給他，已收到的人不會重收。"""
+        state = notification_log.shared()
+        if not notification_log.missing_warning_due(state, task.page_id, missing):
+            return
+        notification_log.persist()
+        from cogs.ops_actions import ops_action_view
+
+        await channel_guard.try_send(
+            channel_guard.ops_channel(self.bot),
+            content=ops_notice.action_title(f"有藝人收不到任務：{task.name}") + "\n"
+            f"收不到的藝人：{'、'.join(missing)}（Artists 沒有 Discord User ID）\n"
+            "請到 Notion 的 Artists 補上 Discord User ID，下一輪（最多 30 分鐘）會自動補發給他；"
+            "已經收到的人不會重收。"
+            + (f"\n🔗 {task.url}" if task.url else ""),
+            view=ops_action_view(),
+        )
+        await audit.log_event(
+            event_name=f"任務通知缺少收件人｜{task.name}",
+            action_type="提醒",
+            operator="System",
+            target_db="Tasks",
+            target_url=task.url,
+            after=f"收不到：{'、'.join(missing)}",
+        )
 
     async def _check_task_assignment_notifications(self):
         """通知已開放提交的課後作業；每筆 Task 只通知一次。"""
@@ -758,6 +823,10 @@ class RemindersCog(commands.Cog):
                 failed += 1
                 if last_attempt:
                     unassigned += entries  # 重試用完還私訊不到，就退回控方頻道，不讓提交沒人知道
+                    if tenant.ops_briefing_enabled:
+                        # 營運早報開著時這裡不發頻道；記下來列進隔天營運早報的 📮（M4-19）
+                        for task, _ in entries:
+                            ops_briefing.record_unreachable_review(state, task.page_id)
         if unassigned and not tenant.ops_briefing_enabled and "ops_channel" not in done_keys:
             posted = await channel_guard.try_send(
                 self._admin_channel(),
@@ -868,6 +937,10 @@ class RemindersCog(commands.Cog):
         for t in all_tasks:
             if t.status == "已逾期":
                 continue  # 已升級過（狀態持久化在 Notion，重啟也不會重複轟炸）
+            if not t.discord_visible:
+                # M3-31：還沒派發的草稿不提醒、不判逾期——藝人根本還沒收到這件事。
+                # 之前草稿過了日期會被改成「已逾期」並列進營運早報，是假警報。
+                continue
             stages = repositories.compute_due_reminder_stages(t, now)
             deadline, _ = repositories.task_action_deadline(t)
             # 逾期只靠 Notion 狀態「已逾期」去重（升級後上面 continue 跳過），不寫檔也不記憶體去重：

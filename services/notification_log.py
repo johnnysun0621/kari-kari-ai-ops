@@ -92,6 +92,49 @@ def forget_messages(state: dict, task_id: str, user_id: int | str) -> None:
         state["messages"].pop(str(task_id), None)
 
 
+# ---------- 派發逐一送達（M2-15） ----------
+# 一筆任務有好幾位藝人／同仁時，記下已經送到誰（"a:{藝人頁}"、"p:{同仁頁}"）。
+# 全部送到才寫 Notion「Discord 通知時間」；之前少數人缺 Discord ID 時，派發仍算完成、
+# 補了 ID 也不會補發。重送（指令或勾「重送通知」）與取消 Discord 顯示時清掉，重新來過。
+
+def delivered_for(state: dict, task_id: str) -> set[str]:
+    return set(state.get("dispatch_delivered", {}).get(str(task_id), []))
+
+
+def mark_delivered(state: dict, task_id: str, key: str) -> None:
+    keys = state.setdefault("dispatch_delivered", {}).setdefault(str(task_id), [])
+    if key not in keys:
+        keys.append(key)
+
+
+def clear_delivered(state: dict, task_id: str) -> None:
+    state.get("dispatch_delivered", {}).pop(str(task_id), None)
+    state.get("dispatch_missing_warned", {}).pop(str(task_id), None)
+
+
+def missing_warning_due(state: dict, task_id: str, missing: list[str]) -> bool:
+    """同一組「收不到的人」只警告一次；名單變了（補了一位、又少一位）才再發。"""
+    warned = state.setdefault("dispatch_missing_warned", {})
+    key = "、".join(sorted(missing))
+    if warned.get(str(task_id)) == key:
+        return False
+    warned[str(task_id)] = key
+    return True
+
+
+def announced(state: dict, task_id: str) -> bool:
+    """通告／演出已經貼過公告區（M2-15：重送不重貼）。"""
+    return str(task_id) in state.get("public_announced", {})
+
+
+def mark_announced(state: dict, task_id: str, now: datetime) -> None:
+    state.setdefault("public_announced", {})[str(task_id)] = now.isoformat()
+
+
+def forget_announced(state: dict, task_id: str) -> None:
+    state.get("public_announced", {}).pop(str(task_id), None)
+
+
 def prune(state: dict, now: datetime, retention_days: int = RETENTION_DAYS) -> None:
     """清掉超過保留天數的紀錄，避免狀態檔無限變大。"""
     cutoff = now - timedelta(days=retention_days)
@@ -103,6 +146,8 @@ def prune(state: dict, now: datetime, retention_days: int = RETENTION_DAYS) -> N
             return False
 
     state["reminders"] = {k: v for k, v in state["reminders"].items() if fresh(v)}
+    if "public_announced" in state:
+        state["public_announced"] = {k: v for k, v in state["public_announced"].items() if fresh(v)}
     for task_id in list(state["messages"]):
         per_task = state["messages"][task_id]
         for user_id in list(per_task):

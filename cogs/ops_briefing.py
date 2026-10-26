@@ -27,7 +27,7 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
     tasks = await repositories.get_active_tasks()
     artist_map = await repositories.get_artist_map()
     tasks_by_id = {task.page_id: task for task in tasks}
-    b = ops_briefing.OpsBriefing()
+    b = ops_briefing.OpsBriefing(review_after_hours=tenant.review_reminder_after_hours)
 
     new_ids = ops_briefing.new_overdue_ids(state)
     for task in tasks:
@@ -60,9 +60,10 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
             submissions, tasks_by_id, now, tenant.review_reminder_after_hours, review_reminder_due)
         reviewer_ids = sorted({pid for tid in pending for pid in tasks_by_id[tid].reviewer_page_ids})
         reviewers = {p.page_id: p for p in await repositories.get_people_by_ids(reviewer_ids)}
+        unreachable = ops_briefing.unreachable_review_ids(state)
         for task_id, subs in pending.items():
             task = tasks_by_id[task_id]
-            if any(pid in reviewers and reviewers[pid].discord_user_id for pid in task.reviewer_page_ids):
+            if task_id not in unreachable and any(pid in reviewers and reviewers[pid].discord_user_id for pid in task.reviewer_page_ids):
                 continue  # 有人負責：10:00 的每日催辦會私訊審核人員
             oldest = min((s.created_at for s in subs if s.created_at), default=None)
             hours = int((now - oldest).total_seconds() // 3600) if oldest else None

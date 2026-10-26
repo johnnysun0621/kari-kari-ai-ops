@@ -144,6 +144,14 @@ class BulletinCog(commands.Cog):
         self.bot.add_view(BulletinFeedbackView(self, page_id), message_id=message.id)
         self._registered_message_ids.add(message.id)
 
+    @staticmethod
+    async def _delete_posted(channel, message_id: str) -> None:
+        try:
+            message = await channel.fetch_message(int(message_id))
+            await message.delete()
+        except (discord.NotFound, discord.HTTPException, ValueError):
+            pass
+
     async def sync_bulletins(self) -> tuple[int, int, int]:
         channel = self.bot.get_channel(bulletin_channel_id())
         if channel is None:
@@ -152,17 +160,22 @@ class BulletinCog(commands.Cog):
         state = _load_state()
         created = updated = skipped = 0
         for item in items:
-            fingerprint = bulletin_fingerprint(item)
             record = state.get(item.page_id, {})
+            if item.category == repositories.FEEDBACK_CATEGORY:
+                # M6-09：藝人的使用回饋只給公司在 Notion 處理，不貼到大家都看得到的公告區；
+                # 之前已經貼出去的，這一輪收回。
+                if record.get("message_id"):
+                    await self._delete_posted(channel, record["message_id"])
+                    state.pop(item.page_id, None)
+                skipped += 1
+                continue
+            fingerprint = bulletin_fingerprint(item)
             if record.get("fingerprint") == fingerprint:
+                # 沒變的不用每 5 分鐘抓訊息重編一次；重啟後補註冊按鈕即可
                 message_id = record.get("message_id")
-                if message_id:
-                    try:
-                        message = await channel.fetch_message(int(message_id))
-                        await message.edit(view=BulletinFeedbackView(self, item.page_id))
-                        await self._register_feedback_view(message, item.page_id)
-                    except (discord.NotFound, discord.HTTPException, ValueError):
-                        pass
+                if message_id and int(message_id) not in self._registered_message_ids:
+                    self.bot.add_view(BulletinFeedbackView(self, item.page_id), message_id=int(message_id))
+                    self._registered_message_ids.add(int(message_id))
                 skipped += 1
                 continue
             message = None

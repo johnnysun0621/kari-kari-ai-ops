@@ -4,7 +4,7 @@
 改成每天 OPS_BRIEFING_TIME（預設 09:30，排在藝人早報 09:00 之後）一則：
 - 🔴 新逾期（逐筆）／仍逾期（只列每位藝人的筆數）
 - 🛠 修改期限已過
-- 📮 待審核超過 24 小時、沒有可通知的審核人
+- 📮 待審核超過 REVIEW_REMINDER_AFTER_HOURS（預設 24）小時、沒有可通知的審核人，或審核人私訊一直送不到
 - 📌 藝人還沒按收到超過 3 天
 - 👀 昨天的早報沒看的藝人
 - 🎓 老師聯絡不到、或催滿天數仍未結案的課
@@ -58,6 +58,7 @@ class OpsBriefing:
     teacher_notes: list[str] = field(default_factory=list)
     pools: list[str] = field(default_factory=list)
     publish_waiting: list[OpsLine] = field(default_factory=list)
+    review_after_hours: float = 24  # 📮 那一區標題的時數，照 REVIEW_REMINDER_AFTER_HOURS（M3-31）
 
     def is_empty(self) -> bool:
         return not any([
@@ -131,7 +132,8 @@ def _briefing_text(day: date, b: OpsBriefing) -> str:
         # M3-25：和其他任務列一致，任務名稱要直接連到 Notion；控方才能從早報立即處理。
         lines += _section("🛠 **修改期限已過**", [line.linked for line in b.revision_passed])
     if b.review_unassigned:
-        lines += _section("📮 **待審核超過 24 小時，沒人負責**", [line.linked for line in b.review_unassigned])
+        hours = f"{b.review_after_hours:g}"
+        lines += _section(f"📮 **待審核超過 {hours} 小時，沒人負責**", [line.linked for line in b.review_unassigned])
     if b.unreceived:
         lines += _section(f"📌 **藝人還沒按收到超過 {UNRECEIVED_DAYS} 天**", [line.linked for line in b.unreceived])
     if b.unread_artists:
@@ -172,9 +174,21 @@ def teacher_notes(state: dict) -> list[str]:
     return list(state.get("ops_teacher_notes", []))
 
 
+def record_unreachable_review(state: dict, task_id: str) -> None:
+    """每日催辦重試用完仍私訊不到審核人員的任務（M4-19）：營運早報開著時不另發頻道，改列進隔天的 📮。"""
+    ids = state.setdefault("ops_review_unreachable", [])
+    if task_id not in ids:
+        ids.append(task_id)
+
+
+def unreachable_review_ids(state: dict) -> set[str]:
+    return set(state.get("ops_review_unreachable", []))
+
+
 def clear_queues(state: dict) -> None:
     state["ops_new_overdue"] = {}
     state["ops_teacher_notes"] = []
+    state["ops_review_unreachable"] = []
 
 
 def record_unread(state: dict, day_code: str, artist_name: str) -> None:

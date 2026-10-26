@@ -298,6 +298,10 @@ async def _to_tasks_with_page_descriptions(pages: list[dict]) -> list["TaskItem"
 
 # ---------- Notion Bulletin ----------
 
+# 藝人按「回報問題」寫回布告欄的類別（M6-09）：這類不同步到公告區，只給公司在 Notion 處理
+FEEDBACK_CATEGORY = "🙋 使用回饋"
+
+
 @dataclass(frozen=True)
 class BulletinItem:
     page_id: str
@@ -609,7 +613,7 @@ async def create_bulletin_feedback(
     props = {
         "Name": _title(title),
         "Date": _date(now),
-        "類別": _select("🙋 使用回饋"),
+        "類別": _select(FEEDBACK_CATEGORY),
         "狀態": _select("未處理"),
     }
     return await notion_api.create_page(config.DS_BULLETIN, props, children=children)
@@ -634,7 +638,7 @@ def build_ai_feedback_page(
     props = {
         "Name": _title(f"AI 回報｜{artist_name}｜{now:%Y-%m-%d %H:%M}"[:2000]),
         "Date": _date(now),
-        "類別": _select("🙋 使用回饋"),
+        "類別": _select(FEEDBACK_CATEGORY),
         "狀態": _select("未處理"),
     }
     children = [{
@@ -777,11 +781,16 @@ async def get_people_items_by_ids(page_ids: list[str]) -> list[PersonItem]:
     ]
 
 
+# M4-19（2026-10-26）：老師也可以當審核人員。之前只收「公司成員」，任務的審核人員
+# 選了老師，老師收不到審核私訊，交件改發到營運頻道。
+REVIEWER_IDENTITY_TYPES = frozenset({"公司成員", "老師"})
+
+
 async def get_people_by_ids(page_ids: list[str]) -> list[PersonItem]:
-    """讀取指定公司成員，供審核人員提醒使用。"""
+    """讀取指定的審核人員（公司成員或老師），供審核通知與催辦使用。"""
     return [
         person for person in await get_people_items_by_ids(page_ids)
-        if person.identity_type == "公司成員"
+        if person.identity_type in REVIEWER_IDENTITY_TYPES
     ]
 
 
@@ -1700,7 +1709,12 @@ async def reset_task_discord_notification(page_id: str) -> None:
 
     提醒確認一起清：重送代表內容或時間改了，舊的確認不算數。舊 workspace 沒有
     提醒確認欄位時退回只清兩個時間欄位。
+    逐一送達紀錄也一起清（M2-15）：重送＝每一位重新送一次。
     """
+    from services import notification_log
+
+    notification_log.clear_delivered(notification_log.shared(), page_id)
+    notification_log.persist()
     props = {
         "Discord 通知時間": {"date": None},
         "Discord 收到時間": {"date": None},

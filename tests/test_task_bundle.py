@@ -1,5 +1,6 @@
 """M3-27：同一輪多筆任務合併成一則通知、重送清舊卡、收到後仍可回報問題。"""
 import asyncio
+import dataclasses
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -168,7 +169,17 @@ def test_課後作業通知也合併_不發同仁(repos):
     bot = FakeBot()
     send(bot, [task("t1", staff=("p1",)), task("t2")], kind=task_bundle.KIND_ASSIGNMENT)
     assert len(bot.sent) == 1
-    assert "課後作業通知**（2）" in bot.sent[0][1]
+    # 不是課程任務就不叫「課後作業」（M2-15）
+    assert "作業開放通知**（2）" in bot.sent[0][1]
+
+
+def test_全部是課程任務才叫課後作業通知():
+    course = [
+        repositories.TaskItem(page_id=f"c{i}", name=f"課{i}", status="進行中", task_type=repositories.COURSE_TASK_TYPE)
+        for i in range(2)
+    ]
+    text = task_bundle.bundle_text(task_bundle.KIND_ASSIGNMENT, course, lambda t: "")
+    assert text.startswith("📚 **課後作業通知**（2）")
 
 
 def test_有人送不到_只影響那個人(repos):
@@ -544,3 +555,62 @@ def test_已逾期回報後_藝人看到的說明不說暫停():
     sent = []
     asyncio.run(tasks_artist.after_concern_reported(_modal_interaction(sent), task("t1", status="已逾期"), None, None))
     assert "維持「已逾期」" in sent[0][0] and "暫停" not in sent[0][0]
+
+
+# ---------- M2-15：逐一送達、缺 ID、重送不重貼公告 ----------
+
+def test_缺ID的藝人不算派發完成_補上後只補發給他(repos, monkeypatch):
+    marked = []
+
+    async def mark(page_id):
+        marked.append(page_id)
+
+    monkeypatch.setattr(repositories, "mark_task_discord_notified", mark)
+    missing = repositories.Artist(page_id="a3", name="新藝人", discord_user_id="")
+    ARTISTS["a3"] = missing
+    try:
+        bot = FakeBot()
+        out = send(bot, [task("t1", artists=("a1", "a3"))])["t1"]
+        assert out.missing_artists == ["新藝人"] and not out.is_complete
+        assert [u for u, _, _ in bot.sent] == ["100"] and marked == []
+
+        ARTISTS["a3"] = repositories.Artist(page_id="a3", name="新藝人", discord_user_id="333")
+        bot2 = FakeBot()
+        out2 = send(bot2, [task("t1", artists=("a1", "a3"))])["t1"]
+        assert [u for u, _, _ in bot2.sent] == ["333"]  # 已經收到的 a1 不重收
+        assert out2.is_complete and marked == ["t1"]
+    finally:
+        ARTISTS.pop("a3", None)
+
+
+def test_重送清掉送達紀錄_每個人都重收():
+    state = notification_log.shared()
+    notification_log.mark_delivered(state, "t1", "a:a1")
+    notification_log.clear_delivered(state, "t1")
+    assert notification_log.delivered_for(state, "t1") == set()
+
+
+def test_通告只貼一次公告區_重送不重貼(repos, monkeypatch):
+    posted = []
+
+    class Channel:
+        id = 7
+
+        async def send(self, content):
+            posted.append(content)
+
+    monkeypatch.setattr(config, "TENANT", dataclasses.replace(config.TENANT, public_task_types=("通告",)))
+    bot = FakeBot()
+    bot.get_channel = lambda _: Channel()
+    public = dataclasses.replace(task("t1"), task_type="通告")
+    send(bot, [public])
+    notification_log.clear_delivered(notification_log.shared(), "t1")  # 模擬重送
+    send(bot, [public])
+    assert len(posted) == 1
+
+
+def test_同一輪又開放交件_藝人只收作業卡(repos):
+    bot = FakeBot()
+    course = dataclasses.replace(task("t1"), task_type=repositories.COURSE_TASK_TYPE, open_for_submission=True)
+    asyncio.run(tasks_artist.send_task_notifications(bot, [course], artist_kind=task_bundle.KIND_ASSIGNMENT))
+    assert len(bot.sent) == 1 and "老師的作業開放囉" in bot.sent[0][1]

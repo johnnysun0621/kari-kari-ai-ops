@@ -458,6 +458,10 @@ async def _send_pool_completion_notifications(
     admin_channel = channel_guard.ops_channel(interaction.client)
     if not admin_channel:
         return
+    if _collection_for(month, deadline_ts) is None:
+        # M1-11：藝人自己用 /管理可配合時間 補填（或收集已取消、已結束）時沒有對應的收集，
+        # 不算進度、也不發「已收齊」——之前會拿全部藝人來比，發出沒有收集在跑的假收齊通知。
+        return
     try:
         artists = await _pool_collection_artists(month, deadline_ts)
         expected_ids = [item.page_id for item in artists]

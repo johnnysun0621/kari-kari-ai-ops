@@ -135,6 +135,8 @@ class TenantConfig:
     default_fill_deadline_hours: int
     # Notion 布告欄背景同步間隔（分鐘）
     bulletin_sync_interval_minutes: int = 5
+    # 在 Notion 審成「需修改／退回」但沒填修改期限時，自動補幾天（M4-19，Johnny 2026-10-26 定 3 天）
+    review_default_revision_days: int = 3
     # 發文類停在「已完成」的待確認發布彙整（M2-05）：星期幾發（0＝週一…6＝週日，-1＝每天）、
     # 幾點發、截止日過幾天才列入
     publish_confirm_digest_weekday: int = 0
@@ -254,6 +256,7 @@ def _load_karikari_from_env() -> TenantConfig:
         review_reminder_after_hours=_env_float("REVIEW_REMINDER_AFTER_HOURS", 24),
         default_fill_deadline_hours=24,
         bulletin_sync_interval_minutes=_env_int("BULLETIN_SYNC_INTERVAL_MINUTES", 5),
+        review_default_revision_days=max(1, _env_int("REVIEW_DEFAULT_REVISION_DAYS", 3)),
         publish_confirm_digest_weekday=_env_weekday("PUBLISH_CONFIRM_DIGEST_WEEKDAY", 0),
         publish_confirm_digest_hour=min(max(_env_int("PUBLISH_CONFIRM_DIGEST_HOUR", 10), 0), 23),
         publish_confirm_digest_after_days=max(_env_int("PUBLISH_CONFIRM_DIGEST_AFTER_DAYS", 3), 0),

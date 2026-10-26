@@ -235,6 +235,8 @@ def clean_description(text: str) -> str:
         in_candidates = False
         if stripped.startswith(_INTERNAL_PREFIXES):
             continue
+        if re.match(r"^地點／連結：\s*(待補)?\s*$", stripped):
+            continue  # 地點還沒填（M2-15）；有填就留給藝人看
         lines.append(line.rstrip())
     return "\n".join(lines).strip()
 
