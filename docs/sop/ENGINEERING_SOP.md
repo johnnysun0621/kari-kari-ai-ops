@@ -207,11 +207,12 @@ flowchart LR
 
 ### /審核提交
 
-1. **選擇要審核的提交…**（Submissions `審核狀態`=待審核 且 `是否最新版`，最多 25；不依審核人員過濾）
+1. **選擇要審核的提交…**（Submissions `審核狀態`=待審核 且 `是否最新版` 且 `關聯任務` 不是空的（M4-20），最多 25；不依審核人員過濾）
 2. 詳細＋**通過**／**需修改**／**退回**／**↩️ 返回審核清單**（300 秒）
 3. Modal `審核｜{結果}`：**給藝人的回饋（選填）**；需修改／退回另有 **修改期限（天數，1～7）**
 4. `complete_discord_review()`：Submissions `審核狀態`、`審核回饋`、`審核者`=`{名稱}｜{id}`、`審核來源`=Discord、`審核通知時間`；Tasks 通過→已完成並清 `修改期限`，需修改／退回→需修改並寫 `修改期限`=now+N 天；私訊藝人（標題用任務名稱，M4-19）；Audit「審核提交」
 5. **不需補批改檔**／**附批改檔**：附檔時**立即**建 Drive `…/老師回饋/老師回饋_YYYY.MM.DD_ver.N`；在頻道上傳（≤10MB）→ **完成回饋**：上傳到每位藝人的夾、`審核回饋` 附連結、私訊 `📎 老師補充了批改檔`、Audit「審核批改檔」；或 **貼 Drive 連結補回饋** → Modal（**Drive 批改檔或資料夾連結（必填）**、**補充回饋（選填）**）；**↩️ 返回回饋選擇**
+- 算不出老師回饋資料夾時，錯誤訊息照原因分：任務已刪除／某位藝人的 Drive 專區有問題／Drive 沒連上（`review_feedback_no_target_message`，M4-20）
 - 沒權限：「❌ 這個指令僅限管理者使用。」（M4-19）
 
 ### /布告欄同步
@@ -286,6 +287,7 @@ flowchart LR
 | 批次重送 | 每輪（派發前） | `_check_batch_resend` | 勾 `重送通知` | 見「Notion 欄位變更觸發的流程」 | 先取消勾選；`_resent_this_round` |
 | 任務派發 | 每輪 | `_check_task_dispatch_notifications` | 見「Notion 欄位變更觸發的流程」 | 任務卡、合併通知、同仁知會、公告 | `Discord 通知時間`＋`dispatch_delivered` |
 | 課後作業通知 | 每輪 | `_check_task_assignment_notifications` | 見「Notion 欄位變更觸發的流程」 | 作業卡 | assignment state |
+| 清除任務已刪除的提交 | 每輪 | `_cleanup_orphan_submissions` | Submissions `關聯任務` 空白、建立超過 1 小時、有這個欄位（M4-20） | 移到 Notion 垃圾桶（`archived`）；Audit「清除提交｜{提交名稱}」，操作類型「更新」；Drive 檔案不動 | 已在垃圾桶的查不到；重複封存當成功 |
 | Drive 健康檢查 | 10:00 後一次 | `_check_drive_health` | 有設 `GOOGLE_DRIVE_ROOT_FOLDER_ID` | 失敗 `⚙️ 系統警告｜Google Drive 健康檢查失敗`；恢復改成 🟢 | 一天一次 |
 | 藝人早報 | `DAILY_BRIEFING_HOUR`（9） | `briefing.send_daily_briefings` | 見下 | 私訊；寫 `提醒確認` | `daily_runs`，一天 3 次重試 |
 | 同仁早報 | 同上 | 同上 | 相關同仁的任務（無「還沒按收到」） | 私訊，無確認按鈕 | 同上 |

@@ -2172,8 +2172,48 @@ async def get_submissions_by_review_status(
     filters: list[dict] = [{"or": status_filters}] if len(status_filters) > 1 else status_filters
     if latest_only:
         filters.append({"property": "是否最新版", "checkbox": {"equals": True}})
+    # M4-20：任務已刪除（關聯任務空了）的提交不列：待審清單、審核提醒、早報、審核結果通知都不該再出現
+    filters.append({"property": SUBMISSION_TASK_PROPERTY, "relation": {"is_not_empty": True}})
     pages = await notion_api.query_data_source(config.DS_SUBMISSIONS, filter_={"and": filters})
     return [_to_submission(page) for page in pages]
+
+
+SUBMISSION_TASK_PROPERTY = "關聯任務"
+ORPHAN_SUBMISSION_MIN_AGE = timedelta(hours=1)
+
+
+async def get_orphan_submissions(now: datetime | None = None) -> list[SubmissionItem]:
+    """任務被刪掉後留下的提交（M4-20）：Notion 刪任務時會把提交的「關聯任務」清空。
+
+    建立不到一小時的不算：剛手動建的提交可能還沒掛上任務。
+    """
+    pages = await notion_api.query_data_source(
+        config.DS_SUBMISSIONS,
+        filter_={"property": SUBMISSION_TASK_PROPERTY, "relation": {"is_empty": True}},
+    )
+    now = now or datetime.now(config.TZ)
+    cutoff = now - ORPHAN_SUBMISSION_MIN_AGE
+    orphans = []
+    for page in pages:
+        if page.get("archived") or page.get("in_trash"):
+            continue
+        if SUBMISSION_TASK_PROPERTY not in page.get("properties", {}):
+            continue  # 欄位不在就不知道有沒有掛任務，不動
+        submission = _to_submission(page)
+        if submission.created_at is None or submission.created_at > cutoff:
+            continue
+        orphans.append(submission)
+    return orphans
+
+
+async def trash_submission(page_id: str) -> None:
+    """把提交移到 Notion 垃圾桶（30 天內可以還原）。已經在垃圾桶就當作成功。"""
+    try:
+        await notion_api.update_page(page_id, archived=True)
+    except notion_api.NotionAPIError as e:
+        if e.status_code == 400 and ("already archived" in str(e) or "is archived" in str(e)):
+            return
+        raise
 
 
 async def get_reviewable_submissions() -> list[SubmissionItem]:

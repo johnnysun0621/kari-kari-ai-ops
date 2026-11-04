@@ -182,9 +182,26 @@ class PendingReviewFeedbackFile:
     expires_at: datetime
     targets: list["ReviewFeedbackDriveTarget"] = field(default_factory=list)
     attachments: list[discord.Attachment] = field(default_factory=list)
+    # 算不出資料夾的原因（藝人名稱，或「找不到關聯任務」這類說明），錯誤訊息要講真正的原因
+    skipped: list[str] = field(default_factory=list)
 
     def is_expired(self, now: datetime) -> bool:
         return now > self.expires_at
+
+
+NO_TASK_REASON = "找不到關聯任務"
+
+
+def review_feedback_no_target_message(skipped: list[str]) -> str:
+    """附批改檔卻沒有資料夾可放時的錯誤訊息：講出真正原因，不要一律叫人去查 Drive 設定（M4-20）。"""
+    if NO_TASK_REASON in skipped:
+        return "❌ 這筆提交的任務已經被刪除，找不到資料夾放批改檔。審核結果已存好，批改檔請另外傳給藝人。"
+    if skipped:
+        return (
+            f"❌ 找不到可以放批改檔的 Drive 資料夾（{'、'.join(skipped)}）。"
+            "請確認藝人的 Google Drive 資料夾有填，而且小律有權限。"
+        )
+    return "❌ Google Drive 目前沒有連上，批改檔存不進去。請通知工程端。"
 
 
 @dataclass(frozen=True)
@@ -1521,6 +1538,7 @@ class SubmissionsCog(commands.Cog):
         if drive_api.is_configured():
             targets, skipped = await self._review_feedback_drive_targets(submission, now)
         self.pending_review_feedback_files[interaction.user.id].targets = targets
+        self.pending_review_feedback_files[interaction.user.id].skipped = skipped
 
         await interaction.followup.send(
             f"📎 請直接在這個頻道上傳 **{submission.name}** 的批改檔。\n"
@@ -1558,7 +1576,7 @@ class SubmissionsCog(commands.Cog):
         if task is None and submission.url:
             task = await repositories.find_task_by_latest_submission_url(submission.url)
         if task is None:
-            return [], ["找不到關聯任務"]
+            return [], [NO_TASK_REASON]
         artist_map = await repositories.get_artist_map()
         targets: list[ReviewFeedbackDriveTarget] = []
         skipped: list[str] = []
@@ -1795,7 +1813,7 @@ class SubmissionsCog(commands.Cog):
         links_by_artist: dict[str, list[str]] = {}
         flat_links: list[str] = []
         if not pending.targets:
-            return False, "❌ 找不到可用的老師回饋資料夾，請先確認藝人 Drive 設定。"
+            return False, review_feedback_no_target_message(pending.skipped)
         folder_lines = [f"{target.artist_name}：{target.folder_url}" for target in pending.targets]
         for target in pending.targets:
             for attachment in pending.attachments:

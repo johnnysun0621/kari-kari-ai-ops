@@ -76,6 +76,7 @@ class RemindersCog(commands.Cog):
             await self._check_task_dispatch_notifications()
             await self._check_task_assignment_notifications()
             await self._check_unacknowledged_task_notifications()
+            await self._cleanup_orphan_submissions()
             await self._check_drive_health()
             await self._check_daily_briefing()
             await self._check_ops_briefing()
@@ -466,6 +467,37 @@ class RemindersCog(commands.Cog):
 
     def _admin_channel(self):
         return channel_guard.ops_channel(self.bot)
+
+    async def _cleanup_orphan_submissions(self):
+        """任務刪了，它的提交也清掉（M4-20）：移到 Notion 垃圾桶，Drive 上的檔案不動。
+
+        自己吃掉例外：清不掉不能擋住後面的早報和提醒。
+        """
+        try:
+            orphans = await repositories.get_orphan_submissions()
+        except Exception:
+            logger.exception("查詢任務已刪除的提交失敗")
+            return
+        for submission in orphans:
+            try:
+                await repositories.trash_submission(submission.page_id)
+            except Exception:
+                logger.exception("清除任務已刪除的提交失敗：%s", submission.name)
+                continue
+            logger.info("任務已刪除，提交移到垃圾桶：%s", submission.name)
+            try:
+                await audit.log_event(
+                    event_name=f"清除提交｜{submission.name}",
+                    action_type="更新",  # Audit Log 的操作類型沒有「刪除」選項，不自己加選項
+                    operator="System（任務已刪除）",
+                    source="System",
+                    target_db="Submissions & File Index",
+                    target_url=submission.url,
+                    before=f"審核狀態：{submission.status or '未填'}",
+                    after="關聯任務已刪除，提交移到 Notion 垃圾桶（Drive 檔案保留）",
+                )
+            except Exception:
+                logger.exception("清除提交的 Audit Log 寫入失敗：%s", submission.name)
 
     async def _check_batch_resend(self):
         """批次重送（M3-22）：Notion 勾了「重送通知」的任務，重送給藝人並取消勾選。
