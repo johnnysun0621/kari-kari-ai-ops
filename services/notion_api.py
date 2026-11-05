@@ -101,20 +101,25 @@ async def query_data_source(
     data_source_id: str,
     filter_: dict | None = None,
     sorts: list[dict] | None = None,
+    limit: int | None = None,
 ) -> list[dict]:
-    """查詢 data source，自動翻頁，回傳所有 page 物件。"""
+    """查詢 data source，自動翻頁，回傳所有 page 物件；給 `limit` 就只拿前幾筆。"""
     results: list[dict] = []
     body: dict = {}
     if filter_:
         body["filter"] = filter_
     if sorts:
         body["sorts"] = sorts
+    if limit:
+        body["page_size"] = min(limit, 100)
     cursor: str | None = None
     while True:
         if cursor:
             body["start_cursor"] = cursor
         data = await _request("POST", f"/data_sources/{data_source_id}/query", body)
         results.extend(data.get("results", []))
+        if limit and len(results) >= limit:
+            return results[:limit]
         if not data.get("has_more"):
             break
         cursor = data.get("next_cursor")

@@ -11,6 +11,7 @@
 | `REMIND_BEFORE_DEADLINE_HOURS` | 6 小時 | 月度收集截止前多久催未填的人 |
 | `REVIEW_REMINDER_AFTER_HOURS` | 24 小時 | 提交後多久才列入每日催辦 |
 | `REVIEW_DEFAULT_REVISION_DAYS` | 3 天 | 在 Notion 審成需修改／退回、沒填修改期限時自動補的天數 |
+| `AUDIT_RETENTION_DAYS` | 90 天 | Audit Log 在 Notion 留幾天；更舊的存到本機 `archive/audit_log/` 後移到垃圾桶。0＝停用 |
 | `DAILY_NAG_HOUR` | 10 點 | 審核人員催辦、課後提醒老師每天幾點跑 |
 | `DAILY_BRIEFING_ENABLED`／`DAILY_BRIEFING_HOUR` | true／9 點 | 藝人與同仁每日早報（M3-24）。false＝回到逐則通知 |
 | `OPS_BRIEFING_ENABLED`／`OPS_BRIEFING_TIME` | true／09:30 | 營運早報（M3-25）。false＝回到逐則通知；時間要比藝人早報晚，才算得出「昨天的早報沒看」 |

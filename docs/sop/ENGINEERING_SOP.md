@@ -287,6 +287,7 @@ flowchart LR
 | 批次重送 | 每輪（派發前） | `_check_batch_resend` | 勾 `重送通知` | 見「Notion 欄位變更觸發的流程」 | 先取消勾選；`_resent_this_round` |
 | 任務派發 | 每輪 | `_check_task_dispatch_notifications` | 見「Notion 欄位變更觸發的流程」 | 任務卡、合併通知、同仁知會、公告 | `Discord 通知時間`＋`dispatch_delivered` |
 | 課後作業通知 | 每輪 | `_check_task_assignment_notifications` | 見「Notion 欄位變更觸發的流程」 | 作業卡 | assignment state |
+| Audit Log 保留 | 每 1 小時（獨立 loop） | `audit_retention.AuditRetentionCog` → `services/audit_retention.run_once` | Audit Log `created_time` 早於 now−`AUDIT_RETENTION_DAYS`（90）天；一次最多 `BATCH_SIZE`（200）筆，舊的先（M7-09） | 先寫本機 `archive/audit_log/YYYY-MM.csv`（台灣時間月份、utf-8-sig、fsync），確定存好才移到 Notion 垃圾桶；Drive 不動 | CSV 用 `page_id` 去重；移垃圾桶失敗留在 Notion 下一輪再試。手動：`scripts/archive_audit_log.py --dry-run／--all` |
 | 清除任務已刪除的提交 | 每輪 | `_cleanup_orphan_submissions` | Submissions `關聯任務` 空白、建立超過 1 小時、有這個欄位（M4-20） | 移到 Notion 垃圾桶（`archived`）；Audit「清除提交｜{提交名稱}」，操作類型「更新」；Drive 檔案不動 | 已在垃圾桶的查不到；重複封存當成功 |
 | Drive 健康檢查 | 10:00 後一次 | `_check_drive_health` | 有設 `GOOGLE_DRIVE_ROOT_FOLDER_ID` | 失敗 `⚙️ 系統警告｜Google Drive 健康檢查失敗`；恢復改成 🟢 | 一天一次 |
 | 藝人早報 | `DAILY_BRIEFING_HOUR`（9） | `briefing.send_daily_briefings` | 見下 | 私訊；寫 `提醒確認` | `daily_runs`，一天 3 次重試 |
@@ -421,6 +422,7 @@ flowchart LR
 | `APPROVAL_LEAD_DAYS` | 5 | 提前交件的天數 |
 | `REVIEW_REMINDER_AFTER_HOURS` | 24 | 待審核多久開始催；營運早報 📮 的時數 |
 | `REVIEW_DEFAULT_REVISION_DAYS` | 3 | Notion 審核沒填修改期限時補幾天 |
+| `AUDIT_RETENTION_DAYS` | 90 | Audit Log 在 Notion 留幾天（M7-09）；0＝停用 |
 | `FILE_UPLOAD_WAIT_MINUTES` | 180 | 交件、批改檔入口有效時間 |
 | `REMIND_BEFORE_DEADLINE_HOURS` | 6 | 時間收集截止前多久催 |
 | `TASK_ACK_REMINDER_HOURS` | 12 | 早報關閉時，未確認重推間隔 |

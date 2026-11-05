@@ -18,3 +18,6 @@ credentials/
 
 # 產生出來的 SOP 網站（營運版不能進公開 repo）
 build/
+
+# Audit Log 舊紀錄的本機 CSV（M7-09）：有藝人名稱和 Discord ID，不能進公開 repo
+archive/

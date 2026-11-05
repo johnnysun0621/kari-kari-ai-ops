@@ -46,6 +46,7 @@ EXTENSIONS = [
     "cogs.course_qa",
     "cogs.server_setup",
     "cogs.reminders",
+    "cogs.audit_retention",
 ]
 
 
