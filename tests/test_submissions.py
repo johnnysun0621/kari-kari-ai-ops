@@ -12,10 +12,8 @@ from cogs.submissions import (
     FILE_UPLOAD_WAIT_MINUTES,
     MAX_UPLOAD_MB,
     PendingFileSubmission,
-    PendingReviewFeedbackFile,
     ReviewFeedbackDriveTarget,
     LargeFileSubmissionChoiceView,
-    ReviewFeedbackLargeFileChoiceView,
     PostReviewAttachmentView,
     ReviewActionView,
     ReviewSubmissionView,
@@ -369,23 +367,6 @@ class TestPendingFileSubmission:
         assert pending.is_expired(now + timedelta(minutes=180, seconds=1))
 
 
-class TestPendingReviewFeedbackFile:
-    def test_expires_after_deadline(self):
-        now = datetime(2026, 7, 10, 12, 0, tzinfo=config.TZ)
-        pending = PendingReviewFeedbackFile(
-            submission=repositories.SubmissionItem(page_id="submission-1", name="Johnny｜功課", status="通過"),
-            result="通過",
-            feedback="很好",
-            reviewer="A 老師｜123",
-            channel_id=456,
-            created_at=now,
-            expires_at=now + timedelta(minutes=FILE_UPLOAD_WAIT_MINUTES),
-        )
-
-        assert not pending.is_expired(now + timedelta(minutes=179, seconds=59))
-        assert pending.is_expired(now + timedelta(minutes=180, seconds=1))
-
-
 class TestExpiredPendingKeys:
     """穩定度加固：使用者中途放棄上傳時，pending dict 要能被背景清理掃到。"""
 
@@ -541,8 +522,6 @@ class TestReviewDisplayHelpers:
         drive_view = LargeFileSubmissionChoiceView(cog, submit_task, owner_id=123)
         assert any(getattr(item, "label", "") == "返回任務選擇" for item in drive_view.children)
 
-        feedback_view = ReviewFeedbackLargeFileChoiceView(submission, 123)
-        assert any(getattr(item, "label", "") == "返回回饋選擇" for item in feedback_view.children)
 
     def test_review_feedback_file_dm_mentions_result_feedback_and_file(self):
         submission = repositories.SubmissionItem(

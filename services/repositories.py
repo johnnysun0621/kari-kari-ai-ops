@@ -2220,6 +2220,19 @@ async def get_reviewable_submissions() -> list[SubmissionItem]:
     return await get_submissions_by_review_status(["待審核"], latest_only=True)
 
 
+async def get_submission(page_id: str) -> SubmissionItem | None:
+    """讀單筆提交；不存在或已經在垃圾桶回 None。"""
+    try:
+        page = await notion_api.retrieve_page(page_id)
+    except notion_api.NotionAPIError as e:
+        if e.status_code == 404:
+            return None
+        raise
+    if page.get("archived") or page.get("in_trash"):
+        return None
+    return _to_submission(page)
+
+
 async def get_all_submissions() -> list[SubmissionItem]:
     pages = await notion_api.query_data_source(config.DS_SUBMISSIONS)
     return [_to_submission(page) for page in pages if not page.get("archived")]

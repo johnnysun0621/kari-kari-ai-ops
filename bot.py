@@ -12,7 +12,7 @@ from cogs.briefing import BriefingAckButton, BriefingDetailSelect
 from cogs.ops_actions import OpsClaimButton, OpsDoneButton
 from cogs.ops_briefing import OpsDetailSelect
 from cogs.scheduling_artist import PoolAvailabilityButton
-from cogs.submissions import ReviewFeedbackButton
+from cogs.submissions import ReviewFeedbackDriveLinkButton
 from cogs.tasks_artist import (
     BundleConcernSelect, BundleDetailSelect, BundleReceiveButton, ReminderAckButton, TaskConcernButton, TaskReceiptButton,
 )
@@ -85,7 +85,7 @@ class KariKariBot(commands.Bot):
         self.add_dynamic_items(BriefingAckButton, BriefingDetailSelect)  # 每日早報（M3-24）
         self.add_dynamic_items(OpsClaimButton, OpsDoneButton)  # 控方「我來處理／已處理」（M3-25）
         self.add_dynamic_items(OpsDetailSelect)  # 營運早報「看某一筆的詳細」（M3-25）
-        self.add_dynamic_items(ReviewFeedbackButton)  # 批改檔入口（M4-21）：bot 重開後舊訊息按了也有回應
+        self.add_dynamic_items(ReviewFeedbackDriveLinkButton)  # 私訊裡的「貼 Drive 連結補回饋」（M4-21）
         if config.GUILD_ID:
             guild = discord.Object(id=config.GUILD_ID)
             self.tree.copy_global_to(guild=guild)

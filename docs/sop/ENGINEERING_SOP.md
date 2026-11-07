@@ -211,8 +211,11 @@ flowchart LR
 2. 詳細＋**通過**／**需修改**／**退回**／**↩️ 返回審核清單**（300 秒）
 3. Modal `審核｜{結果}`：**給藝人的回饋（選填）**；需修改／退回另有 **修改期限（天數，1～7）**
 4. `complete_discord_review()`：Submissions `審核狀態`、`審核回饋`、`審核者`=`{名稱}｜{id}`、`審核來源`=Discord、`審核通知時間`；Tasks 通過→已完成並清 `修改期限`，需修改／退回→需修改並寫 `修改期限`=now+N 天；私訊藝人（標題用任務名稱，M4-19）；Audit「審核提交」
-5. **不需補批改檔**／**附批改檔**：附檔時**立即**建 Drive `…/老師回饋/老師回饋_YYYY.MM.DD_ver.N`；在頻道上傳（≤10MB）→ **完成回饋**：上傳到每位藝人的夾、`審核回饋` 附連結、私訊 `📎 老師補充了批改檔`、Audit「審核批改檔」；或 **貼 Drive 連結補回饋** → Modal（**Drive 批改檔或資料夾連結（必填）**、**補充回饋（選填）**）；**↩️ 返回回饋選擇**
-- 批改檔入口的三顆按鈕是 `submissions.ReviewFeedbackButton`（DynamicItem，`review_feedback:{action}:{審核人 id}:{提交 id}`，M4-21）：進行中的資料只在記憶體 `pending_review_feedback_files`，重開就沒了。入口不在、過期或已換成別筆時，訊息補上「⌛ 這個批改檔入口已經關閉」並拿掉按鈕
+5. `PostReviewAttachmentView`（只有本人看得到，`FILE_UPLOAD_WAIT_MINUTES`）：**不需補批改檔**／**附批改檔**／**檔案太大，用 Drive**
+   - **附批改檔** → `ReviewFeedbackUploadModal`（`discord.ui.FileUpload`，1～10 個、每個 ≤10MB，需 discord.py ≥ 2.7）→ `_archive_review_feedback_files()`：送出時才建 Drive `…/老師回饋/老師回饋_YYYY.MM.DD_ver.N`、上傳到每位藝人的夾、`審核回饋` 附連結、私訊藝人 `📎 老師補充了批改檔`、Audit「審核批改檔」。失敗時按鈕留著可重試
+   - **檔案太大，用 Drive** → `start_review_drive_feedback()`：立即建資料夾，**私訊審核人**資料夾連結與 **貼 Drive 連結補回饋**（`ReviewFeedbackDriveLinkButton`，DynamicItem，`review_drive_link:{提交 id}`，重開後仍可按）；私訊不通改只有本人看得到的訊息
+   - **貼 Drive 連結補回饋** → Modal `批改檔連結`（**Drive 批改檔或資料夾連結（必填）**、**補充回饋（選填）**）→ `add_review_feedback_link()`：送出時才從 Notion 讀 `審核狀態`、`審核回饋`、`審核者`，所以不靠記憶體；提交已不在就說明並結束；Audit「審核批改檔連結」
+- 批改檔流程不在頻道發任何訊息，也不讀頻道附件（M4-21）；所有訊息開頭用 `review_target_lines()` 寫任務、藝人、交件時間、審核結果
 - 算不出老師回饋資料夾時，錯誤訊息照原因分：任務已刪除／某位藝人的 Drive 專區有問題／Drive 沒連上（`review_feedback_no_target_message`，M4-20）
 - 沒權限：「❌ 這個指令僅限管理者使用。」（M4-19）
 
@@ -424,7 +427,7 @@ flowchart LR
 | `REVIEW_REMINDER_AFTER_HOURS` | 24 | 待審核多久開始催；營運早報 📮 的時數 |
 | `REVIEW_DEFAULT_REVISION_DAYS` | 3 | Notion 審核沒填修改期限時補幾天 |
 | `AUDIT_RETENTION_DAYS` | 90 | Audit Log 在 Notion 留幾天（M7-09）；0＝停用 |
-| `FILE_UPLOAD_WAIT_MINUTES` | 180 | 交件、批改檔入口有效時間 |
+| `FILE_UPLOAD_WAIT_MINUTES` | 180 | 交件入口、審核後「附批改檔」按鈕的有效時間 |
 | `REMIND_BEFORE_DEADLINE_HOURS` | 6 | 時間收集截止前多久催 |
 | `TASK_ACK_REMINDER_HOURS` | 12 | 早報關閉時，未確認重推間隔 |
 | `TEACHER_REMINDER_AFTER_HOURS`／`TEACHER_REMINDER_MAX_DAYS` | 2／7 | 課後提醒老師 |
@@ -503,6 +506,7 @@ flowchart LR
 | 「任務通知送不出去」只在記憶體去重 | bot 重開後會再發一次 |
 | 審核結果私訊失敗也記成已通知 | 不會重試，藝人可能沒收到 |
 | 時間收集的草稿只存在記憶體 | bot 重開，藝人還沒送出的草稿會消失 |
+| 審核後的「附批改檔」按鈕只在記憶體 | bot 重開或超過 3 小時後，這則只有本人看得到的訊息按了沒反應；審核結果不受影響，批改檔要手動補到 `審核回饋` |
 | `/審核提交` 清單不依審核人員過濾 | 有身分組的人都看得到全部待審 |
 | 營運早報的「看某一筆的詳細」會改同一則訊息 | 頻道裡所有人看到的內容一起變 |
 | 布告欄只看欄位指紋 | 只改內文不會更新 Discord；刪掉 Notion 項目不會刪 Discord 訊息 |
