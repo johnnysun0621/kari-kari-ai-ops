@@ -541,15 +541,7 @@ class TestReviewDisplayHelpers:
         drive_view = LargeFileSubmissionChoiceView(cog, submit_task, owner_id=123)
         assert any(getattr(item, "label", "") == "返回任務選擇" for item in drive_view.children)
 
-        feedback_view = ReviewFeedbackLargeFileChoiceView(
-            cog,
-            submission,
-            result="通過",
-            feedback="很好",
-            reviewer="老師",
-            targets=[],
-            owner_id=123,
-        )
+        feedback_view = ReviewFeedbackLargeFileChoiceView(submission, 123)
         assert any(getattr(item, "label", "") == "返回回饋選擇" for item in feedback_view.children)
 
     def test_review_feedback_file_dm_mentions_result_feedback_and_file(self):

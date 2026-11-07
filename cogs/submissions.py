@@ -1010,78 +1010,125 @@ class LargeFileSubmissionChoiceView(discord.ui.View):
             return
         await self.cog.return_to_submit_task_list(interaction)
 
-class ReviewFeedbackLargeFileChoiceView(discord.ui.View):
-    def __init__(
-        self,
-        cog: "SubmissionsCog",
-        submission: repositories.SubmissionItem,
-        *,
-        result: str,
-        feedback: str,
-        reviewer: str,
-        targets: list[ReviewFeedbackDriveTarget],
-        owner_id: int | None = None,
-    ):
-        super().__init__(timeout=_file_upload_wait_minutes() * 60)
-        self.cog = cog
-        self.submission = submission
-        self.result = result
-        self.feedback = feedback
-        self.reviewer = reviewer
-        self.targets = targets
-        self.owner_id = owner_id
+REVIEW_FEEDBACK_ACTIONS = {
+    "drive": ("貼 Drive 連結補回饋", discord.ButtonStyle.primary, None),
+    "finish": ("完成回饋", discord.ButtonStyle.success, None),
+    "back": ("返回回饋選擇", discord.ButtonStyle.secondary, "↩️"),
+}
 
-    @discord.ui.button(label="貼 Drive 連結補回饋", style=discord.ButtonStyle.primary)
-    async def submit_drive_link(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.owner_id is not None and interaction.user.id != self.owner_id:
+
+def review_feedback_closed_text() -> str:
+    """入口已經關閉時的說明（M4-21）：審核結果沒有不見，講清楚批改檔還能怎麼補。"""
+    return (
+        f"⌛ 這個批改檔入口已經關閉（小律重新啟動過，或超過 {file_upload_wait_label()}沒有完成）。\n"
+        "審核結果已經存好，不用重審。還要補批改檔的話，把檔案放到 Drive，"
+        "把連結貼到 Notion 這筆提交的「審核回饋」，再告訴藝人。"
+    )
+
+
+class ReviewFeedbackButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"review_feedback:(?P<action>drive|finish|back):(?P<owner>\d+):(?P<submission>[\w-]+)",
+):
+    """批改檔入口的三顆按鈕（M4-21）。
+
+    這幾則發在公開頻道、會一直留著。原本是一般按鈕，bot 重開或過期後看起來能按，
+    按了卻只有「未能及時響應」。改成 DynamicItem：什麼時候按都有回應，入口關了就說明並拿掉按鈕。
+    進行中的資料都在 pending（記憶體），重開就沒了，所以這裡不存任何審核內容。
+    """
+
+    def __init__(self, action: str, owner_id: int, submission_id: str):
+        label, style, emoji = REVIEW_FEEDBACK_ACTIONS[action]
+        super().__init__(discord.ui.Button(
+            label=label, style=style, emoji=emoji,
+            custom_id=f"review_feedback:{action}:{owner_id}:{submission_id}",
+        ))
+        self.label = label
+        self.action = action
+        self.owner_id = owner_id
+        self.submission_id = submission_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match["action"], int(match["owner"]), match["submission"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_id:
             await interaction.response.send_message("❌ 這個回饋入口只給原本審核的人使用。", ephemeral=True)
             return
+        cog = interaction.client.get_cog("SubmissionsCog")
+        pending = cog.pending_review_feedback_files.get(self.owner_id) if cog else None
+        # 同一個人之後開了別筆的入口，舊訊息的按鈕不能動到新的那筆
+        if pending is None or pending.submission.page_id != self.submission_id:
+            await self._close(interaction)
+            return
+        if pending.is_expired(datetime.now(config.get_tenant().tz)):
+            cog.pending_review_feedback_files.pop(self.owner_id, None)
+            await self._close(interaction)
+            return
+        await getattr(self, f"_{self.action}")(interaction, cog, pending)
+
+    async def _close(self, interaction: discord.Interaction) -> None:
+        original = interaction.message.content if interaction.message else ""
+        content = f"{original}\n\n{review_feedback_closed_text()}" if original else review_feedback_closed_text()
+        await interaction.response.edit_message(content=content[:2000], view=None)
+
+    async def _drive(self, interaction: discord.Interaction, cog, pending) -> None:
         await interaction.response.send_modal(
             ReviewFeedbackDriveLinkModal(
-                self.cog,
-                self.submission,
-                result=self.result,
-                feedback=self.feedback,
-                reviewer=self.reviewer,
-                targets=self.targets,
+                cog,
+                pending.submission,
+                result=pending.result,
+                feedback=pending.feedback,
+                reviewer=pending.reviewer,
+                targets=pending.targets,
             )
         )
 
-    @discord.ui.button(label="完成回饋", style=discord.ButtonStyle.success)
-    async def finish_feedback(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.owner_id is not None and interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ 這個回饋入口只給原本審核的人使用。", ephemeral=True)
-            return
-        pending = self.cog.pending_review_feedback_files.get(interaction.user.id)
-        if pending is None or not pending.attachments:
+    async def _finish(self, interaction: discord.Interaction, cog, pending) -> None:
+        if not pending.attachments:
             await interaction.response.send_message("請先上傳至少一個批改檔，再按「完成回饋」。", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        self.cog.pending_review_feedback_files.pop(interaction.user.id, None)
+        cog.pending_review_feedback_files.pop(self.owner_id, None)
+        try:
+            await interaction.message.edit(view=None)  # 同一則不要再被按一次
+        except (discord.HTTPException, AttributeError):
+            logger.debug("批改檔入口按鈕無法拿掉（可能是只有本人看得到的訊息）")
         await interaction.followup.send("收到全部批改檔，正在歸檔到 Google Drive、更新 Notion 並通知藝人...", ephemeral=True)
-        _ok, result_message = await self.cog._archive_review_feedback_files(
+        _ok, result_message = await cog._archive_review_feedback_files(
             pending=pending,
             discord_user_id=interaction.user.id,
         )
         await interaction.followup.send(result_message, ephemeral=True)
 
-    @discord.ui.button(label="返回回饋選擇", style=discord.ButtonStyle.secondary, emoji="↩️")
-    async def back_to_feedback_choice(self, interaction: discord.Interaction, _: discord.ui.Button):
-        if self.owner_id is not None and interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ 這個回饋入口只給原本審核的人使用。", ephemeral=True)
-            return
-        self.cog.pending_review_feedback_files.pop(interaction.user.id, None)
+    async def _back(self, interaction: discord.Interaction, cog, pending) -> None:
+        cog.pending_review_feedback_files.pop(self.owner_id, None)
+        # 選擇的按鈕只有 5 分鐘，不留在公開頻道：這則收掉，選擇改成只有本人看得到
         await interaction.response.edit_message(
-            content="請選擇是否需要補充批改檔：",
-            view=PostReviewAttachmentView(
-                self.cog,
-                self.submission,
-                result=self.result,
-                feedback=self.feedback,
-                reviewer=self.reviewer,
-                reviewer_id=interaction.user.id,
-            ),
+            content=f"↩️ 已返回回饋選擇：**{pending.submission.name}**",
+            view=None,
         )
+        await interaction.followup.send(
+            f"**{pending.submission.name}**（{pending.result}）\n請選擇是否需要補充批改檔：",
+            view=PostReviewAttachmentView(
+                cog,
+                pending.submission,
+                result=pending.result,
+                feedback=pending.feedback,
+                reviewer=pending.reviewer,
+                reviewer_id=self.owner_id,
+            ),
+            ephemeral=True,
+        )
+
+
+class ReviewFeedbackLargeFileChoiceView(discord.ui.View):
+    def __init__(self, submission: repositories.SubmissionItem, owner_id: int):
+        super().__init__(timeout=None)
+        self.owner_id = owner_id
+        for action in REVIEW_FEEDBACK_ACTIONS:
+            self.add_item(ReviewFeedbackButton(action, owner_id, submission.page_id))
 
 
 class ReviewSubmissionSelect(discord.ui.Select):
@@ -1551,15 +1598,7 @@ class SubmissionsCog(commands.Cog):
                 targets=targets,
                 skipped_artists=skipped,
             ),
-            view=ReviewFeedbackLargeFileChoiceView(
-                self,
-                submission,
-                result=result,
-                feedback=feedback,
-                reviewer=reviewer,
-                targets=targets,
-                owner_id=interaction.user.id,
-            ),
+            view=ReviewFeedbackLargeFileChoiceView(submission, interaction.user.id),
             ephemeral=True,
         )
 
@@ -1700,7 +1739,8 @@ class SubmissionsCog(commands.Cog):
                 continue
             pending.attachments.append(attachment)
         await message.channel.send(
-            f"✅ 已收到 {len(message.attachments)} 個批改檔，目前共 {len(pending.attachments)} 個。"
+            f"✅ 已收到 {len(message.attachments)} 個批改檔，目前共 {len(pending.attachments)} 個。\n"
+            f"審核對象：**{pending.submission.name}**（{pending.result}）\n"
             "可以繼續上傳；全部完成後按下方「完成回饋」。",
             view=self._review_feedback_controls(pending, message.author.id),
         )
@@ -1709,13 +1749,7 @@ class SubmissionsCog(commands.Cog):
         self, pending: PendingReviewFeedbackFile, owner_id: int,
     ) -> "ReviewFeedbackLargeFileChoiceView":
         return ReviewFeedbackLargeFileChoiceView(
-            self,
-            pending.submission,
-            result=pending.result,
-            feedback=pending.feedback,
-            reviewer=pending.reviewer,
-            targets=pending.targets,
-            owner_id=owner_id,
+            pending.submission, owner_id,
         )
 
     async def _notify_review_result(
