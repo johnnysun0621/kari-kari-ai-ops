@@ -98,7 +98,7 @@ def test_第一次按_開私人討論串並打招呼(env):
 
     thread = env.parent.created[0]
     assert thread.users == [1]
-    assert "只有你看得到" in thread.sent[0]
+    assert "只有你和公司管理員看得到" in thread.sent[0], "控方看得到私人討論串，不能說只有他看得到"
     assert thread.mention in env.replies[-1]
     assert env.cog._thread_by_user["1"] == thread.id
 

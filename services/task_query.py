@@ -139,15 +139,30 @@ def select_tasks(
     return sorted(picked, key=sort_key)
 
 
+_SUBMIT_HELP_RE = re.compile(
+    r"(怎麼|如何|在哪|哪裡|去哪|用什麼|連結|網址|入口|方式).{0,8}(繳交|提交|上傳|交)"
+    r"|(繳交|提交|上傳|交)(作業|檔案|東西|功課)?.{0,6}(連結|網址|入口|在哪|哪裡|去哪|怎麼|方式)"
+)
+
+
+def asks_how_to_submit(question: str) -> bool:
+    """在問怎麼交件、交件連結在哪。小律只能查、不能收件，要把人帶到 /我的任務（2026-11-08 藝人實際對話）。"""
+    return bool(_SUBMIT_HELP_RE.search(question))
+
+
 def wants_detail(question: str) -> bool:
     return bool(_DETAIL_RE.search(question))
 
 
 def index_reference(question: str) -> int | None:
-    """「第 2 個」「第三筆」→ 2、3（指上一次列出的清單）。"""
-    match = _INDEX_RE.search(question)
-    if not match:
+    """「第 2 個」「第三筆」→ 2、3（指上一次列出的清單）。
+
+    一句裡有好幾個時取最後一個：「第一個已經交了，幫我看第二個」要的是第二個（2026-11-08 藝人實際對話）。
+    """
+    matches = list(_INDEX_RE.finditer(question))
+    if not matches:
         return None
+    match = matches[-1]
     raw = match.group(1).translate(str.maketrans("０１２３４５６７８９", "0123456789"))
     if raw.isdigit():
         return int(raw)

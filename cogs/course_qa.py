@@ -33,16 +33,25 @@ def panel_text() -> str:
         "大家好，我是小律！在這裡可以問小律**你自己任務的細節**：\n"
         "・這週／下週有什麼任務、還有哪些沒交\n"
         "・某個任務要做什麼、要交什麼形式、什麼時候截止\n\n"
-        "👉 按下方「💬 開始問小律」，小律會幫你開一個**只有你看得到**的討論串，在裡面直接打字問就好。\n\n"
+        "👉 按下方「💬 開始問小律」，小律會幫你開一個**只有你和公司管理員看得到**的討論串，在裡面直接打字問就好。\n\n"
         "📤 **要交作業、按「收到任務」，不是在這裡喔**\n"
         f"請到 {_submit_channel()} 打 `/我的任務`。小律在這裡只能幫你查，不能幫你交。\n\n"
         "⚠️ 請不要直接在這個頻道打字，這裡大家都看得到。"
     )
 
 
-def thread_welcome() -> str:
+def submit_help_text() -> str:
+    """問到怎麼交件時接在回答後面（2026-11-08）：步驟和按鈕名稱照藝人實際看到的。"""
     return (
-        "👋 歡迎！這裡只有你看得到，想問小律什麼直接打字就好，例如：\n"
+        f"📤 **交作業的方法**：到 {_submit_channel()} 打 `/我的任務` → 按「提交任務」→ 選那一筆，"
+        "小律會給你一個 Drive 資料夾，檔案傳進去後按「我已上傳到 Drive」就完成了。"
+    )
+
+
+def thread_welcome() -> str:
+    # 控方是管理員、看得到所有私人討論串，不能跟藝人說只有他看得到（2026-11-08）
+    return (
+        "👋 歡迎！這裡只有你和公司管理員看得到，想問小律什麼直接打字就好，例如：\n"
         "・「這週有什麼任務」「我還有哪些沒交」\n"
         "・「第 2 個的詳細內容」\n"
         "・「week4 聽力要做幾題」\n\n"
@@ -348,6 +357,8 @@ class CourseQACog(commands.Cog):
         lock = self._answer_locks.setdefault(user.id, asyncio.Lock())
         async with lock:
             answer = await self._answer_for_user_unlocked(user, question)
+            if task_query.asks_how_to_submit(question) and "交作業的方法" not in answer:
+                answer = f"{answer}\n\n{submit_help_text()}"
             # 同一個討論串記得最近幾句（M6-08，只放記憶體）：下一句才接得上「那第二個呢」
             convo = self._chat.get(user.id, datetime.now(config.get_tenant().tz).date())
             convo.add("artist", question)
