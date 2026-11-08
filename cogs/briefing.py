@@ -11,7 +11,7 @@ import discord
 import config
 from cogs import ui_text
 from services import (
-    audit, daily_briefing, notification_log, ops_briefing, repositories, ritsu_voice, task_bundle,
+    audit, daily_briefing, notification_log, ops_briefing, repositories, ritsu_memory, ritsu_voice, task_bundle,
     task_notifications, task_query,
 )
 from services.notion_links import strip_notion_links
@@ -445,7 +445,7 @@ async def send_daily_briefings(client: discord.Client, now: datetime, *, final: 
             continue
         await _clear_old_task_messages(client, uid)
         # 小律今天對這位藝人的開頭和結尾一句（M3-30）：只送狀況統計，名字由程式補
-        name = ritsu_voice.call_name(artist.name)
+        name = ritsu_memory.call_name_for(artist)
         voice = await ritsu_voice.daily_voice(_voice_counts(items, unreceived, previous), state=state, now=now)
         greeting = {"name": name, "opening": voice.opening}
         reminder_text = daily_briefing.briefing_text(

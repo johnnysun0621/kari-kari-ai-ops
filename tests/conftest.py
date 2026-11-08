@@ -37,15 +37,18 @@ def no_real_llm(monkeypatch, request):
 def no_real_state_files(tmp_path, monkeypatch):
     """測試絕不碰 bot 正在用的 .state：派發會呼叫 scheduling_sla.mark_completed（M1-11），
     通知紀錄也一律寫到暫存資料夾。各測試自己的 fixture 可以再覆蓋。"""
-    from services import notification_log, scheduling_sla
+    from services import notification_log, ritsu_memory, scheduling_sla
 
     monkeypatch.setattr(notification_log, "STATE_PATH", tmp_path / "task_notification_log.json")
     notification_log.reset_for_tests()
     monkeypatch.setattr(scheduling_sla, "_STATE_PATH", tmp_path / "scheduling_sla.json")
     scheduling_sla.reset_for_tests()
+    monkeypatch.setattr(ritsu_memory, "STATE_PATH", tmp_path / "ritsu_memory.json")  # 小律記憶（M6-11）
+    ritsu_memory.reset_for_tests()
     yield
     notification_log.reset_for_tests()
     scheduling_sla.reset_for_tests()
+    ritsu_memory.reset_for_tests()
 
 
 def pytest_configure(config):

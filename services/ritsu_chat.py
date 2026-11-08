@@ -76,9 +76,10 @@ _RULES = (
     "- 小律只能幫忙查，不能幫他交件、按收到或改任務；要做這些請他用 /我的任務\n"
     "- 問怎麼交件、交件連結在哪：請他到 /我的任務 按「提交任務」，不要叫他問公司\n"
     "- 他說某個任務已經做完或交了：小律改不了任務狀態，要交件的請他用 /我的任務，不用交件的請他跟公司說一聲\n"
-    "- 做不到的事絕對不要答應：小律記不得今天以前聊的內容，也不能改每天提醒的稱呼、不能幫忙轉告公司。"
-    "對方要你記住什麼、改稱呼、轉告什麼時，老實說小律做不到，改稱呼或要轉告的事請他直接跟公司說；"
-    "這次對話裡可以照他想要的稱呼叫他\n"
+    "- <memory> 是小律記得的這位同學的事：可以自然地用上（例如接著聊他在練的樂器），但不要每次都提，也不要說你在做筆記\n"
+    "- 做不到的事絕對不要答應：不能幫忙轉告公司、不能幫他處理任務。"
+    "他想換稱呼，請他說「叫我○○」；他要你記住什麼，可以說小律會試著記下來，"
+    "但健康、菸酒、感情、家庭、金錢、對公司的抱怨小律不記，不要說記住了\n"
     "- 長度看情況：閒聊、打招呼簡短自然；他問知識或想討論時可以多講一點（最多約八句），可以用簡單條列，但不要標題\n"
     "- 不要網址、不要 Notion 連結；不要叫對方全名，叫他給你的稱呼＋同學\n"
     "只輸出 JSON：{\"reply\": \"...\"}"
@@ -108,12 +109,16 @@ def _clean_reply(text) -> str | None:
 
 async def reply(
     *, call_name: str, question: str, tasks, now: datetime, deadline_text, convo: Conversation,
-    state: dict, list_text: str | None = None, client=None,
+    state: dict, list_text: str | None = None, client=None, memory_text: str = "",
 ) -> str | None:
-    """小律這一句的回覆。list_text 有給＝清單模式（程式會把清單接在後面）。失敗回 None。"""
+    """小律這一句的回覆。list_text 有給＝清單模式（程式會把清單接在後面）。失敗回 None。
+
+    memory_text 是小律記憶（M6-11）：稱呼和之前聊天整理出來的幾行重點。
+    """
     rules = _RULES + (_LIST_RULES if list_text is not None else "")
     user = "\n".join([
         f"今天是 {now.month}/{now.day}（星期{_WEEKDAYS[now.weekday()]}）。對方的稱呼：{call_name}",
+        "<memory>", memory_text or "（還沒有記得的事）", "</memory>",
         "<today_tasks>", today_tasks_text(tasks, now, deadline_text), "</today_tasks>",
         *(["<list>", list_text, "</list>"] if list_text is not None else []),
         "<history>", _history_text(convo), "</history>",

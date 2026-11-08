@@ -55,8 +55,9 @@ def test_沒問交件_不多接():
 
 def test_小律不能答應做不到的事():
     rules = ritsu_chat._RULES
-    assert "做不到的事絕對不要答應" in rules
-    assert "改稱呼" in rules and "轉告" in rules
+    assert "做不到的事絕對不要答應" in rules and "轉告公司" in rules
+    assert "叫我○○" in rules, "換稱呼要請他用小律記憶（M6-11）"
+    assert "菸酒" in rules and "不要說記住了" in rules
     assert "不要叫他問公司" in rules
 
 

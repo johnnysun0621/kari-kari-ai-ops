@@ -85,6 +85,7 @@ def test_registered_cogs_expose_exactly_ten_slash_commands():
         "從時間池建立任務",
         "管理可配合時間",
         "審核提交",
+        "小律記憶",  # M6-11
     }
 
 
@@ -101,6 +102,7 @@ def test_management_task_commands_use_admin_channel_guard(monkeypatch):
             (TasksCog.resend_task_notification, ()),
             (SubmissionsCog.review_submission, ()),
             (BulletinCog.sync_command, ()),
+            (CourseQACog.ritsu_memory_command, ()),
         )
         for command, args in cases:
             guard.reset_mock()

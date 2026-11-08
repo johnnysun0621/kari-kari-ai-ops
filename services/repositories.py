@@ -654,6 +654,18 @@ def build_ai_feedback_page(
     return props, children
 
 
+async def count_feedback_since(since: datetime) -> int:
+    """這段時間藝人按「回報問題」送出的使用回饋筆數（M6-11 小律週報）。"""
+    pages = await notion_api.query_data_source(
+        config.DS_BULLETIN,
+        filter_={"and": [
+            {"property": "類別", "select": {"equals": FEEDBACK_CATEGORY}},
+            {"timestamp": "created_time", "created_time": {"on_or_after": since.isoformat()}},
+        ]},
+    )
+    return len(pages)
+
+
 async def create_ai_feedback(**kwargs) -> dict:
     props, children = build_ai_feedback_page(**kwargs)
     return await notion_api.create_page(config.DS_BULLETIN, props, children=children)

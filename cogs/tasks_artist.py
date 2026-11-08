@@ -11,7 +11,8 @@ import config
 from cogs import channel_guard, paging, ui_text
 from services.permissions import is_admin
 from services import (
-    audit, notification_log, ops_notice, repositories, ritsu_voice, scheduling_sla, task_bundle, task_notifications,
+    audit, notification_log, ops_notice, repositories, ritsu_memory, ritsu_voice, scheduling_sla, task_bundle,
+    task_notifications,
 )
 from services.notion_links import strip_notion_links
 
@@ -994,7 +995,7 @@ async def send_task_notifications(
         except Exception:
             logger.exception("任務通知失敗（找不到 Discord 使用者）：%s", artist.name)
             continue
-        call = ritsu_voice.call_name(artist.name)
+        call = ritsu_memory.call_name_for(artist)
         for group in task_bundle.chunks(artist_tasks):
             try:
                 if len(group) == 1:

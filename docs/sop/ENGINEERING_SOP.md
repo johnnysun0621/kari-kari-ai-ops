@@ -219,6 +219,10 @@ flowchart LR
 - 算不出老師回饋資料夾時，錯誤訊息照原因分：任務已刪除／某位藝人的 Drive 專區有問題／Drive 沒連上（`review_feedback_no_target_message`，M4-20）
 - 沒權限：「❌ 這個指令僅限管理者使用。」（M4-19）
 
+### /小律記憶
+
+- `CourseQACog.ritsu_memory_command`（`is_admin`＋`ensure_admin_channel`）：列 `ritsu_memory.artists_with_memory()` → **選擇要看的藝人…** → 稱呼、重點、最後更新 → **清除這位藝人的記憶**（`ritsu_memory.clear`）。只讀寫本機 `.state/ritsu_memory.json`，不碰 Notion（M6-11）
+
 ### /布告欄同步
 
 - 只跑 `sync_bulletins()`（不含本月排程）。回覆「✅ 布告欄同步完成：新增 a、更新 b、未變更 c。」
@@ -291,6 +295,8 @@ flowchart LR
 | 批次重送 | 每輪（派發前） | `_check_batch_resend` | 勾 `重送通知` | 見「Notion 欄位變更觸發的流程」 | 先取消勾選；`_resent_this_round` |
 | 任務派發 | 每輪 | `_check_task_dispatch_notifications` | 見「Notion 欄位變更觸發的流程」 | 任務卡、合併通知、同仁知會、公告 | `Discord 通知時間`＋`dispatch_delivered` |
 | 課後作業通知 | 每輪 | `_check_task_assignment_notifications` | 見「Notion 欄位變更觸發的流程」 | 作業卡 | assignment state |
+| 小律記憶整理 | 每 30 分檢查，`SUMMARY_HOUR`（3）點後一天一次 | `CourseQACog.memory_loop` → `_run_nightly_memory` | 從 `summary_until` 到現在，私人討論串裡藝人有發言的（讀 Discord 歷史，`_thread_turns`） | AI 依舊筆記＋對話寫新筆記（`ritsu_memory.summarize`），程式再擋敏感詞；AI 用不了保留舊筆記（M6-11） | `meta.summary_date` |
+| 小律週報 | 週一 `WEEKLY_REPORT_HOUR`（10）點後一次 | `_run_weekly_report` | 上週一 00:00～本週一 00:00 的討論串 | 營運內部通知 `🤖 **小律週報**`：幾位藝人問幾次、答不出來的題（小律回覆含「請問公司／查不到／沒有資料／做不到」等）、使用回饋筆數（`count_feedback_since`） | `meta.weekly_week`，送出成功才記 |
 | Audit Log 保留 | 每 1 小時（獨立 loop） | `audit_retention.AuditRetentionCog` → `services/audit_retention.run_once` | Audit Log `created_time` 早於 now−`AUDIT_RETENTION_DAYS`（90）天；一次最多 `BATCH_SIZE`（200）筆，舊的先（M7-09） | 先寫本機 `archive/audit_log/YYYY-MM.csv`（台灣時間月份、utf-8-sig、fsync），確定存好才移到 Notion 垃圾桶；Drive 不動 | CSV 用 `page_id` 去重；移垃圾桶失敗留在 Notion 下一輪再試。手動：`scripts/archive_audit_log.py --dry-run／--all` |
 | 清除任務已刪除的提交 | 每輪 | `_cleanup_orphan_submissions` | Submissions `關聯任務` 空白、建立超過 1 小時、有這個欄位（M4-20） | 移到 Notion 垃圾桶（`archived`）；Audit「清除提交｜{提交名稱}」，操作類型「更新」；Drive 檔案不動 | 已在垃圾桶的查不到；重複封存當成功 |
 | Drive 健康檢查 | 10:00 後一次 | `_check_drive_health` | 有設 `GOOGLE_DRIVE_ROOT_FOLDER_ID` | 失敗 `⚙️ 系統警告｜Google Drive 健康檢查失敗`；恢復改成 🟢 | 一天一次 |
@@ -457,6 +463,7 @@ flowchart LR
 | `monthly_board.json` | 本月排程訊息 | 本月排程 |
 | `course_qa_threads.json`、`course_qa_memory.json` | 小律討論串、對話記憶 | 小律 |
 | `xiaolu_panel.json` | 小律入口面板訊息 | 小律 |
+| `ritsu_memory.json` | 小律記憶（M6-11）：`artists.{藝人 page id}` 的 `nickname`、`notes`（≤5 行）、`artist_name`、`updated_at`；`meta` 的 `summary_until`、`summary_date`、`weekly_week`。暫存檔再換名寫入 | 小律聊天、早報、審核私訊的稱呼；`/小律記憶` |
 | `llm_usage.json` | AI 用量 | 小律語氣 |
 
 ### task_notification_log.json 的主要欄位

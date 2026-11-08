@@ -3,15 +3,19 @@ import asyncio
 import logging
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import discord
-from discord.ext import commands
+from discord import app_commands
+from discord.ext import commands, tasks
 
 import config
 from cogs import channel_guard, ui_text
-from services import course_intent, course_qa, notification_log, repositories, ritsu_chat, ritsu_voice, task_query
+from services import (
+    course_intent, course_qa, notification_log, repositories, ritsu_chat, ritsu_memory, ritsu_voice, task_query,
+)
+from services.permissions import is_admin
 from services.notion_links import strip_notion_links
 
 logger = logging.getLogger(__name__)
@@ -187,6 +191,61 @@ class StartXiaolu(discord.ui.View):
         await self.cog.open_private_thread(interaction)
 
 
+SUMMARY_HOUR = 3  # 每天幾點後整理小律記憶（M6-11）
+WEEKLY_REPORT_HOUR = 10  # 每週一幾點後發小律週報
+
+
+def memory_admin_text(entry: dict) -> str:
+    lines = [f"🤖 **小律記得的：{entry.get('artist_name') or '（未知藝人）'}**"]
+    if entry.get("nickname"):
+        lines.append(f"・稱呼：{entry['nickname']}")
+    lines += [f"・{note}" for note in entry.get("notes") or []]
+    if entry.get("updated_at"):
+        lines.append(f"（最後更新 {entry['updated_at'].replace('T', ' ')}）")
+    return "\n".join(lines)
+
+
+class RitsuMemorySelect(discord.ui.Select):
+    def __init__(self, entries: list[tuple[str, dict]]):
+        self.entries = dict(entries)
+        super().__init__(
+            placeholder="選擇要看的藝人…",
+            options=[
+                discord.SelectOption(
+                    label=(entry.get("nickname") and f"{entry.get('artist_name', '')}（{entry['nickname']}）"
+                           or entry.get("artist_name") or page_id)[:100],
+                    value=page_id,
+                )
+                for page_id, entry in entries[:25]
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        page_id = self.values[0]
+        await interaction.response.edit_message(
+            content=memory_admin_text(ritsu_memory.get(page_id)),
+            view=RitsuMemoryClearView(page_id),
+        )
+
+
+class RitsuMemoryView(discord.ui.View):
+    def __init__(self, entries: list[tuple[str, dict]]):
+        super().__init__(timeout=300)
+        self.add_item(RitsuMemorySelect(entries))
+
+
+class RitsuMemoryClearView(discord.ui.View):
+    def __init__(self, artist_page_id: str):
+        super().__init__(timeout=300)
+        self.artist_page_id = artist_page_id
+
+    @discord.ui.button(label="清除這位藝人的記憶", style=discord.ButtonStyle.danger)
+    async def clear_memory(self, interaction: discord.Interaction, button: discord.ui.Button):
+        name = ritsu_memory.get(self.artist_page_id).get("artist_name") or "這位藝人"
+        ritsu_memory.clear(self.artist_page_id)
+        await interaction.response.edit_message(content=f"✅ 已清除小律對 {name} 的記憶。", view=None)
+
+
 class CourseQACog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -208,8 +267,135 @@ class CourseQACog(commands.Cog):
     async def cog_load(self):
         """啟動時預熱課程目錄；只讀 Notion，不呼叫 LLM。註冊入口按鈕並確保頻道有置頂說明。"""
         self._warm_task = asyncio.create_task(self._warm_course_cache())
+        self.memory_loop.start()
         self.bot.add_view(StartXiaolu(self))
         self._panel_task = asyncio.create_task(self._ensure_panel())
+
+    async def cog_unload(self):
+        self.memory_loop.cancel()
+
+    @tasks.loop(minutes=30)
+    async def memory_loop(self):
+        """小律記憶（M6-11）：每天 SUMMARY_HOUR 點後整理一次；每週一 WEEKLY_REPORT_HOUR 點後發週報。"""
+        now = datetime.now(config.get_tenant().tz)
+        try:
+            await self._run_nightly_memory(now)
+        except Exception:
+            logger.exception("小律記憶整理失敗")
+        try:
+            await self._run_weekly_report(now)
+        except Exception:
+            logger.exception("小律週報失敗")
+
+    @memory_loop.before_loop
+    async def before_memory_loop(self):
+        await self.bot.wait_until_ready()
+
+    async def _thread_turns(self, since: datetime, until: datetime) -> dict[str, list[tuple[str, str]]]:
+        """每位藝人私人討論串在這段時間的對話：{Discord user id: [(artist|ritsu, 文字)]}。
+
+        對話只在 Discord（小律不另外存原文），所以從討論串讀；bot 重開過也讀得到。
+        """
+        result: dict[str, list[tuple[str, str]]] = {}
+        for user_id, thread_id in list(self._thread_by_user.items()):
+            thread = self.bot.get_channel(thread_id)
+            if thread is None:
+                try:
+                    thread = await self.bot.fetch_channel(thread_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    continue
+            turns: list[tuple[str, str]] = []
+            try:
+                async for message in thread.history(after=since, before=until, limit=300, oldest_first=True):
+                    content = (message.content or "").strip()
+                    if not content or content.startswith("⏳"):
+                        continue
+                    if message.author.bot:
+                        turns.append(("ritsu", content.removeprefix("🤖 **小律**").strip()[:300]))
+                    elif str(message.author.id) == user_id:
+                        turns.append(("artist", content[:300]))
+            except (discord.Forbidden, discord.HTTPException):
+                logger.warning("讀不到小律討論串：%s", thread_id)
+                continue
+            if any(role == "artist" for role, _ in turns):
+                result[user_id] = turns
+        return result
+
+    async def _run_nightly_memory(self, now: datetime) -> None:
+        today = now.date().isoformat()
+        if now.hour < SUMMARY_HOUR or ritsu_memory.meta("summary_date") == today:
+            return
+        last = ritsu_memory.meta("summary_until")
+        since = datetime.fromisoformat(last) if last else now - timedelta(days=1)
+        turns_by_user = await self._thread_turns(since, now)
+        state = notification_log.shared()
+        for user_id, turns in turns_by_user.items():
+            artist = await repositories.find_artist_by_discord_id(user_id)
+            if artist is None or not can_artist_use_ai(artist):
+                continue
+            transcript = "\n".join(f"{'藝人' if role == 'artist' else '小律'}：{text}" for role, text in turns)
+            notes = await ritsu_memory.summarize(
+                ritsu_memory.get(artist.page_id).get("notes") or [], transcript, state=state, now=now,
+            )
+            if notes is not None:
+                ritsu_memory.set_notes(artist, notes, now)
+        notification_log.persist()
+        ritsu_memory.set_meta("summary_until", now.isoformat())
+        ritsu_memory.set_meta("summary_date", today)
+        logger.info("小律記憶整理完成：%d 位藝人有新對話", len(turns_by_user))
+
+    async def _run_weekly_report(self, now: datetime) -> None:
+        week = f"{now.isocalendar().year}-W{now.isocalendar().week:02d}"
+        if now.weekday() != 0 or now.hour < WEEKLY_REPORT_HOUR or ritsu_memory.meta("weekly_week") == week:
+            return
+        end = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = end - timedelta(days=7)
+        turns_by_user = await self._thread_turns(start, end)
+        weeks = []
+        for user_id, turns in turns_by_user.items():
+            artist = await repositories.find_artist_by_discord_id(user_id)
+            call = ritsu_memory.call_name_for(artist) if artist else f"使用者 {user_id[-4:]}"
+            weeks.append(ritsu_memory.ArtistWeek(
+                call=call,
+                questions=sum(1 for role, _ in turns if role == "artist"),
+                unanswered=ritsu_memory.unanswered_questions(turns),
+            ))
+        try:
+            feedback = await repositories.count_feedback_since(start)
+        except Exception:
+            logger.exception("讀取使用回饋筆數失敗")
+            feedback = None
+        text = ritsu_memory.weekly_report_text(start, end - timedelta(days=1), weeks, feedback)
+        sent = await channel_guard.try_send(channel_guard.ops_channel(self.bot), content=text)
+        if sent is not None:
+            ritsu_memory.set_meta("weekly_week", week)
+
+    @app_commands.command(name="小律記憶", description="管理端：看或清除小律記得的藝人資料")
+    @app_commands.default_permissions(administrator=True)
+    @is_admin()
+    async def ritsu_memory_command(self, interaction: discord.Interaction):
+        if not await channel_guard.ensure_admin_channel(interaction):
+            return
+        entries = ritsu_memory.artists_with_memory()
+        if not entries:
+            await interaction.response.send_message("小律目前沒有記住任何藝人的事。", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"🤖 小律記得 {len(entries)} 位藝人的事，選一位看看：",
+            view=RitsuMemoryView(entries),
+            ephemeral=True,
+        )
+
+    async def cog_app_command_error(self, interaction: discord.Interaction, error):
+        if isinstance(error, app_commands.CheckFailure):
+            msg = "❌ 這個指令僅限管理者使用。"
+        else:
+            logger.exception("小律指令執行錯誤", exc_info=error)
+            msg = "❌ 指令執行出錯，請稍後再試（詳見 bot log）。"
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
 
     async def _ensure_panel(self) -> None:
         """頻道裡只放一則置頂入口；已存在就更新內容，被刪掉才重發。"""
@@ -366,6 +552,38 @@ class CourseQACog(commands.Cog):
             return answer
 
     async def _answer_for_user_unlocked(self, user: discord.abc.User, question: str) -> str:
+        memory_answer = await self._memory_answer(user, question)
+        if memory_answer is not None:
+            return memory_answer
+        return await self._answer_question(user, question)
+
+    async def _memory_answer(self, user: discord.abc.User, question: str) -> str | None:
+        """小律記憶（M6-11）：改稱呼、問記得什麼、要小律忘掉。都不是就回 None。"""
+        nickname = ritsu_memory.parse_nickname_request(question)
+        recall = ritsu_memory.is_recall_request(question)
+        forget = ritsu_memory.is_forget_request(question)
+        if not (nickname or recall or forget):
+            return None
+        artist = await repositories.find_artist_by_discord_id(user.id)
+        if artist is None or not can_artist_use_ai(artist):
+            return None
+        now = datetime.now(config.get_tenant().tz)
+        if forget:
+            ritsu_memory.clear(artist.page_id)
+            call = ritsu_voice.call_name(artist.name)
+            return (
+                f"🤖 **小律**\n\n好，小律已經把記得的都清掉了。之後會叫你{call}同學，"
+                "想換稱呼再跟小律說「叫我○○」喔。"
+            )
+        if nickname:
+            ritsu_memory.set_nickname(artist, nickname, now)
+            return (
+                f"🤖 **小律**\n\n好，之後小律都叫你{nickname}同學～每天的早報和審核結果也會這樣叫你。"
+                "想換的話再說「叫我○○」就好。"
+            )
+        return f"🤖 **小律**\n\n{ritsu_memory.recall_text(artist.page_id, ritsu_memory.call_name_for(artist))}"
+
+    async def _answer_question(self, user: discord.abc.User, question: str) -> str:
         if not config.get_tenant().meeting_qa_enabled:
             # 會議紀錄查詢封存中：所有問題都走任務；不是查任務的話跟小律聊（M6-08），都不行才說明可以怎麼問。
             return (
@@ -476,12 +694,13 @@ class CourseQACog(commands.Cog):
             for task in selected[:task_query.MAX_LINES]
         ]
         lines = [f"{index}. {text.removeprefix('・')}" for index, text in enumerate(lines, start=1)]
-        who = ritsu_voice.call_name(artist.name)
+        who = ritsu_memory.call_name_for(artist)
         # 小律看這位藝人今天的狀況＋剛剛聊過的，說清單上面那段話（M6-08）；不行就退回 M6-07 那一句
         intro = await ritsu_chat.reply(
             call_name=who, question=question, tasks=tasks, now=now,
             deadline_text=lambda task: ui_text.deadline_text(task, now),
             convo=self._chat.get(user.id, now.date()), state=notification_log.shared(),
+            memory_text=ritsu_memory.memory_text(artist.page_id),
             list_text="\n".join(lines).replace("**", "") if lines else "（沒有任務）",
         )
         from_ai = intro is not None
@@ -523,9 +742,10 @@ class CourseQACog(commands.Cog):
             return None
         now = datetime.now(config.get_tenant().tz)
         text = await ritsu_chat.reply(
-            call_name=ritsu_voice.call_name(artist.name), question=question, tasks=tasks, now=now,
+            call_name=ritsu_memory.call_name_for(artist), question=question, tasks=tasks, now=now,
             deadline_text=lambda task: ui_text.deadline_text(task, now),
             convo=self._chat.get(user.id, now.date()), state=notification_log.shared(),
+            memory_text=ritsu_memory.memory_text(artist.page_id),
         )
         notification_log.persist()
         return f"🤖 **小律**\n\n{text}" if text else None

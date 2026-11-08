@@ -14,7 +14,10 @@ from discord.ext import commands, tasks
 import config
 from cogs import channel_guard, ui_text
 from services.permissions import is_admin
-from services import audit, drive_api, drive_archive, notification_log, ops_notice, repositories, ritsu_voice, task_notifications
+from services import (
+    audit, drive_api, drive_archive, notification_log, ops_notice, repositories, ritsu_memory, ritsu_voice,
+    task_notifications,
+)
 from services.notion_api import NotionAPIError
 
 logger = logging.getLogger(__name__)
@@ -1736,7 +1739,7 @@ class SubmissionsCog(commands.Cog):
                         result=result,
                         feedback=feedback,
                         reviewer=reviewer,
-                        name=ritsu_voice.call_name(artist.name),
+                        name=ritsu_memory.call_name_for(artist),
                         ritsu_line=line,
                         revision_deadline=revision_deadline,
                     )
