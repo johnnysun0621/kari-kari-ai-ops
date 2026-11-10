@@ -95,20 +95,27 @@ def save_drive_upload_state(state: dict, path: Path | None = None) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+UNSUBMITTED_FOLDER_KEEP_DAYS = 30
+
+
 def reusable_drive_upload(
     state: dict, user_id: int, task_page_id: str, now: datetime,
 ) -> dict | None:
-    """同一人、同一任務、入口未過期 → 回傳上次的資料夾（created_at 沿用，才驗證得到先前上傳的檔）。"""
+    """同一人、同一任務、還沒交成功 → 回傳上次的資料夾（created_at 沿用，才驗證得到先前上傳的檔）。
+
+    2026-11-10 起不再看 3 小時的入口期限：藝人上傳 1.5GB 影片、驗證失敗後入口過期，
+    再進來會開新的 ver，檔案全留在舊夾。現在只要還沒交成功（交成功會 forget），
+    30 天內都回到同一個資料夾。
+    """
     tasks_by_id = state.get(str(user_id))
     entry = tasks_by_id.get(task_page_id) if isinstance(tasks_by_id, dict) else None
     if not isinstance(entry, dict) or not entry.get("folder_url") or not entry.get("folder_base_id"):
         return None
     try:
         created_at = datetime.fromisoformat(entry["created_at"])
-        expires_at = datetime.fromisoformat(entry["expires_at"])
     except (KeyError, TypeError, ValueError):
         return None
-    if now > expires_at:
+    if now > created_at + timedelta(days=UNSUBMITTED_FOLDER_KEEP_DAYS):
         return None
     return {
         "created_at": created_at,
@@ -153,10 +160,12 @@ def forget_drive_upload(state: dict, user_id: int, task_page_id: str) -> dict:
 
 
 def _entry_not_expired(entry: dict, now: datetime) -> bool:
+    """還沒交成功的資料夾留 30 天（跟 reusable_drive_upload 同一個期限）。"""
     try:
-        return now <= datetime.fromisoformat(entry["expires_at"])
+        created_at = datetime.fromisoformat(entry["created_at"])
     except (KeyError, TypeError, ValueError):
         return False
+    return now <= created_at + timedelta(days=UNSUBMITTED_FOLDER_KEEP_DAYS)
 
 
 @dataclass
@@ -461,7 +470,7 @@ async def _resolve_submission_target(
 
 def drive_folder_submission_summary(files: list[dict]) -> tuple[str, str, float]:
     """整理 Drive 驗證到的檔案資訊：(檔名摘要, File ID 摘要, 總 MB)。"""
-    names = [str(item.get("name") or "未命名檔案") for item in files]
+    names = [str(item.get("path") or item.get("name") or "未命名檔案") for item in files]
     ids = [str(item["id"]) for item in files if item.get("id")]
     total_bytes = sum(int(item.get("size") or 0) for item in files)
     return "、".join(names), "、".join(ids), round(total_bytes / 1048576, 2)
@@ -1461,7 +1470,10 @@ class SubmissionsCog(commands.Cog):
             return
         if not files:
             await interaction.followup.send(
-                "⚠️ 目前找不到入口建立後新增的檔案，請確認檔案已上傳到指定資料夾後再試。",
+                "⚠️ 小律在指定資料夾裡還沒看到新檔案。\n"
+                "・影片這類大檔案，要等 Drive 顯示上傳完成再按\n"
+                "・檔案放在資料夾裡的子資料夾也可以，小律會往下找\n"
+                "・離開也沒關係，之後回到 `/我的任務` → 提交任務 → 選同一筆，會回到同一個資料夾",
                 ephemeral=True,
             )
             return

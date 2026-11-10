@@ -126,8 +126,8 @@ flowchart LR
 |---|---|---|---|---|
 | `/我的任務` | `tasks_artist.my_tasks` | 不在任務查詢入口；不是藝人 | 讀 Tasks（`Discord 顯示`=true 且直接關聯）＋內頁 | 無 |
 | **📤 提交任務（N）** | `edit_submit_task_list()` | N=0 不顯示 | 讀；可提交＝`是否開放提交` 且狀態 ∈ 尚未開始／進行中／待提交／需修改／已逾期／空白 | 無 |
-| **選擇要提交的任務…** | `start_file_upload_wait()` | — | Drive：找或建任務夾（見「Notion 欄位對照」Drive 段），建下一個 `ver.N`；3 小時內同人同任務沿用（`.state/pending_drive_uploads.json`）。單一藝人任務第一次建夾時寫 Tasks `Google Drive Folder`；多藝人寫內頁「Drive 資料夾索引」 | 無 |
-| **我已上傳到 Drive** | `complete_drive_folder_submission()` | 不是開啟者；找不到入口建立後的新檔（查 3 次，間隔 2 秒） | 舊 Submissions `是否最新版`=false；新增 Submissions（提交名稱、提交藝人、關聯任務、提交來源=Discord、提交類型=檔案、檔案類型、審核狀態=待審核、權限等級=藝人本人、是否最新版、提交時間、Drive URL、Drive File ID、原始檔名、檔案大小 MB、備註）；Tasks `任務狀態`=待審核、`最新提交 URL`=提交頁、清 `修改期限`；Audit「提交任務（Drive 資料夾）」 | `審核人員`（People 身份類型 公司成員／老師且有 ID）私訊 `📥 **新提交待審核（Drive 資料夾）**`＋`REVIEW_HOW_TO`；都沒有則營運內部通知 `🟥 要處理｜…（沒有指定審核人）` |
+| **選擇要提交的任務…** | `start_file_upload_wait()` | — | Drive：找或建任務夾（見「Notion 欄位對照」Drive 段），建下一個 `ver.N`；同人同任務還沒交成功就沿用，最多 `UNSUBMITTED_FOLDER_KEEP_DAYS`（30）天，交成功才 forget（`.state/pending_drive_uploads.json`，2026-11-10 起不再看 3 小時入口期限）。單一藝人任務第一次建夾時寫 Tasks `Google Drive Folder`；多藝人寫內頁「Drive 資料夾索引」 | 無 |
+| **我已上傳到 Drive** | `complete_drive_folder_submission()` | 不是開啟者；找不到入口建立後的新檔（查 3 次，間隔 2 秒；`drive_api.list_recent_files` 往子資料夾找 3 層、最多 200 個，檔名帶路徑） | 舊 Submissions `是否最新版`=false；新增 Submissions（提交名稱、提交藝人、關聯任務、提交來源=Discord、提交類型=檔案、檔案類型、審核狀態=待審核、權限等級=藝人本人、是否最新版、提交時間、Drive URL、Drive File ID、原始檔名、檔案大小 MB、備註）；Tasks `任務狀態`=待審核、`最新提交 URL`=提交頁、清 `修改期限`；Audit「提交任務（Drive 資料夾）」 | `審核人員`（People 身份類型 公司成員／老師且有 ID）私訊 `📥 **新提交待審核（Drive 資料夾）**`＋`REVIEW_HOW_TO`；都沒有則營運內部通知 `🟥 要處理｜…（沒有指定審核人）` |
 | **↩️ 返回任務選擇**／**↩️ 返回我的任務** | — | — | 無（Drive 夾保留） | 無 |
 
 在任務查詢入口貼附件：bot 回「此系統不接收 Discord 附件…」。
@@ -458,7 +458,7 @@ flowchart LR
 | `scheduling_sla.json` | 收集與排課流程的時效紀錄、已發事件 | 排課 SLA |
 | `task_assignment_notifications.json` | 已發過作業開放通知的任務 | 課後作業通知 |
 | `task_dispatch_notifications.json` | 舊的派發紀錄（已不作去重用） | 派發 |
-| `pending_drive_uploads.json` | 3 小時內的交件入口（同人同任務沿用同一個 ver 夾） | 交件 |
+| `pending_drive_uploads.json` | 還沒交成功的交件資料夾（同人同任務沿用同一個 ver 夾，留 30 天，交成功就移除） | 交件 |
 | `bulletin_sync.json` | 布告 page → Discord 訊息、指紋 | 布告欄同步 |
 | `monthly_board.json` | 本月排程訊息 | 本月排程 |
 | `course_qa_threads.json`、`course_qa_memory.json` | 小律討論串、對話記憶 | 小律 |

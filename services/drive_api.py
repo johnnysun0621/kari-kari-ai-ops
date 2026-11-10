@@ -215,31 +215,58 @@ async def ensure_next_version_folder(
         return await asyncio.to_thread(run)
 
 
+MAX_SUBFOLDER_DEPTH = 3
+MAX_LISTED_FILES = 200
+
+
 def _list_recent_files_sync(service, folder_id: str, since: datetime) -> list[dict]:
+    """列出資料夾（含子資料夾）裡指定時間後新增的檔案。
+
+    2026-11-10：藝人在交件資料夾裡自己分了「歌名」子資料夾，原本只看最外層，
+    15 個檔案都在卻回「找不到」。子資料夾往下找 3 層，最多 200 個檔案；
+    子資料夾裡的檔案 `path` 會帶資料夾名稱，例如「ソラニン/IMG_6786.MOV」。
+    """
     # Drive 的上傳／同步時間偶爾會比 Discord 建立入口晚幾秒，或在
     # 移入資料夾時保留原始 createdTime；保留小幅容錯，並用 modifiedTime
     # 覆蓋這類合法上傳情境。
     search_since = since - timedelta(minutes=10)
     since_utc = search_since.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-    query = (
-        f"'{_escape_query_value(folder_id)}' in parents"
-        " and trashed = false"
-        " and mimeType != 'application/vnd.google-apps.folder'"
-        f" and (createdTime >= '{since_utc}' or modifiedTime >= '{since_utc}')"
-    )
-    result = service.files().list(
-        q=query,
-        orderBy="createdTime desc",
-        pageSize=100,
-        fields="files(id,name,size,webViewLink,createdTime,modifiedTime,mimeType)",
-        includeItemsFromAllDrives=True,
-        supportsAllDrives=True,
-    ).execute()
-    return result.get("files", [])
+    found: list[dict] = []
+    queue: list[tuple[str, str, int]] = [(folder_id, "", 0)]
+    while queue and len(found) < MAX_LISTED_FILES:
+        current, prefix, depth = queue.pop(0)
+        query = (
+            f"'{_escape_query_value(current)}' in parents"
+            " and trashed = false"
+            f" and (mimeType = '{_FOLDER_MIME}'"
+            f" or createdTime >= '{since_utc}' or modifiedTime >= '{since_utc}')"
+        )
+        page_token = None
+        while True:
+            result = service.files().list(
+                q=query,
+                orderBy="createdTime desc",
+                pageSize=100,
+                pageToken=page_token,
+                fields="nextPageToken, files(id,name,size,webViewLink,createdTime,modifiedTime,mimeType)",
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
+            ).execute()
+            for item in result.get("files", []):
+                if item.get("mimeType") == _FOLDER_MIME:
+                    if depth < MAX_SUBFOLDER_DEPTH:
+                        queue.append((item["id"], f"{prefix}{item.get('name', '')}/", depth + 1))
+                    continue
+                item["path"] = f"{prefix}{item.get('name', '')}"
+                found.append(item)
+            page_token = result.get("nextPageToken")
+            if not page_token or len(found) >= MAX_LISTED_FILES:
+                break
+    return found[:MAX_LISTED_FILES]
 
 
 async def list_recent_files(folder_id: str, since: datetime) -> list[dict]:
-    """列出資料夾內指定時間後新增的檔案，供藝人上傳驗證。"""
+    """列出資料夾（含子資料夾）內指定時間後新增的檔案，供藝人上傳驗證。"""
     return await asyncio.to_thread(
         lambda: _list_recent_files_sync(_get_service(), folder_id, since)
     )

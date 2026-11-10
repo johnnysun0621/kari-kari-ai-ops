@@ -107,13 +107,34 @@ def test_bot重啟後還找得回資料夾(env):
     assert env.cog.pending_file_submissions[1].folder_url.endswith("/V1")
 
 
-def test_入口過期後才開新版本(env):
+def test_入口過期後_還沒交成功就沿用同一個資料夾(env):
+    """2026-11-10 辰葳：上傳 1.5GB 影片、驗證失敗後入口過期，隔天再進來不能開新的 ver。"""
     enter(env, make_task())
-    env.clock["now"] = NOW + timedelta(minutes=submissions._file_upload_wait_minutes() + 1)
+    env.clock["now"] = NOW + timedelta(days=1)
+
+    again = enter(env, make_task())
+
+    assert env.created == ["ver.1"]
+    assert env.cog.pending_file_submissions[1].created_at == NOW
+    assert "沿用你上次開的資料夾" in again.sent[0]
+
+
+def test_還沒交成功的資料夾留30天_之後才開新版本(env):
+    enter(env, make_task())
+    env.clock["now"] = NOW + timedelta(days=submissions.UNSUBMITTED_FOLDER_KEEP_DAYS, minutes=1)
 
     enter(env, make_task())
 
     assert env.created == ["ver.1", "ver.2"]
+
+
+def test_別人存檔時_不會清掉你還沒交的資料夾(env):
+    enter(env, make_task(), user_id=1)
+    env.clock["now"] = NOW + timedelta(hours=5)
+    enter(env, make_task("B"), user_id=2)
+    enter(env, make_task(), user_id=1)
+
+    assert env.created == ["ver.1", "ver.2"], "第 1 位的 ver.1 要留著，只有第 2 位新開"
 
 
 def test_不同任務各自一個資料夾_切回來仍沿用(env):
