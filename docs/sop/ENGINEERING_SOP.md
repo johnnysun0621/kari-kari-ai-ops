@@ -34,24 +34,34 @@ flowchart LR
     R["RemindersCog.check_loop<br/>30 分"]
     SB["SubmissionsCog.review_poll_loop<br/>1 分"]
     BL["BulletinCog.sync_loop<br/>5 分"]
+    DW["DriveWatchCog.watch_loop<br/>12:00／21:00"]
+    MQ["CourseQACog.memory_loop<br/>03:00／週一 10:00"]
+    AR["AuditRetentionCog<br/>1 小時"]
     UI["指令／按鈕／選單／Modal"]
   end
-  Notion <--> R & SB & BL & UI
+  Notion <--> R & SB & BL & UI & DW
+  AR --> AU
   UI <--> D["Discord"]
-  R --> D
-  UI --> G[("Google Drive")]
+  R & DW & MQ --> D
+  UI & DW --> G[("Google Drive")]
+  AR --> AC[("archive/audit_log/*.csv")]
   Bot --> ST[(".state/*.json")]
 ```
 
-### 三個背景迴圈
+### 背景迴圈
 
 | 迴圈 | 間隔 | 進入點 |
 |---|---|---|
 | `RemindersCog.check_loop` | `REMINDER_INTERVAL_MINUTES`（30） | `cogs/reminders.py` |
 | `SubmissionsCog.review_poll_loop` | 1 分鐘（固定） | `cogs/submissions.py` |
 | `BulletinCog.sync_loop` | `BULLETIN_SYNC_INTERVAL_MINUTES`（5） | `cogs/bulletin.py` |
+| `CourseQACog.memory_loop` | 30 分鐘檢查；`SUMMARY_HOUR`（3）點後整理小律記憶、週一 `WEEKLY_REPORT_HOUR`（10）點後發小律週報（M6-11） | `cogs/course_qa.py` |
+| `DriveWatchCog.watch_loop` | 30 分鐘檢查；`SCAN_HOURS`（12、21）點後各掃一次藝人 Drive 專區（M4-23） | `cogs/drive_watch.py` |
+| `AuditRetentionCog.retention_loop` | 1 小時；Audit Log 超過 `AUDIT_RETENTION_DAYS`（90）天存本機 CSV 後移到垃圾桶（M7-09） | `cogs/audit_retention.py` |
 
-`check_loop` 每輪依序執行：月度時間池 → 排課 SLA → 批次重送 → 任務派發 → 課後作業通知 → 未確認重推（早報關閉時才跑）→ Drive 健康檢查 → 藝人早報 → 營運早報 → 每日催辦 → 課後提醒老師 → 修改期限逾時（營運早報關閉時才跑）→ 截止提醒與逾期 → 發文待確認（營運早報關閉時才跑）。
+後三個各自一個 loop、自己吃例外，不會卡住 `check_loop` 的早報和派發。
+
+`check_loop` 每輪依序執行：月度時間池 → 排課 SLA → 批次重送 → 任務派發 → 課後作業通知 → 未確認重推（早報關閉時才跑）→ 清除任務已刪除的提交（M4-20，自己吃例外）→ Drive 健康檢查 → 藝人早報 → 營運早報 → 每日催辦 → 課後提醒老師 → 修改期限逾時（營運早報關閉時才跑）→ 截止提醒與逾期 → 發文待確認（營運早報關閉時才跑）。
 
 - **全部步驟共用一個 try/except**：前面一步丟例外，後面的步驟這一輪都不跑，等下一輪
 - **「幾點」是「該時間之後的第一輪」**，沒有 cron。09:00 的早報實際在 09:00～09:29 發；bot 15:00 啟動就 15:00 發
@@ -386,13 +396,14 @@ flowchart LR
 
 | 欄位 | 誰寫 | 用途 |
 |---|---|---|
-| 提交名稱、提交藝人、關聯任務、提交時間 | bot | 交件紀錄（名稱格式 `藝人｜任務｜MM/DD HH:MM`） |
+| 提交名稱、提交藝人、關聯任務、提交時間 | bot | 交件紀錄（名稱格式 `藝人｜任務｜MM/DD HH:MM`）。一般交件＝按「我已上傳到 Drive」的時間；Drive 補登＝藝人最後上傳的時間（M4-23）。兩條路都經 `submissions.record_folder_submission` |
+| 關聯任務被清空 | Notion（刪任務時） | 30 分鐘內整筆移到垃圾桶（M4-20）；待審清單、提醒、早報都不列 |
 | 提交來源（Discord）、提交類型（檔案）、檔案類型、權限等級（藝人本人） | bot | 標記；權限等級不做任何過濾 |
 | 是否最新版 | bot | 新交件時舊的改 false |
 | 審核狀態 | bot；審核人 | 待審核 → 通過／需修改／退回 |
 | 審核回饋、審核者、審核來源 | bot；審核人 | Notion 審核要至少一個有值才通知 |
 | 審核通知時間 | bot | 已通知藝人 |
-| Drive URL、Drive File ID、原始檔名、檔案大小 MB、備註 | bot | 檔案資訊 |
+| Drive URL、Drive File ID、原始檔名、檔案大小 MB、備註 | bot | 檔案資訊。原始檔名帶子資料夾路徑（M4-22）；Drive 補登的備註開頭寫原本的位置（M4-23） |
 
 ### 其他資料庫
 
@@ -515,6 +526,9 @@ flowchart LR
 | 「任務通知送不出去」只在記憶體去重 | bot 重開後會再發一次 |
 | 審核結果私訊失敗也記成已通知 | 不會重試，藝人可能沒收到 |
 | 時間收集的草稿只存在記憶體 | bot 重開，藝人還沒送出的草稿會消失 |
+| Drive 散檔掃描靠「擁有者不是小律」判斷是藝人建的 | 營運用自己的帳號在藝人專區建的資料夾，也會被當成藝人上傳、私訊藝人（藝人可按「不是作業，不用交」）；專區外的舊共用資料夾掃不到；沒填 Drive 專區的藝人掃不到 |
+| 視窗傳檔（批改檔）是 Discord 較新的功能 | 手機版還沒實測；不能用時改走「檔案太大，用 Drive」 |
+| 小律記憶、Drive 散檔、交件資料夾紀錄都只在本機 `.state/` | 那台電腦壞了就不見；記憶會再累積，散檔下一輪會重新問，交件資料夾要重開 |
 | 審核後的「附批改檔」按鈕只在記憶體 | bot 重開或超過 3 小時後，這則只有本人看得到的訊息按了沒反應；審核結果不受影響，批改檔要手動補到 `審核回饋` |
 | `/審核提交` 清單不依審核人員過濾 | 有身分組的人都看得到全部待審 |
 | 營運早報的「看某一筆的詳細」會改同一則訊息 | 頻道裡所有人看到的內容一起變 |
