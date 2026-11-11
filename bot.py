@@ -12,6 +12,7 @@ from cogs.briefing import BriefingAckButton, BriefingDetailSelect
 from cogs.ops_actions import OpsClaimButton, OpsDoneButton
 from cogs.ops_briefing import OpsDetailSelect
 from cogs.scheduling_artist import PoolAvailabilityButton
+from cogs.drive_watch import StrayIgnoreButton, StrayTaskSelect
 from cogs.submissions import ReviewFeedbackDriveLinkButton
 from cogs.tasks_artist import (
     BundleConcernSelect, BundleDetailSelect, BundleReceiveButton, ReminderAckButton, TaskConcernButton, TaskReceiptButton,
@@ -48,6 +49,7 @@ EXTENSIONS = [
     "cogs.server_setup",
     "cogs.reminders",
     "cogs.audit_retention",
+    "cogs.drive_watch",
 ]
 
 
@@ -86,6 +88,7 @@ class KariKariBot(commands.Bot):
         self.add_dynamic_items(OpsClaimButton, OpsDoneButton)  # 控方「我來處理／已處理」（M3-25）
         self.add_dynamic_items(OpsDetailSelect)  # 營運早報「看某一筆的詳細」（M3-25）
         self.add_dynamic_items(ReviewFeedbackDriveLinkButton)  # 私訊裡的「貼 Drive 連結補回饋」（M4-21）
+        self.add_dynamic_items(StrayTaskSelect, StrayIgnoreButton)  # Drive 直接上傳的補登私訊（M4-23）
         if config.GUILD_ID:
             guild = discord.Object(id=config.GUILD_ID)
             self.tree.copy_global_to(guild=guild)

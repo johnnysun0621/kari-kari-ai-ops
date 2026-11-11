@@ -265,6 +265,43 @@ def _list_recent_files_sync(service, folder_id: str, since: datetime) -> list[di
     return found[:MAX_LISTED_FILES]
 
 
+def _move_item_sync(service, item_id: str, new_parent_id: str) -> None:
+    current = service.files().get(fileId=item_id, fields="parents", supportsAllDrives=True).execute()
+    old_parents = ",".join(current.get("parents") or [])
+    service.files().update(
+        fileId=item_id, addParents=new_parent_id, removeParents=old_parents,
+        fields="id,parents", supportsAllDrives=True,
+    ).execute()
+
+
+async def move_item(item_id: str, new_parent_id: str) -> None:
+    """把檔案或資料夾搬到另一個資料夾（M4-23 補登）。
+
+    藝人擁有的檔案也搬得動、搬完擁有者不變（2026-11-11 在 Johnny（測試）專區實測）。
+    """
+    await asyncio.to_thread(lambda: _move_item_sync(_get_service(), item_id, new_parent_id))
+
+
+def _get_files_sync(service, file_ids: list[str]) -> list[dict]:
+    files = []
+    for file_id in file_ids:
+        try:
+            item = service.files().get(
+                fileId=file_id, fields="id,name,size,webViewLink,createdTime,modifiedTime,mimeType",
+                supportsAllDrives=True,
+            ).execute()
+        except Exception:
+            logger.warning("讀不到 Drive 檔案：%s", file_id)
+            continue
+        item["path"] = item.get("name", "")
+        files.append(item)
+    return files
+
+
+async def get_files(file_ids: list[str]) -> list[dict]:
+    return await asyncio.to_thread(lambda: _get_files_sync(_get_service(), file_ids))
+
+
 async def list_recent_files(folder_id: str, since: datetime) -> list[dict]:
     """列出資料夾（含子資料夾）內指定時間後新增的檔案，供藝人上傳驗證。"""
     return await asyncio.to_thread(

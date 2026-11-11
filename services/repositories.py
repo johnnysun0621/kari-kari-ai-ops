@@ -2087,11 +2087,13 @@ async def create_submission(
     drive_file_id: str = "",
     original_filename: str = "",
     file_size_mb: float | None = None,
+    now: datetime | None = None,
 ) -> dict:
+    """now：提交時間（預設現在）；小律補登時用藝人實際上傳的時間（M4-23）。"""
     props = _build_submission_props(
         task, artist, submit_type=submit_type, link_url=link_url, content=content,
         drive_file_id=drive_file_id, original_filename=original_filename,
-        file_size_mb=file_size_mb,
+        file_size_mb=file_size_mb, now=now,
     )
     return await notion_api.create_page(config.DS_SUBMISSIONS, props)
 

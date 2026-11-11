@@ -9,7 +9,10 @@ import discord
 
 import config
 from cogs import channel_guard, ui_text
-from services import daily_nag, notification_log, ops_briefing, repositories, task_notifications, task_query, time_collection
+from services import (
+    daily_nag, notification_log, ops_briefing, repositories, stray_uploads, task_notifications, task_query,
+    time_collection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +88,10 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
 
     b.unread_artists = ops_briefing.unread_for(state, _day_code(now.date() - timedelta(days=1)))
     b.teacher_notes = ops_briefing.teacher_notes(state)
+    try:
+        b.drive_strays = stray_uploads.ops_lines(tenant.tz)  # M4-23
+    except Exception:
+        logger.exception("讀取 Drive 散檔狀態失敗")
 
     for collection in time_collection.active_collections():
         try:

@@ -734,6 +734,67 @@ class ReviewFeedbackDriveLinkModal(discord.ui.Modal):
         )
 
 
+async def record_folder_submission(
+    client,
+    task: repositories.TaskItem,
+    artist: repositories.Artist,
+    files: list[dict],
+    folder_url: str,
+    *,
+    discord_user_id: int,
+    submitted_at: datetime | None = None,
+    note: str = "",
+    audit_title: str = "提交任務（Drive 資料夾）",
+    reviewer_title: str = "📥 **新提交待審核（Drive 資料夾）**",
+) -> dict:
+    """把一個 Drive 資料夾登記成交件：一般交件和小律補登（M4-23）都走這裡，Notion 寫的欄位才會一模一樣。
+
+    Notion 寫入失敗會丟例外（呼叫端告訴藝人）；之後的 Audit、通知審核人失敗不影響交件。
+    submitted_at：提交時間；補登時用藝人實際上傳的時間（Johnny 2026-11-11 定）。
+    """
+    names, file_ids, total_mb = drive_folder_submission_summary(files)
+    file_links = "、".join(str(item["webViewLink"]) for item in files if item.get("webViewLink"))
+    content = f"Drive 資料夾驗證完成，共 {len(files)} 個檔案：{names}"
+    if note:
+        content = f"{note}\n{content}"
+    if file_links:
+        content += f"\n檔案連結：{file_links}"
+    await repositories.mark_previous_submissions_not_latest(task.page_id)
+    submission_page = await repositories.create_submission(
+        task,
+        artist,
+        submit_type="檔案",
+        link_url=folder_url,
+        content=content,
+        drive_file_id=file_ids,
+        original_filename=names,
+        file_size_mb=total_mb,
+        now=submitted_at,
+    )
+    submission_url = submission_page.get("url", "")
+    await repositories.set_task_under_review(task.page_id, submission_url)
+    try:
+        save_drive_upload_state(forget_drive_upload(load_drive_upload_state(), discord_user_id, task.page_id))
+    except OSError:
+        logger.exception("清除 Drive 上傳資料夾紀錄失敗")
+    await audit.log_event(
+        event_name=f"{audit_title}｜{artist.name}｜{task.name}",
+        action_type="上傳",
+        operator=artist.name,
+        discord_user_id=str(discord_user_id),
+        target_db="Submissions & File Index",
+        target_url=submission_url,
+        after=f"{len(files)} 個檔案｜{total_mb}MB｜{folder_url}",
+    )
+    await notify_submission_reviewers(
+        client, task,
+        f"{reviewer_title}\n"
+        f"任務：{task.name}｜{artist.name}｜{len(files)} 個檔案（{total_mb}MB）\n"
+        f"Drive：{folder_url}\nNotion：{submission_url}",
+    )
+    return {"url": submission_url, "names": names, "count": len(files), "total_mb": total_mb}
+
+
 async def _archive_file_submission_batch(
     *,
     client: discord.Client,
@@ -1477,59 +1538,19 @@ class SubmissionsCog(commands.Cog):
                 ephemeral=True,
             )
             return
-        names, file_ids, total_mb = drive_folder_submission_summary(files)
-        file_links = "、".join(
-            str(item["webViewLink"])
-            for item in files
-            if item.get("webViewLink")
-        )
-        content = f"Drive 資料夾驗證完成，共 {len(files)} 個檔案：{names}"
-        if file_links:
-            content += f"\n檔案連結：{file_links}"
         try:
-            await repositories.mark_previous_submissions_not_latest(pending.task.page_id)
-            submission_page = await repositories.create_submission(
-                pending.task,
-                pending.artist,
-                submit_type="檔案",
-                link_url=pending.folder_url,
-                content=content,
-                drive_file_id=file_ids,
-                original_filename=names,
-                file_size_mb=total_mb,
-            )
-            await repositories.set_task_under_review(
-                pending.task.page_id, submission_page.get("url", "")
+            recorded = await record_folder_submission(
+                interaction.client, pending.task, pending.artist, files, pending.folder_url,
+                discord_user_id=interaction.user.id,
             )
         except Exception:
             logger.exception("Drive 資料夾提交寫入 Notion 失敗")
             await interaction.followup.send("❌ 小律有看到你的檔案，但記到 Notion 時失敗了，請聯絡公司幫忙確認。", ephemeral=True)
             return
         self.pending_file_submissions.pop(interaction.user.id, None)
-        try:
-            save_drive_upload_state(
-                forget_drive_upload(load_drive_upload_state(), interaction.user.id, pending.task.page_id)
-            )
-        except OSError:
-            logger.exception("清除 Drive 上傳資料夾紀錄失敗")
-        await audit.log_event(
-            event_name=f"提交任務（Drive 資料夾）｜{pending.artist.name}｜{pending.task.name}",
-            action_type="上傳",
-            operator=pending.artist.name,
-            discord_user_id=str(interaction.user.id),
-            target_db="Submissions & File Index",
-            target_url=submission_page.get("url", ""),
-            after=f"{len(files)} 個檔案｜{total_mb}MB｜{pending.folder_url}",
-        )
-        await notify_submission_reviewers(
-            interaction.client, pending.task,
-            f"📥 **新提交待審核（Drive 資料夾）**\n"
-            f"任務：{pending.task.name}｜{pending.artist.name}｜{len(files)} 個檔案（{total_mb}MB）\n"
-            f"Drive：{pending.folder_url}\nNotion：{submission_page.get('url', '')}",
-        )
         await interaction.followup.send(
             f"✅ 已驗證 Drive 資料夾並提交：**{pending.task.name}**\n"
-            f"檔案數：{len(files)}｜{names}\n"
+            f"檔案數：{len(files)}｜{recorded['names']}\n"
             f"任務狀態已轉「待審核」。",
             ephemeral=True,
         )

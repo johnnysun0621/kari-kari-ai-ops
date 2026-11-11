@@ -58,12 +58,14 @@ class OpsBriefing:
     teacher_notes: list[str] = field(default_factory=list)
     pools: list[str] = field(default_factory=list)
     publish_waiting: list[OpsLine] = field(default_factory=list)
+    drive_strays: list[str] = field(default_factory=list)  # M4-23：藝人直接傳到 Drive、還沒登記交件
     review_after_hours: float = 24  # 📮 那一區標題的時數，照 REVIEW_REMINDER_AFTER_HOURS（M3-31）
 
     def is_empty(self) -> bool:
         return not any([
             self.new_overdue, self.awaiting_confirmation, self.still_overdue_counts, self.revision_passed,
             self.review_unassigned, self.unreceived, self.unread_artists, self.teacher_notes, self.pools, self.publish_waiting,
+            self.drive_strays,
         ])
 
     def option_lines(self) -> list[OpsLine]:
@@ -136,6 +138,8 @@ def _briefing_text(day: date, b: OpsBriefing) -> str:
         lines += _section(f"📮 **待審核超過 {hours} 小時，沒人負責**", [line.linked for line in b.review_unassigned])
     if b.unreceived:
         lines += _section(f"📌 **藝人還沒按收到超過 {UNRECEIVED_DAYS} 天**", [line.linked for line in b.unreceived])
+    if b.drive_strays:
+        lines += _section("📂 **直接傳到 Drive、還沒登記交件**", b.drive_strays)
     if b.unread_artists:
         lines += ["", f"👀 **昨天的早報沒看**：{'、'.join(b.unread_artists)}"]
     if b.teacher_notes:

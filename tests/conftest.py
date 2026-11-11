@@ -37,7 +37,7 @@ def no_real_llm(monkeypatch, request):
 def no_real_state_files(tmp_path, monkeypatch):
     """測試絕不碰 bot 正在用的 .state：派發會呼叫 scheduling_sla.mark_completed（M1-11），
     通知紀錄也一律寫到暫存資料夾。各測試自己的 fixture 可以再覆蓋。"""
-    from services import notification_log, ritsu_memory, scheduling_sla
+    from services import notification_log, ritsu_memory, scheduling_sla, stray_uploads
 
     monkeypatch.setattr(notification_log, "STATE_PATH", tmp_path / "task_notification_log.json")
     notification_log.reset_for_tests()
@@ -45,7 +45,10 @@ def no_real_state_files(tmp_path, monkeypatch):
     scheduling_sla.reset_for_tests()
     monkeypatch.setattr(ritsu_memory, "STATE_PATH", tmp_path / "ritsu_memory.json")  # 小律記憶（M6-11）
     ritsu_memory.reset_for_tests()
+    monkeypatch.setattr(stray_uploads, "STATE_PATH", tmp_path / "stray_uploads.json")  # Drive 散檔（M4-23）
+    stray_uploads.reset_for_tests()
     yield
+    stray_uploads.reset_for_tests()
     notification_log.reset_for_tests()
     scheduling_sla.reset_for_tests()
     ritsu_memory.reset_for_tests()
