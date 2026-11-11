@@ -3,6 +3,7 @@
 用法：
     .venv/bin/python scripts/check_drive.py
 """
+import io
 import os
 import sys
 from pathlib import Path
@@ -15,7 +16,20 @@ TOKEN_PATH = Path(os.getenv("GOOGLE_OAUTH_TOKEN_PATH", "credentials/token.json")
 ROOT_ID = os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", "")
 
 
+def _utf8_stdout() -> None:
+    """Keep the Windows health-check usable from the default CP950 console."""
+    encoding = (sys.stdout.encoding or "").lower().replace("-", "")
+    if encoding != "utf8" and hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer,
+            encoding="utf-8",
+            errors="replace",
+            line_buffering=True,
+        )
+
+
 def main() -> int:
+    _utf8_stdout()
     if not TOKEN_PATH.exists():
         print(f"❌ 找不到 token：{TOKEN_PATH}——先跑 scripts/authorize_drive.py")
         return 1
