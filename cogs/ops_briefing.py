@@ -43,6 +43,15 @@ async def collect(now: datetime, state: dict) -> ops_briefing.OpsBriefing:
             for name in _names(task, artist_map) or ["（未關聯藝人）"]:
                 b.still_overdue_counts[name] = b.still_overdue_counts.get(name, 0) + 1
 
+    closed_cutoff = now + timedelta(days=ops_briefing.SUBMISSION_CLOSED_DAYS)
+    for task in tasks:
+        # M4-24：看起來要交作業、提交期限 3 天內（或已經過了），卻沒勾「是否開放提交」
+        if task.discord_visible and repositories.awaiting_submission_open(task) \
+                and task.submission_deadline <= closed_cutoff:
+            b.submission_closed.append(ops_briefing.task_line(
+                task.page_id, _names(task, artist_map), task.name,
+                f"提交期限 {task.submission_deadline:%m/%d}", "還沒開放提交", task.url))
+
     for task in tasks:
         if repositories.task_awaits_ops_confirmation(task, now):
             b.awaiting_confirmation.append(ops_briefing.task_line(

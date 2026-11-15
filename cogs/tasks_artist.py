@@ -183,10 +183,20 @@ async def _send_staff_dm(bot, person, tasks: list[repositories.TaskItem], artist
     return True
 
 
+NOT_OPEN_MARK = "⏳ 還沒開放交件"
+HOMEWORK_REMINDER = "作業還沒交，要交請用 `/我的任務` → 提交任務"
+
+
 def received_line(task: repositories.TaskItem, received_at: datetime) -> str:
-    """派發卡按了「收到任務」後收成的那一行。"""
+    """派發卡按了「收到任務」後收成的那一行。
+
+    2026-11-15 辰葳看到「✅ 已收到」以為作業交過了，所以寫明是「確認收到任務」，要交作業的再提醒一句。
+    """
     now = datetime.now(config.get_tenant().tz)
-    return f"✅ 任務收好了，小律記下來囉｜{task.name}（{ui_text.deadline_text(task, now)}）｜{received_at:%m/%d %H:%M}"
+    line = f"✅ 已確認收到任務｜{task.name}（{ui_text.deadline_text(task, now)}）｜{received_at:%m/%d %H:%M}"
+    if task.open_for_submission or repositories.expects_submission(task):
+        line += f"\n　　{HOMEWORK_REMINDER}"
+    return line
 
 
 async def mark_previous_notifications_received(
@@ -820,6 +830,9 @@ def task_bucket_sections(
                 names = [name_of_artist.get(pid, "") for pid in task.artist_page_ids]
                 names = [n for n in names if n]
                 extra = "、".join(names) or "（未關聯藝人）"
+            if repositories.awaiting_submission_open(task):
+                # M4-24：要交的作業還沒開放，藝人才不會以為交過了、或到處找交件按鈕
+                extra = f"{extra}｜{NOT_OPEN_MARK}" if extra else NOT_OPEN_MARK
             task_lines.append(_task_line(task, now, extra))
             # 控方端才顯示提醒確認：誰按了、誰沒反應，不用開 Notion。藝人端不顯示。
             if name_of_artist is not None:

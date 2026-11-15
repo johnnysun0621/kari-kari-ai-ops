@@ -691,6 +691,7 @@ class CourseQACog(commands.Cog):
         lines = [
             f"・**{strip_notion_links(task.name)}**｜{task.task_type or '任務'}｜"
             f"{ui_text.deadline_text(task, now)}｜{task.status or '未填狀態'}"
+            + ("｜⏳ 還沒開放交件" if repositories.awaiting_submission_open(task) else "")  # M4-24
             for task in selected[:task_query.MAX_LINES]
         ]
         lines = [f"{index}. {text.removeprefix('・')}" for index, text in enumerate(lines, start=1)]

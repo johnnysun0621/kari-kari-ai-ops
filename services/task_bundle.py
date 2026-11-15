@@ -126,13 +126,18 @@ def done_text(received: list[TaskItem], reported: list[TaskItem], at: datetime, 
     """合併訊息每一筆都處理完了（收到或回報問題）：收成一行＋清單（M3-27／M3-28）。"""
     head = []
     if received:
-        head.append(f"✅ {len(received)} 筆任務收好了，小律記下來囉")
+        head.append(f"✅ 已確認收到 {len(received)} 筆任務，小律記下來囉")
     if reported:
         head.append(f"⚠️ {len(reported)} 筆小律已轉告公司")
     lines = ["　".join(head) + f"｜{at:%m/%d %H:%M}"]
     lines += [f"・{strip_notion_links(task.name)}（{deadline_text(task)}）" for task in received]
     lines += [reported_item_line(task) for task in reported]
     if received:
+        from services import repositories
+
+        if any(task.open_for_submission or repositories.expects_submission(task) for task in received):
+            # M4-24：確認收到不等於交了作業（2026-11-15 辰葳誤會）
+            lines.append("裡面有作業的，記得另外交：`/我的任務` → 提交任務。")
         lines.append("收好之後才發現哪一筆不行，一樣從下面「⚠️ 哪一筆不行？」告訴小律。")
     return _limit("\n".join(lines))
 

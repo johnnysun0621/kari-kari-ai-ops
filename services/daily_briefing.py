@@ -112,7 +112,7 @@ def handled_line(received: int, reported: int, name: str = "") -> str:
     parts = []
     if received:
         thanks = f"，謝謝{name}同學！" if name else "，謝謝你！"
-        parts.append(f"✅ {received} 筆任務收好了{thanks}")
+        parts.append(f"✅ 已確認收到 {received} 筆任務{thanks}")
     if reported:
         parts.append(f"⚠️ {reported} 筆小律已轉告公司")
     return "　".join(parts)

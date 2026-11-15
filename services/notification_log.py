@@ -161,4 +161,4 @@ def prune(state: dict, now: datetime, retention_days: int = RETENTION_DAYS) -> N
 
 
 def received_suffix(received_at: datetime) -> str:
-    return f"\n\n✅ 已收到（{received_at:%m/%d %H:%M}）"
+    return f"\n\n✅ 已確認收到任務（{received_at:%m/%d %H:%M}）"

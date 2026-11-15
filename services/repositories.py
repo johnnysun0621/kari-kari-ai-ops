@@ -2029,6 +2029,24 @@ async def task_project_name(task: TaskItem) -> str | None:
 SUBMITTABLE_TASK_STATUSES = {"尚未開始", "進行中", "待提交", "需修改", "已逾期"}
 
 
+# M4-24：「看起來要交作業」的任務。只看這兩種專案類型或名稱有「作業」：
+# 2026-11-15 實撈，有提交期限但沒開放提交的 16 筆裡，10 筆是商業合作，本來就不在小律交件，全列會變雜訊。
+HOMEWORK_PROJECT_TYPES = ("課程培訓", "週練習")
+_WAITING_OPEN_STATUSES = {None, "", "尚未開始", "進行中", "待提交", "已逾期"}
+
+
+def expects_submission(task: TaskItem) -> bool:
+    """填了提交期限，而且是課程培訓／週練習，或任務名稱有「作業」。"""
+    if not task.submission_deadline:
+        return False
+    return "作業" in (task.name or "") or any(t in HOMEWORK_PROJECT_TYPES for t in (task.project_types or []))
+
+
+def awaiting_submission_open(task: TaskItem) -> bool:
+    """看起來要交作業，卻還沒勾「是否開放提交」（2026-11-15：拆成一人一筆時漏勾，三位藝人交不了）。"""
+    return expects_submission(task) and not task.open_for_submission and task.status in _WAITING_OPEN_STATUSES
+
+
 def is_task_submittable(task: TaskItem) -> bool:
     """可提交＝任務開放提交且還沒進入審核/結案狀態（待審核可重交由審核流退回）。"""
     if not task.open_for_submission:

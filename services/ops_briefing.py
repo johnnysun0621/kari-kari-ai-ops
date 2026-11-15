@@ -27,6 +27,8 @@ SECTION_LINES = 8  # 每區最多列幾筆，其餘寫「另有 N 筆」
 MAX_OPTIONS = 25
 UNRECEIVED_DAYS = 3
 AWAITING_HINT = "做完了就結案；沒做可以延期限或改成「已逾期」。"
+SUBMISSION_CLOSED_DAYS = 3  # M4-24：提交期限前幾天開始列
+SUBMISSION_CLOSED_HINT = "到 Notion 勾「是否開放提交」，藝人才交得了；不用在小律交件的，可以不理。"
 
 
 @dataclass
@@ -59,18 +61,20 @@ class OpsBriefing:
     pools: list[str] = field(default_factory=list)
     publish_waiting: list[OpsLine] = field(default_factory=list)
     drive_strays: list[str] = field(default_factory=list)  # M4-23：藝人直接傳到 Drive、還沒登記交件
+    submission_closed: list[OpsLine] = field(default_factory=list)  # M4-24：快到交件期限卻沒開放提交
     review_after_hours: float = 24  # 📮 那一區標題的時數，照 REVIEW_REMINDER_AFTER_HOURS（M3-31）
 
     def is_empty(self) -> bool:
         return not any([
             self.new_overdue, self.awaiting_confirmation, self.still_overdue_counts, self.revision_passed,
             self.review_unassigned, self.unreceived, self.unread_artists, self.teacher_notes, self.pools, self.publish_waiting,
-            self.drive_strays,
+            self.drive_strays, self.submission_closed,
         ])
 
     def option_lines(self) -> list[OpsLine]:
         seen, picked = set(), []
-        for line in [*self.awaiting_confirmation, *self.new_overdue, *self.revision_passed, *self.review_unassigned, *self.unreceived, *self.publish_waiting]:
+        for line in [*self.submission_closed, *self.awaiting_confirmation, *self.new_overdue, *self.revision_passed,
+                     *self.review_unassigned, *self.unreceived, *self.publish_waiting]:
             if line.task_id in seen:
                 continue
             seen.add(line.task_id)
@@ -120,6 +124,10 @@ def _briefing_text(day: date, b: OpsBriefing) -> str:
     if b.is_empty():
         lines.append("✅ 今天沒有需要注意的事。")
         return "\n".join(lines)
+    if b.submission_closed:
+        section = _section("📤 **快到交件期限，還沒開放提交**", [line.linked for line in b.submission_closed])
+        section.insert(2, SUBMISSION_CLOSED_HINT)
+        lines += section
     if b.awaiting_confirmation:
         section = _section("⏳ **已過截止，等你確認結案**", [line.linked for line in b.awaiting_confirmation])
         section.insert(2, AWAITING_HINT)  # 標題下面一行說明怎麼處理

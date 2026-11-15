@@ -342,6 +342,7 @@ flowchart LR
 
 | 區塊 | 條件 |
 |---|---|
+| 📤 快到交件期限，還沒開放提交 | `Discord 顯示`、`repositories.awaiting_submission_open`（有 `提交期限`；專案類型 ∈ `HOMEWORK_PROJECT_TYPES`（課程培訓、週練習）或名稱含「作業」；沒勾 `是否開放提交`；狀態 尚未開始／進行中／待提交／已逾期／空白），且 `提交期限` ≤ now＋`SUBMISSION_CLOSED_DAYS`（3）（M4-24） |
 | ⏳ 已過截止，等你確認結案 | 同藝人早報 ⏳ |
 | 🔴 新逾期 | 已逾期且在 `ops_new_overdue` |
 | 🔴 仍逾期 | 其他已逾期，依藝人計數 |
@@ -373,7 +374,7 @@ flowchart LR
 | 提交期限 | date | 營運 | 第一輪交件期限 |
 | 修改期限 | date | bot（審核）；營運 | 需修改時的期限；Notion 審核沒填補 3 天 |
 | 提前交件 | checkbox | 營運 | 追蹤期限＝提交期限或截止日−5 |
-| 是否開放提交 | checkbox | 營運 | 作業開放通知、可提交、是否自動逾期 |
+| 是否開放提交 | checkbox | 營運 | 作業開放通知、可提交、是否自動逾期。看起來要交作業卻沒勾的（`awaiting_submission_open`），`/我的任務`、小律清單標「⏳ 還沒開放交件」，營運早報 📤 預警（M4-24） |
 | Discord 顯示 | checkbox | 營運；bot（回報問題時取消） | 派發開關（舊名 `Discord 可見` 也相容） |
 | 重送通知 | checkbox | 營運；bot（取消勾選） | 批次重送 |
 | 提醒規則 | multi_select | 營運 | 額外提醒階段：3 天前、1 天前、當天、逾期 |

@@ -713,7 +713,7 @@ def test_全部收到後_同一則換成今天的提醒_才出現我都看到了
     assert message.deleted and message.edits == []
     new = message.channel.sent[-1]
     assert "今天要注意的事" in new.content and "任務late" in new.content
-    assert "✅ 1 筆任務收好了，謝謝方晨同學！" in new.content
+    assert "✅ 已確認收到 1 筆任務，謝謝方晨同學！" in new.content
     assert _ids(new.view) == ["briefing_detail", "briefing_ack"]
     assert notification_log.shared()["briefings"]["1"]["message_id"] == 2001, "之後按我都看到了、隔天刪除都找得到新的那則"
 
@@ -807,7 +807,7 @@ def test_沒有提醒只有還沒收的_收完就收合不用再按(send_env, ca
     interaction = SimpleNamespace(user=SimpleNamespace(id=1), client=card_env, message=message,
                                   response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=None))
     asyncio.run(tasks_artist.BundleReceiveButton(bundle_id).callback(interaction))
-    assert message.edits[-1]["view"] is None and "✅ 1 筆任務收好了" in message.edits[-1]["content"]
+    assert message.edits[-1]["view"] is None and "✅ 已確認收到 1 筆任務" in message.edits[-1]["content"]
     assert notification_log.shared()["briefings"]["1"].get("acked_at"), "沒有提醒可看，不算沒看早報"
 
 
