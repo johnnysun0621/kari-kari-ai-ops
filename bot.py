@@ -18,7 +18,7 @@ from cogs.tasks_artist import (
     BundleConcernSelect, BundleDetailSelect, BundleReceiveButton, ReminderAckButton, TaskConcernButton, TaskReceiptButton,
 )
 from cogs import channel_guard
-from services import audit, notion_api, repositories, schema_check
+from services import audit, interaction_log, notion_api, repositories, schema_check
 from web import server as teacher_web
 
 # 排程以 pythonw 執行，沒有主控台；不寫檔的話 logger.exception 全部消失。
@@ -97,6 +97,10 @@ class KariKariBot(commands.Bot):
         else:
             await self.tree.sync()
             logger.info("Slash commands 已全域同步（最多等 1 小時生效）")
+
+    async def on_interaction(self, interaction: discord.Interaction):
+        # 每一次點擊／送出都記一行（M3-32）：log 有＝bot 收到了；沒有＝沒送到 bot（手機或網路那端）
+        interaction_log.log(self, interaction)
 
     async def on_ready(self):
         logger.info("已登入：%s (%s)", self.user, self.user.id)

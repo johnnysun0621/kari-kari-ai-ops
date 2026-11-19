@@ -30,6 +30,32 @@ KEEP_STATUS_ON_CONCERN = {"已逾期"}
 CONCERN_BLOCKED_REPLY = "這筆你已經交了（或正在修改），小律沒辦法用按鈕幫你轉達。有問題請直接找公司喔。"
 ALREADY_REPORTED_REPLY = "這筆你已經跟小律說過了，公司調整好會再通知你。"
 
+# M3-32（2026-11-19）：「這筆不行」改成先點選原因、補充可留空。方晨在日本打原因打了 3 分半，
+# 送出時手機連線斷了，打的字全沒了；點選幾秒就能送出，斷線的機會小很多。
+# (選項, 說明)；說明顯示在選單裡，順序就是畫面順序。
+CONCERN_REASONS: tuple[tuple[str, str], ...] = (
+    ("時間撞到", "那天有別的安排"),
+    ("想延期", "在下面寫想延到哪天"),
+    ("內容看不懂", "不清楚要做什麼"),
+    ("其他", "在下面寫一下原因"),
+)
+CONCERN_REASON_LABEL = "哪裡不行？"
+CONCERN_REASON_PLACEHOLDER = "選一個最接近的"
+CONCERN_DETAIL_LABEL = "想補充的話（可以不填）"
+CONCERN_DETAIL_PLACEHOLDER = "例如：想延到 11/25、那天有課"
+CONCERN_NO_DETAIL = "（藝人沒有補充）"
+
+
+def concern_reason_text(choice: str, detail: str) -> str:
+    """選的原因＋補充，組成給公司看的一行。沒選（舊視窗、測試）就只用補充；兩個都空回空字串。"""
+    choice = (choice or "").strip()
+    detail = (detail or "").strip()
+    if choice and detail:
+        return f"{choice}：{detail}"
+    if choice:
+        return f"{choice}{CONCERN_NO_DETAIL}" if choice == "其他" else choice
+    return detail
+
 _TITLES = {KIND_DISPATCH: "📌 **任務通知**", KIND_ASSIGNMENT: "📚 **課後作業通知**"}
 _FOOTERS = {
     KIND_DISPATCH: "沒問題的話按「✅ 全部收到」，小律會幫你告訴公司。哪一筆不行，從「⚠️ 哪一筆不行？」選出來，小律幫你轉達。想看內容用「看任務內容」。",

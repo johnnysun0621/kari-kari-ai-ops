@@ -109,13 +109,15 @@ flowchart LR
 
 藝人身分一律用 `repositories.find_artist_by_discord_id()` 以 Artists.`Discord User ID` 比對；找不到就回「❌ 找不到你的藝人資料…」。
 
+**互動紀錄（M3-32）**：`KariKariBot.on_interaction` → `services/interaction_log.log`，每個指令、按鈕、選單、Modal 送出都在 `logs/bot.log` 記一行 `karikari.interaction: 收到互動：{按鈕／選單／指令／填寫視窗送出} {custom_id 或名稱}｜{Discord 名稱}（{ID}）｜{私訊／頻道}｜訊息 {id}`。選單列前 3 個選取值；Modal 只記類別名稱，**不記填寫內容**；自動完成不記。藝人說「互動失敗」時：log 有這行＝bot 收到了，往下看錯誤；沒有＝沒送到 bot（手機連線、網路）。
+
 ### 任務卡與合併通知
 
 | 操作 | 進入點 | 擋下條件 | Notion 寫入 | 其他人收到 |
 |---|---|---|---|---|
 | **收到任務**（`task_receipt:{id}`） | `tasks_artist.TaskReceiptButton` | 不是關聯藝人；`Discord 顯示` 已取消（已回報）；狀態不在 尚未開始／進行中／待提交／空白 | Tasks `任務狀態`=進行中、`Discord 收到時間`=now；Audit「藝人收到任務」 | 無。同任務舊通知刪除 |
-| **有問題・無法配合**（`task_concern:{id}`） | `TaskConcernButton` → Modal | `Discord 顯示` 已取消；狀態是待審核／需修改（`task_bundle.CONCERN_STATUSES`） | 送出才寫，見下 | — |
-| Modal **這筆任務哪裡不行呢？**／**跟小律說說原因** | `TaskConcernModal.on_submit` | 原因空白；不是關聯藝人 | 內頁追加 heading「藝人回覆」＋段落；**非已逾期**：`任務狀態`=尚未開始、`Discord 顯示`=false、清 `Discord 通知時間`／`收到時間`／`提醒確認(From 藝人)`；**已逾期**：只寫藝人回覆（`KEEP_STATUS_ON_CONCERN`）；Audit「藝人回報任務問題」 | 營運內部通知 `🟥 要處理｜藝人回報任務問題：{任務}` |
+| **有問題・無法配合**（`task_concern:{id}`） | `TaskConcernButton` → `open_concern_modal` → Modal | `Discord 顯示` 已取消；狀態是待審核／需修改（`task_bundle.CONCERN_STATUSES`）。預查 `get_task_brief` 最多等 `CONCERN_PRECHECK_SECONDS`（1.5 秒），逾時直接跳 Modal、送出時再擋（M3-32） | 送出才寫，見下 | — |
+| Modal **這筆任務哪裡不行呢？**：**哪裡不行？**（Select，必選：`task_bundle.CONCERN_REASONS` 時間撞到／想延期／內容看不懂／其他）＋**想補充的話（可以不填）**（TextInput，非必填） | `TaskConcernModal.on_submit` | 不是關聯藝人；`Discord 顯示` 已取消（`ALREADY_REPORTED_REPLY`）；狀態不在 `CONCERN_STATUSES`（`CONCERN_BLOCKED_REPLY`）；原因與補充都空 | 原因文字 `concern_reason_text`：`{原因}：{補充}`／`{原因}`／`其他（藝人沒有補充）`。內頁追加 heading「藝人回覆」＋段落；**非已逾期**：`任務狀態`=尚未開始、`Discord 顯示`=false、清 `Discord 通知時間`／`收到時間`／`提醒確認(From 藝人)`；**已逾期**：只寫藝人回覆（`KEEP_STATUS_ON_CONCERN`）；Audit「藝人回報任務問題」 | 營運內部通知 `🟥 要處理｜藝人回報任務問題：{任務}` |
 | **看任務內容…**（`bundle_detail:{id}`） | `tasks_artist` bundle select | 任務已結案 | 無 | 無 |
 | **✅ 全部收到**／**收下剩下 N 筆**（`bundle_receive:{id}`） | `receive_bundle()` | 已回報或 `Discord 顯示` 取消的略過 | 每筆同「收到任務」，Audit 註記「合併通知全部收到」 | 無 |
 | **⚠️ 哪一筆不行？**（`bundle_concern:{id}`） | bundle concern select | 同「有問題・無法配合」 | 同 Modal | 同 Modal |

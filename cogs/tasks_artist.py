@@ -1,4 +1,5 @@
 """P0-2 任務查詢：藝人 /我的任務、管理端 /任務總覽。"""
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -412,13 +413,23 @@ class TaskConcernButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ta
         await open_concern_modal(interaction, self.task_id)
 
 
-async def open_concern_modal(interaction: discord.Interaction, task_id: str, bundle_id: str | None = None) -> None:
-    """已交件、修改中的任務不能用按鈕回報（M3-27）；其他跳出填原因的視窗。只讀欄位，趕在 3 秒內回應。
+# 跳視窗前讀任務最多等這麼久（M3-32）。Discord 要 3 秒內回應，視窗本身也要時間送出去；
+# Notion 慢的時候不等了，直接跳視窗，送出時 on_submit 會再檢查一次。
+CONCERN_PRECHECK_SECONDS = 1.5
 
+
+async def open_concern_modal(interaction: discord.Interaction, task_id: str, bundle_id: str | None = None) -> None:
+    """已交件、修改中的任務不能用按鈕回報（M3-27）；其他跳出填原因的視窗。
+
+    先讀一下任務，能早點說「這筆已經交了／已經說過了」；但最多等 CONCERN_PRECHECK_SECONDS，
+    讀不到就直接跳視窗（M3-32），送出時再檢查，不讓藝人看到「互動失敗」。
     記下是從哪則訊息按的（單筆卡、合併通知、早報），送出後那則才能原地收尾（M3-28）。
     """
     try:
-        task = await repositories.get_task_brief(task_id)
+        task = await asyncio.wait_for(repositories.get_task_brief(task_id), timeout=CONCERN_PRECHECK_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning("回報問題前讀取任務超過 %.1f 秒，先跳視窗、送出時再檢查：%s", CONCERN_PRECHECK_SECONDS, task_id)
+        task = None
     except Exception:
         logger.exception("回報問題前讀取任務失敗：%s", task_id)
         task = None
@@ -498,13 +509,21 @@ class TaskConcernModal(discord.ui.Modal, title="這筆任務哪裡不行呢？")
         self.task_id = task_id
         self.origin = origin
         self.bundle_id = bundle_id
+        # M3-32：先點選原因（必選），補充可留空——幾秒就能送出，手機連線不穩時比較不會白打一大段字
+        self.choice = discord.ui.Select(
+            placeholder=task_bundle.CONCERN_REASON_PLACEHOLDER,
+            options=[discord.SelectOption(label=label, value=label, description=desc)
+                     for label, desc in task_bundle.CONCERN_REASONS],
+            min_values=1, max_values=1, required=True,
+        )
+        self.add_item(discord.ui.Label(text=task_bundle.CONCERN_REASON_LABEL, component=self.choice))
         self.reason = discord.ui.TextInput(
-            label="跟小律說說原因",
-            placeholder="例如：那天有課沒辦法、內容看不太懂、想延到 11/2",
+            placeholder=task_bundle.CONCERN_DETAIL_PLACEHOLDER,
             style=discord.TextStyle.paragraph,
             max_length=1000,
+            required=False,
         )
-        self.add_item(self.reason)
+        self.add_item(discord.ui.Label(text=task_bundle.CONCERN_DETAIL_LABEL, component=self.reason))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -513,10 +532,15 @@ class TaskConcernModal(discord.ui.Modal, title="這筆任務哪裡不行呢？")
         if task is None or artist is None or artist.page_id not in task.artist_page_ids:
             await interaction.followup.send("❌ 這不是分派給你的任務。", ephemeral=True)
             return
+        # 跳視窗前可能沒來得及檢查（M3-32），送出時一定再檢查一次
+        if not task.discord_visible:
+            await interaction.followup.send(task_bundle.ALREADY_REPORTED_REPLY, ephemeral=True)
+            return
         if not task_bundle.can_report_concern(task):
             await interaction.followup.send(task_bundle.CONCERN_BLOCKED_REPLY, ephemeral=True)
             return
-        reason = self.reason.value.strip()
+        values = list(self.choice.values or [])
+        reason = task_bundle.concern_reason_text(values[0] if values else "", self.reason.value or "")
         if not reason:
             await interaction.followup.send("❌ 請填寫原因或需要調整的地方。", ephemeral=True)
             return
